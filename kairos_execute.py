@@ -366,6 +366,40 @@ def log_execution(decision: dict, execution: dict):
             if action_upper == "BUY":
                 h_id = insert_holding(tkr, timestamp, fill_price, qty)
                 print(f"  Holdings: recorded BUY lot #{h_id}")
+<<<<<<< HEAD
+=======
+
+                # ── ML Outcomes: record trade open ────────────────
+                try:
+                    from kairos_ml_outcomes import init_db as ml_init, write_trade_open
+                    ml_init()
+                    # Gather signal tags for this ticker
+                    ml_signals = None
+                    try:
+                        from kairos_confluence import get_ticker_signals
+                        ml_signals = get_ticker_signals(tkr)
+                    except Exception:
+                        pass
+                    ml_confluence = None
+                    if decision.get("_confluence"):
+                        ml_confluence = decision["_confluence"].get("score")
+                    # Sector lookup (best-effort)
+                    ml_sector = _lookup_sector(tkr)
+                    ml_trade_id = write_trade_open(
+                        ticker=tkr,
+                        action=action_upper,
+                        quantity=qty,
+                        price_entry=fill_price,
+                        timestamp_entry=timestamp,
+                        signals_fired=ml_signals if ml_signals else None,
+                        confluence_score=ml_confluence,
+                        sector=ml_sector,
+                    )
+                    print(f"  ML Outcomes: recorded trade open {ml_trade_id[:8]}...")
+                except Exception as ml_exc:
+                    print(f"  WARNING: ML outcomes (open) failed: {ml_exc}")
+
+>>>>>>> claude/funny-poitras
             elif action_upper == "SELL":
                 closed = sell_holdings(tkr, qty, timestamp, fill_price)
                 for lot in closed:
@@ -397,6 +431,24 @@ def log_execution(decision: dict, execution: dict):
                         )
                         verdict = "PASS" if pnl_pct > 0 else "FAIL"
                         print(f"  Ledger: {tkr} {pnl_pct:+.2f}% {verdict}")
+<<<<<<< HEAD
+=======
+
+                # ── ML Outcomes: close matching open trade(s) ─────
+                try:
+                    from kairos_ml_outcomes import init_db as ml_init, write_trade_close, find_open_trade
+                    ml_init()
+                    open_tid = find_open_trade(tkr, "BUY")
+                    if open_tid:
+                        result = write_trade_close(open_tid, fill_price, timestamp_exit=timestamp)
+                        print(f"  ML Outcomes: closed {open_tid[:8]}... → "
+                              f"{result['outcome_label']} ({result['pnl_pct']:+.2f}%)")
+                    else:
+                        print(f"  ML Outcomes: no open BUY trade found for {tkr}")
+                except Exception as ml_exc:
+                    print(f"  WARNING: ML outcomes (close) failed: {ml_exc}")
+
+>>>>>>> claude/funny-poitras
     except Exception as e:
         print(f"  WARNING: DB logging failed: {e}")
 
@@ -482,6 +534,32 @@ SIGNALS FIRED:
         print(f"  WARNING: Could not write last decision summary: {e}")
 
 
+<<<<<<< HEAD
+=======
+# ── Sector lookup (best-effort from kairos_universe.json) ──────────
+
+def _lookup_sector(ticker: str) -> str | None:
+    """Return GICS sector for a ticker from kairos_universe.json, or None."""
+    universe_file = os.path.join(SCRIPT_DIR, "kairos_universe.json")
+    if not os.path.exists(universe_file):
+        return None
+    try:
+        with open(universe_file) as f:
+            universe = json.load(f)
+        for entry in universe if isinstance(universe, list) else []:
+            if entry.get("ticker") == ticker or entry.get("symbol") == ticker:
+                return entry.get("sector") or entry.get("gics_sector")
+        # Also check if it's a dict keyed by ticker
+        if isinstance(universe, dict) and ticker in universe:
+            item = universe[ticker]
+            if isinstance(item, dict):
+                return item.get("sector") or item.get("gics_sector")
+    except (json.JSONDecodeError, IOError):
+        pass
+    return None
+
+
+>>>>>>> claude/funny-poitras
 # ── main ────────────────────────────────────────────────────────────
 
 def main():
