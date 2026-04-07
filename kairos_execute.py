@@ -366,8 +366,6 @@ def log_execution(decision: dict, execution: dict):
             if action_upper == "BUY":
                 h_id = insert_holding(tkr, timestamp, fill_price, qty)
                 print(f"  Holdings: recorded BUY lot #{h_id}")
-<<<<<<< HEAD
-=======
 
                 # ── ML Outcomes: record trade open ────────────────
                 try:
@@ -399,7 +397,6 @@ def log_execution(decision: dict, execution: dict):
                 except Exception as ml_exc:
                     print(f"  WARNING: ML outcomes (open) failed: {ml_exc}")
 
->>>>>>> claude/funny-poitras
             elif action_upper == "SELL":
                 closed = sell_holdings(tkr, qty, timestamp, fill_price)
                 for lot in closed:
@@ -431,8 +428,6 @@ def log_execution(decision: dict, execution: dict):
                         )
                         verdict = "PASS" if pnl_pct > 0 else "FAIL"
                         print(f"  Ledger: {tkr} {pnl_pct:+.2f}% {verdict}")
-<<<<<<< HEAD
-=======
 
                 # ── ML Outcomes: close matching open trade(s) ─────
                 try:
@@ -448,7 +443,6 @@ def log_execution(decision: dict, execution: dict):
                 except Exception as ml_exc:
                     print(f"  WARNING: ML outcomes (close) failed: {ml_exc}")
 
->>>>>>> claude/funny-poitras
     except Exception as e:
         print(f"  WARNING: DB logging failed: {e}")
 
@@ -534,8 +528,6 @@ SIGNALS FIRED:
         print(f"  WARNING: Could not write last decision summary: {e}")
 
 
-<<<<<<< HEAD
-=======
 # ── Sector lookup (best-effort from kairos_universe.json) ──────────
 
 def _lookup_sector(ticker: str) -> str | None:
@@ -559,7 +551,6 @@ def _lookup_sector(ticker: str) -> str | None:
     return None
 
 
->>>>>>> claude/funny-poitras
 # ── main ────────────────────────────────────────────────────────────
 
 def main():
