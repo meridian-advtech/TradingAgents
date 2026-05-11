@@ -1,0 +1,118 @@
+{
+  "tax": {
+    "short_term_rate": 0.37,
+    "long_term_rate": 0.2,
+    "long_term_days": 365,
+    "opportunity_cost_rate": 0.08,
+    "stop_loss_override_pct": 10.0
+  },
+  "ollama": {
+    "screen_model": "llama3.2",
+    "reason_model": "mistral-small3.2",
+    "_comment": "screen_model: speed-optimized 2GB for Tier 1 (264 tickers). reason_model: quality-optimized 15GB for Tier 2 reasoning (15 tickers). llama3.3 (42GB) available but too large for reliable timeouts."
+  },
+  "claude": {
+    "cli_path": "/opt/homebrew/bin/claude",
+    "reasoning_timeout_s": 180,
+    "poll_interval_s": 5,
+    "_comment": "Claude Code CLI invoked via subprocess for Phase 2 reasoning. Set cli_path if claude is not on PATH."
+  },
+  "slack": {
+    "bot_token": "",
+    "channels": {
+      "alerts": "C0AQA4ZH0P2",
+      "reports": "C0AP9F2P10T",
+      "commands": "C0APFSF09U2",
+      "log": "C0APKEES12Q",
+      "trades": "C0B1LPGCA9L",
+      "watchlist": "C0A6HHKMM8S"
+    },
+    "_comment": "Slack Bot API (slack_sdk). Values are channel IDs. kairos-alerts=C0AQA4ZH0P2, kairos-reports=C0AP9F2P10T, kairos-commands=C0APFSF09U2, kairos-log=C0APKEES12Q, kairos-trades=, kairos-watchlist= (was #new-channel)."
+  },
+  "options_signal": {
+    "vol_oi_threshold": 3.0,
+    "iv_rank_threshold": 0.8,
+    "skew_bull_threshold": 2.5,
+    "skew_bear_threshold": 0.4,
+    "dte_min": 7,
+    "dte_max": 45,
+    "_comment": "HOT-OPTIONS thresholds. vol/OI spike, IV rank percentile, call/put skew. DTE range for front-month expiry selection."
+  },
+  "scheduler": {
+    "cycle_interval_minutes": 30,
+    "thesis_review_time_et": "09:35",
+    "intervals": {
+      "intake": 2,
+      "audit": 1,
+      "screener": 1,
+      "reasoning": 1
+    }
+  },
+  "confluence": {
+    "signal_points": {
+      "HOT-EARNINGS": 2,
+      "HOT-RSI": 1,
+      "HOT-INSIDER": 2,
+      "HOT-CONGRESS": 1,
+      "HOT-REVERSION": 1,
+      "HOT-KALSHI": 1,
+      "HOT-OPTIONS": 2
+    },
+    "tiers": [
+      {
+        "min_score": 1,
+        "name": "Single Signal",
+        "nlv_pct": 0.01
+      },
+      {
+        "min_score": 2,
+        "name": "Medium",
+        "nlv_pct": 0.015
+      },
+      {
+        "min_score": 4,
+        "name": "High",
+        "nlv_pct": 0.02
+      },
+      {
+        "min_score": 6,
+        "name": "Very High",
+        "nlv_pct": 0.025
+      }
+    ],
+    "guardrails": {
+      "min_cash_reserve_pct": 0.01,
+      "max_sector_concentration_pct": 0.25,
+      "max_single_position_pct": 0.1
+    },
+    "_comment": "NLV-based conviction sizing. Tiers set position as % of Net Liquidation Value. Guardrails: 1% cash reserve (commissions + settlement), 25% sector max, 10% single position max."
+  },
+  "tier0_filter": {
+    "min_30day_avg_volume": 500000,
+    "min_price": 5.0,
+    "min_market_cap": 1000000000,
+    "min_5day_price_change_pct": 1.5,
+    "min_today_volume_ratio": 0.5,
+    "_comment": "Tier 0 rules-based pre-filter thresholds. All values must be met for a ticker to pass to Tier 1 (LLM screening)."
+  },
+  "reallocation": {
+    "MIN_CONVICTION": 7,
+    "MIN_CONVICTION_DELTA": 4.5,
+    "MIN_HOLD_DAYS_FOR_REALLOCATION": 5,
+    "MAX_REALLOCATION_LOSS_PCT": -15.0,
+    "MAX_TAX_SAVINGS_FOR_EXIT": 1000,
+    "MAX_THESIS_REVIEW_AGE_HOURS": 24,
+    "MIN_REMAINING_RUNWAY_DAYS": 0,
+    "signal_hold_windows": {
+      "HOT-EARNINGS": 10,
+      "HOT-INSIDER": 21,
+      "HOT-CONGRESS": 30,
+      "HOT-OPTIONS": 7,
+      "HOT-REVERSION": 5,
+      "HOT-CATALYST": 14,
+      "HOT-CRYPTO-BASELINE": 3,
+      "DEFAULT": 7
+    },
+    "_comment": "Reallocation parameters: minimum conviction scores, hold time guard, max loss threshold (-15% = block sells down >15%), max tax cost threshold ($1000), max thesis review age in hours, min remaining runway days, and signal hold windows."
+  }
+}
