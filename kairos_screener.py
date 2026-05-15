@@ -301,6 +301,7 @@ def apply_reversion_signals(
 
 def run_screen(dry_run: bool = False, max_tier2: int = MAX_TIER2_DEFAULT,
               skip_tier0: bool = False) -> dict:
+    original_universe_size = 0
     """Run Tier 1 screening on the full universe.
 
     Args:
@@ -406,11 +407,15 @@ def run_screen(dry_run: bool = False, max_tier2: int = MAX_TIER2_DEFAULT,
     for t in tickers:
         q = quotes.get(t)
         if q:
+            price = q.get("c", 0.0)
+            dp = q.get("dp", 0.0)
+            if dp is None:
+                dp = 0.0
             batch_items.append({
                 "ticker": t,
-                "price": q.get("c", 0.0),
-                "change_pct": q.get("dp", 0.0),
-                "volume_signal": "high" if abs(q.get("dp", 0)) > 2 else "normal",
+                "price": price,
+                "change_pct": dp,
+                "volume_signal": "high" if abs(dp) > 2 else "normal",
             })
         else:
             # No data — include with zero change (will score COLD)

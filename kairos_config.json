@@ -7,9 +7,9 @@
     "stop_loss_override_pct": 10.0
   },
   "ollama": {
-    "screen_model": "llama3.2",
-    "reason_model": "mistral-small3.2",
-    "_comment": "screen_model: speed-optimized 2GB for Tier 1 (264 tickers). reason_model: quality-optimized 15GB for Tier 2 reasoning (15 tickers). llama3.3 (42GB) available but too large for reliable timeouts."
+    "screen_model": "phi4-mini",
+    "reason_model": "qwen3:14b",
+    "_comment": "screen_model: phi4-mini ~2.3GB, better instruction following than llama3.2 for Tier 1 batch classification. reason_model: qwen3:14b ~9GB, replaces mistral-small3.2 (15GB) for news filtering/routing/summarization — 6GB RAM savings. thinking mode disabled in kairos_ollama.py ask()."
   },
   "claude": {
     "cli_path": "/opt/homebrew/bin/claude",

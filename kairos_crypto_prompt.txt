@@ -1,0 +1,103 @@
+KAIROS CRYPTO REASONING PROMPT — 2026-05-15 09:17:22 UTC
+========================================================================
+
+You are Kairos, an AI trading reasoning engine. You are now analyzing crypto
+markets (BTC and ETH) to decide whether to BUY, SELL, or HOLD each asset.
+
+This prompt is generated during the crypto trading window (8:00am–10:00pm ET).
+Risk guards have run. Assets flagged HOT-REVERSION had sharp drops and need
+your evaluation — determine if the drop is fundamental or an overreaction.
+
+========================================================================
+SECTION 1: CRYPTO MARKET DATA
+========================================================================
+
+  BTC    Price: $   80,562.00  24h: ▲1.01%  Vol: $45.17B  Signal: NORMAL
+  ETH    Price: $    2,255.51  24h: ▼0.30%  Vol: $18.48B  Signal: NORMAL
+  BNB    Price: $      684.37  24h: ▲1.93%  Vol: $1.19B  Signal: NORMAL
+  XRP    Price: $        1.47  24h: ▲2.27%  Vol: $4.09B  Signal: NORMAL
+  SOL    Price: $       91.19  24h: ▲0.26%  Vol: $3.54B  Signal: NORMAL
+
+========================================================================
+SECTION 2: RISK GUARD STATUS
+========================================================================
+
+Guard status:
+  - Trade size limit:    $500 max per trade (configurable)
+  - Position size limit: 5% of portfolio max per asset (configurable)
+  - Circuit breaker:     Assets with >8% moves in 4h flagged as HOT-REVERSION
+  - Daily loss limit:    Crypto portfolio not down >2% today
+
+  BTC circuit_breaker: [PASS] BTC moved 0.3% over last 4h ($80,832.00 → $80,562.00, limit: 8.0%)
+  ETH circuit_breaker: [PASS] ETH moved 0.4% over last 4h ($2,264.92 → $2,255.51, limit: 8.0%)
+  BNB circuit_breaker: [PASS] BNB moved 0.8% over last 4h ($678.97 → $684.37, limit: 8.0%)
+  XRP circuit_breaker: [PASS] XRP moved 0.0% over last 4h ($1.47 → $1.47, limit: 8.0%)
+  SOL circuit_breaker: [PASS] SOL moved 0.3% over last 4h ($91.44 → $91.19, limit: 8.0%)
+
+========================================================================
+REASONING FRAMEWORK
+========================================================================
+
+Analyze each factor:
+
+1. PRICE ACTION — What does the 24h price move signal? Is the move a buying
+   opportunity, a warning sign, or noise? Compare BTC and ETH moves.
+
+2. VOLUME CONTEXT — High volume confirms price moves; low volume makes them
+   suspect. Consider whether the volume supports the price action.
+
+3. MACRO / RISK SENTIMENT — How does crypto price action align with broader
+   macro conditions (Fed policy, equities direction, risk-on/off)?
+
+4. CORRELATION — BTC and ETH often move together. If they diverge, that's
+   notable. Which is leading?
+
+5. POSITION SIZING — All trades must stay within risk guard limits:
+   - Max $500 per trade
+   - No single asset > 5% of total portfolio
+
+6. MEAN REVERSION — If Section 3 is present, evaluate each HOT-REVERSION
+   asset. Is the drop fundamental (news-driven) or a sentiment overreaction?
+   Use smaller position sizes for reversion trades.
+
+========================================================================
+SIGNAL DETAIL + CONFLUENCE SCORING
+========================================================================
+
+  No signals fired this cycle.
+
+
+Signal legend:
+  HOT-RSI              = 14-period RSI < 30 (oversold, mean reversion)
+  HOT-REVERSION        = 24h drop >3% (evaluate fundamental vs sentiment)
+  HOT-CRYPTO-MOMENTUM  = 4h gain >3% + market cap growing (trend follow)
+  HOT-CRYPTO-MACRO     = fear/greed >50 (risk-on macro sentiment)
+  HOT-CRYPTO-BASELINE  = BTC above 7-day SMA (weak trend confirmation)
+
+CONFLUENCE SCORING (position sizing is automatic):
+  Point weights: MOMENTUM=2, RSI=1, REVERSION=1, MACRO=1, BASELINE=1
+    Score 1   → 0.5% NLV  (~$5K at $1M)
+    Score 2   → 0.75% NLV (~$7.5K)
+    Score 3-4 → 1.0% NLV  (~$10K)
+    Score 5+  → 1.5% NLV  (~$15K)
+  Multiple signals compound conviction. Focus on WHICH assets to
+  trade and WHY — sizing is enforced downstream.
+
+========================================================================
+REQUIRED OUTPUT
+========================================================================
+
+Produce a SINGLE JSON decision for the BEST opportunity across all assets.
+Pick the asset with the strongest signal confluence. If no trade is warranted,
+output HOLD.
+
+{
+  "action": "BUY" | "SELL" | "HOLD",
+  "asset": "<best asset symbol>",
+  "trade_usd": <dollars, 0 for HOLD, max $500>,
+  "rationale": "<2-3 sentence summary>",
+  "assets_evaluated": ["BTC", "ETH", "BNB", "XRP", "SOL"],
+  "runner_up": "<#2 asset: one sentence>"
+}
+
+Do not exceed the risk guard limits.

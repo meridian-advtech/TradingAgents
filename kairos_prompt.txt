@@ -1,0 +1,366 @@
+KAIROS REASONING PROMPT — 2026-05-14 19:30:16 UTC
+========================================================================
+
+You are evaluating the following 1 shortlisted tickers
+for the BEST single trade opportunity.
+
+Your existing portfolio positions are listed separately below — do NOT
+default to adding to existing positions unless they are genuinely the
+best opportunity on the shortlist. Every candidate must compete equally.
+
+========================================================================
+SECTION 0: MACRO REGIME — NORMAL
+========================================================================
+
+Classification: NORMAL — VIX 17.24; SPY above 50MA; spread +0.460
+
+Indicators:
+  VIX:              17.24  (5d trend: +0.2)
+  SPY price:        $748.29
+  SPY 50-day MA:    $688.88 (SPY above)
+  SPY 200-day MA:   $675.55 (SPY above)
+  SPY put/call:     1.15
+  10Y-2Y spread:    +0.460
+
+Active guardrails:
+  (no restrictions — normal operation)
+
+========================================================================
+SECTION 1: MARKET SNAPSHOT (5 SOURCES)
+========================================================================
+
+╔════════════════════════════════════════════════════════════════════════╗
+║  KAIROS MARKET SNAPSHOT — 2026-05-14 19:29:09 UTC                      ║
+╚════════════════════════════════════════════════════════════════════════╝
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Finnhub — AAPL News Headlines
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  1. [05-14 17:43] Xi Warns Trump of Possible “Clash” Over Taiwan Just Hours Before Banquet Toast
+     Source: Yahoo
+  2. [05-14 17:41] Intel Just Ripped 82% in a Month, but Is It Beating AMD?
+     Source: Yahoo
+  3. [05-14 17:37] Sector Update: Tech Stocks Mixed Thursday Afternoon
+     Source: Yahoo
+  4. [05-14 17:26] Apple-OpenAI Partnership Frays, Setting Up a Possible Legal Battle
+     Source: Yahoo
+  5. [05-14 17:22] Apple stock dips 1% on report of strained OpenAI partnership
+     Source: Yahoo
+  6. [05-14 17:13] Warren Buffett Has Beaten the Market Over a 60-Year Stretch. Here Are 3 of the Billionaire…
+     Source: Yahoo
+  7. [05-14 17:09] Prediction: We See a New All-Time High For Apple
+     Source: Yahoo
+  8. [05-14 16:57] Apple-OpenAI Alliance Frays, Setting Up Possible Legal Fight
+     Source: Yahoo
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  FRED — Federal Funds Rate
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  2026-05-12  Fed Funds Rate: 3.63%
+  2026-05-11  Fed Funds Rate: 3.63%
+  2026-05-10  Fed Funds Rate: 3.63%
+  2026-05-09  Fed Funds Rate: 3.63%
+  2026-05-08  Fed Funds Rate: 3.63%
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Kalshi — Prediction Markets
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  1. Will Elon Musk visit Mars in his lifetime?
+     Category: World | Markets: 0
+  2. Who will the next Pope be?
+     Category: Elections | Markets: 0
+  3. Will the world pass 2 degrees Celsius over pre-industrial levels …
+     Category: Climate and Weather | Markets: 0
+  4. Will a human land on Mars before California starts high-speed rai…
+     Category: Science and Technology | Markets: 0
+  5. Will a supervolcano erupt before 2050?
+     Category: Climate and Weather | Markets: 0
+  6. Will humans colonize Mars before 2050?
+     Category: Science and Technology | Markets: 0
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Congress.gov — Recent Finance Bills
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  1. [105th] HCONRES9 — Providing for a joint session of Congress to receive a messa…
+     Updated: 2016-10-26
+  2. [105th] HCONRES21 — Providing for an adjournment of the two Houses.
+     Updated: 2016-10-26
+  3. [105th] HCONRES87 — Providing for an adjournment of the two Houses.
+     Updated: 2016-10-26
+  4. [105th] HCONRES136 — Providing for an adjournment of the two Houses.
+     Updated: 2016-10-26
+  5. [105th] HCONRES138 — To correct technical errors in the enrollment of the bill H.…
+     Updated: 2016-10-26
+  6. [105th] HCONRES167 — To correct a technical error in the enrollment of H.R. 2160.
+     Updated: 2016-10-26
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  CoinGecko — Crypto (BTC / ETH)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    BTC    $81,374.00  ▲ 2.41%  Vol: $44.11B  MCap: $1,631.61B
+    ETH     $2,298.90  ▲ 2.02%  Vol: $15.51B  MCap: $277.87B
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Snapshot complete. 5/5 sources OK.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+========================================================================
+SECTION 2a: EXISTING POSITIONS (for context only)
+========================================================================
+
+
+  + 30 other position(s) not on today's shortlist (omitted for brevity)
+
+Account:
+  Net Liquidation: $  1,031,363.12
+  Cash Available:  $    206,669.31
+  Buying Power:    $  3,300,721.93
+
+========================================================================
+SECTION 2b: CANDIDATE TICKERS FOR EVALUATION (evaluate ALL of these)
+========================================================================
+
+  AAPL      $298.80 (EXISTING HOLDING)
+
+
+========================================================================
+SECTION 3: TAX CONTEXT
+========================================================================
+
+No open holdings tracked. A new BUY creates a fresh tax lot.
+
+** WASH SALE WARNING **
+  AAPL was sold within the last 30 days.
+  Repurchasing now would trigger wash-sale rules: the loss
+  on the prior sale would be DISALLOWED and added to the
+  cost basis of the new shares.
+  - Sold 10.0 shares on 2026-04-23 @ $175.00 (bought @ $253.42)
+  - Sold 10.0 shares on 2026-04-23 @ $175.00 (bought @ $247.04)
+  - Sold 10.0 shares on 2026-04-23 @ $175.00 (bought @ $246.50)
+  - Sold 10.0 shares on 2026-04-23 @ $175.00 (bought @ $248.92)
+  - Sold 10.0 shares on 2026-04-23 @ $175.00 (bought @ $247.99)
+  - Sold 10.0 shares on 2026-04-23 @ $175.00 (bought @ $248.88)
+
+========================================================================
+SECTION 3b: TAX EFFICIENCY ANALYSIS
+========================================================================
+
+Tax rates: ST 37% / LT 20%  |  Opp cost: 8% annual  |  Stop-loss override: 10.0%
+Decision method: after-tax NPV (sell now + opp cost vs. hold to LT at 0% growth)
+
+  NKE (current: $42.21)
+    Lot       Entry  Shares   Days   toLT    Gain%   TaxSaved    OppCost    NPV Sell    NPV Hold  Action
+    ───  ──────────  ──────  ─────  ─────  ───────  ─────────  ─────────  ──────────  ──────────  ──────────────
+      1  2026-04-08     353      0   365d    -1.9%  $       0  $    1192  $   16,092  $   14,900  SELL-OK
+      2  2026-04-09     354      0   365d    -1.4%  $       0  $    1195  $   16,138  $   14,942  SELL-OK
+      3  2026-04-10     354      0   365d    -0.6%  $       0  $    1195  $   16,138  $   14,942  SELL-OK
+      4  2026-04-13     178      0   365d    -0.1%  $       0  $     601  $    8,114  $    7,513  SELL-OK
+      5  2026-04-13     356      0   365d    -1.3%  $       0  $    1202  $   16,229  $   15,027  SELL-OK
+      6  2026-04-13     355      0   365d    -1.4%  $       0  $    1199  $   16,183  $   14,985  SELL-OK
+      7  2026-04-13     355      0   365d    -1.3%  $       0  $    1199  $   16,183  $   14,985  SELL-OK
+
+  BLK (current: $1107.65)
+    Lot       Entry  Shares   Days   toLT    Gain%   TaxSaved    OppCost    NPV Sell    NPV Hold  Action
+    ───  ──────────  ──────  ─────  ─────  ───────  ─────────  ─────────  ──────────  ──────────  ──────────────
+      1  2026-04-20      15      0   365d    +5.5%  $     146  $    1304  $   17,600  $   16,442  SELL-OK
+
+  VEEV (current: $156.35)
+    Lot       Entry  Shares   Days   toLT    Gain%   TaxSaved    OppCost    NPV Sell    NPV Hold  Action
+    ───  ──────────  ──────  ─────  ─────  ───────  ─────────  ─────────  ──────────  ──────────  ──────────────
+      1  2026-04-22      64      0   365d    -4.2%  $       0  $     801  $   10,807  $   10,006  SELL-OK
+
+  C (current: $125.28)
+    Lot       Entry  Shares   Days   toLT    Gain%   TaxSaved    OppCost    NPV Sell    NPV Hold  Action
+    ───  ──────────  ──────  ─────  ─────  ───────  ─────────  ─────────  ──────────  ──────────  ──────────────
+      1  2026-04-09     165      0   365d    +1.7%  $      60  $    1643  $   22,184  $   20,601  SELL-OK
+      2  2026-04-13      81      0   365d    +0.9%  $      15  $     809  $   10,925  $   10,130  SELL-OK
+      3  2026-04-13     162      0   365d    -0.1%  $       0  $    1624  $   21,919  $   20,295  SELL-OK
+      4  2026-04-13     162      0   365d    -0.1%  $       0  $    1624  $   21,919  $   20,295  SELL-OK
+      5  2026-04-20     199      0   365d    -5.7%  $       0  $    1994  $   26,925  $   24,931  SELL-OK
+
+  TRV (current: $297.37)
+    Lot       Entry  Shares   Days   toLT    Gain%   TaxSaved    OppCost    NPV Sell    NPV Hold  Action
+    ───  ──────────  ──────  ─────  ─────  ───────  ─────────  ─────────  ──────────  ──────────  ──────────────
+      1  2026-04-20      52      0   365d    -2.5%  $       0  $    1237  $   16,700  $   15,463  SELL-OK
+
+  CRM (current: $167.96)
+    Lot       Entry  Shares   Days   toLT    Gain%   TaxSaved    OppCost    NPV Sell    NPV Hold  Action
+    ───  ──────────  ──────  ─────  ─────  ───────  ─────────  ─────────  ──────────  ──────────  ──────────────
+      1  2026-04-09      59      0   365d    -1.1%  $       0  $     793  $   10,702  $    9,910  SELL-OK
+
+  PLD (current: $142.60)
+    Lot       Entry  Shares   Days   toLT    Gain%   TaxSaved    OppCost    NPV Sell    NPV Hold  Action
+    ───  ──────────  ──────  ─────  ─────  ───────  ─────────  ─────────  ──────────  ──────────  ──────────────
+      1  2026-04-20     110      0   365d    -1.2%  $       0  $    1255  $   16,941  $   15,686  SELL-OK
+
+  BA (current: $231.21)
+    Lot       Entry  Shares   Days   toLT    Gain%   TaxSaved    OppCost    NPV Sell    NPV Hold  Action
+    ───  ──────────  ──────  ─────  ─────  ───────  ─────────  ─────────  ──────────  ──────────  ──────────────
+      1  2026-04-24      66      0   365d    -1.2%  $       0  $    1221  $   16,481  $   15,260  SELL-OK
+
+  NET (current: $200.55)
+    Lot       Entry  Shares   Days   toLT    Gain%   TaxSaved    OppCost    NPV Sell    NPV Hold  Action
+    ───  ──────────  ──────  ─────  ─────  ───────  ─────────  ─────────  ──────────  ──────────  ──────────────
+      1  2026-04-09      54      0   365d    +9.8%  $     164  $     838  $   11,310  $   10,636  SELL-OK
+
+  FDX (current: $378.20)
+    Lot       Entry  Shares   Days   toLT    Gain%   TaxSaved    OppCost    NPV Sell    NPV Hold  Action
+    ───  ──────────  ──────  ─────  ─────  ───────  ─────────  ─────────  ──────────  ──────────  ──────────────
+      1  2026-04-08      54      0   365d    +1.5%  $      52  $    1625  $   21,934  $   20,361  SELL-OK
+
+  EW (current: $81.73)
+    Lot       Entry  Shares   Days   toLT    Gain%   TaxSaved    OppCost    NPV Sell    NPV Hold  Action
+    ───  ──────────  ──────  ─────  ─────  ───────  ─────────  ─────────  ──────────  ──────────  ──────────────
+      1  2026-04-13     261      0   365d    +5.0%  $     171  $    1677  $   22,635  $   21,130  SELL-OK
+      2  2026-04-13     261      0   365d    +4.8%  $     166  $    1678  $   22,647  $   21,136  SELL-OK
+      3  2026-04-13     260      0   365d    +5.1%  $     176  $    1669  $   22,536  $   21,043  SELL-OK
+
+  AXP (current: $313.55)
+    Lot       Entry  Shares   Days   toLT    Gain%   TaxSaved    OppCost    NPV Sell    NPV Hold  Action
+    ───  ──────────  ──────  ─────  ─────  ───────  ─────────  ─────────  ──────────  ──────────  ──────────────
+      1  2026-04-23      48      0   365d    -2.1%  $       0  $    1204  $   16,254  $   15,050  SELL-OK
+
+  AMP (current: $472.10)
+    Lot       Entry  Shares   Days   toLT    Gain%   TaxSaved    OppCost    NPV Sell    NPV Hold  Action
+    ───  ──────────  ──────  ─────  ─────  ───────  ─────────  ─────────  ──────────  ──────────  ──────────────
+      1  2026-04-24      33      0   365d    +3.3%  $      84  $    1232  $   16,629  $   15,481  SELL-OK
+
+  LMT (current: $520.58)
+    Lot       Entry  Shares   Days   toLT    Gain%   TaxSaved    OppCost    NPV Sell    NPV Hold  Action
+    ───  ──────────  ──────  ─────  ─────  ───────  ─────────  ─────────  ──────────  ──────────  ──────────────
+      1  2026-04-22      19      0   365d    -6.2%  $       0  $     791  $   10,682  $    9,891  SELL-OK
+
+  RTX (current: $175.76)
+    Lot       Entry  Shares   Days   toLT    Gain%   TaxSaved    OppCost    NPV Sell    NPV Hold  Action
+    ───  ──────────  ──────  ─────  ─────  ───────  ─────────  ─────────  ──────────  ──────────  ──────────────
+      1  2026-04-22      87      0   365d    -3.3%  $       0  $    1223  $   16,514  $   15,291  SELL-OK
+
+  Total tax savings from waiting: $1,035
+  No positions favor HOLD-FOR-TAX on NPV basis.
+
+========================================================================
+SECTION 4: TRADING LESSONS (kairos_ledger.txt)
+========================================================================
+
+--- PATTERN SUMMARY ---
+  Closed trades: 51  Win rate: 51%  Cumulative P&L: -125.7%
+
+  LOSING PATTERNS (2 occurrences):
+    [REALLOCATION]  22W / 16L / 38 total  cumulative -143.7%  ← AVOID
+    [news=neutral macro=stable crypto=mixed legis=neutral THESIS-INVALID]  0W / 7L / 7 total  cumulative -66.3%  ← AVOID
+
+  WINNING PATTERNS (2 occurrences):
+    [TAKE-PROFIT]  2W / 0L / 2 total  cumulative +40.3%  ← REPEAT
+    [news=neutral macro=stable crypto=mixed legis=neutral TAKE-PROFIT]  2W / 0L / 2 total  cumulative +69.6%  ← REPEAT
+
+--- TRADE LOG ---
+2026-05-11 | ANET  | SELL | news=neutral macro=stable crypto=mixed legis=neutral THESIS-INVALID | -17.93% | FAIL | 095300
+2026-05-11 | BAC   | SELL | news=neutral macro=stable crypto=mixed legis=neutral THESIS-INVALID | -5.13% | FAIL | 095317
+2026-05-11 | CRWD  | SELL | news=neutral macro=stable crypto=mixed legis=neutral TAKE-PROFIT | +26.38% | PASS | 095336
+2026-05-11 | DHR   | SELL | news=neutral macro=stable crypto=mixed legis=neutral THESIS-INVALID | -8.90% | FAIL | 095342
+2026-05-11 | FTNT  | SELL | news=neutral macro=stable crypto=mixed legis=neutral TAKE-PROFIT | +43.25% | PASS | 095356
+2026-05-11 | JPM   | SELL | news=neutral macro=stable crypto=mixed legis=neutral THESIS-INVALID | -4.30% | FAIL | 095411
+2026-05-11 | LW    | SELL | news=neutral macro=stable crypto=mixed legis=neutral THESIS-INVALID | -9.92% | FAIL | 095454
+2026-05-11 | NTRS  | SELL | news=neutral macro=stable crypto=mixed legis=neutral THESIS-INVALID | -5.60% | FAIL | 095518
+2026-05-13 | HUBS  | SELL | news=neutral macro=stable crypto=mixed legis=neutral THESIS-INVALID | -14.56% | FAIL | 094542
+2026-05-13 | MELI  | SELL | news=neutral macro=stable crypto=mixed legis=neutral STOP-LOSS | -16.99% | FAIL | 094706
+
+  (showing last 10 of 51 trades)
+
+========================================================================
+REASONING FRAMEWORK
+========================================================================
+
+Analyze each factor for EVERY candidate ticker:
+
+1. NEWS SENTIMENT — For each candidate, are recent headlines bullish,
+   bearish, or neutral? What stories could move the stock?
+
+2. MACRO ENVIRONMENT — What does the Fed funds rate tell us about
+   monetary policy? How does this affect each sector represented?
+
+3. RISK APPETITE — What do crypto trends (BTC/ETH direction + volume)
+   and prediction markets signal about broader risk sentiment?
+
+4. LEGISLATIVE RISK — Are any bills in Congress a threat or tailwind
+   for any candidate on the shortlist?
+
+5. PORTFOLIO FIT — How does each candidate fit the existing portfolio?
+   Would adding a new position improve diversification? Is cash
+   available? Does an existing holding already give this exposure?
+
+6. TAX CONSIDERATIONS — Kairos optimizes for after-tax net profit, not
+   gross return. Review Sections 0b, 3, and 3b. For positions flagged
+   HOLD-FOR-TAX, do not recommend SELL unless stop-loss or thesis-invalid
+   conditions are met. The after-tax NPV calculation already accounts for
+   the opportunity cost of waiting — a HOLD-FOR-TAX flag means the math
+   favors patience even after accounting for redeployment returns.
+
+7. TRADING LESSONS — Review the pattern summary in Section 4. If
+   today's signal combo matches a LOSING pattern, reduce size or skip.
+   If it matches a WINNING pattern, trade with higher confidence.
+
+8. BUY SIGNALS — Review Section 5 signal tags for each candidate:
+   - HOT-EARNINGS: strong post-earnings momentum; check sustainability
+   - HOT-RSI: oversold bounce candidate; confirm no fundamental cause
+   - HOT-INSIDER: insiders buying; weigh filer role (CEO > director)
+   - HOT-CONGRESS: congressional purchase; supporting signal
+   - HOT-REVERSION: sharp drop >3%; fundamental (AVOID) or sentiment (BUY)?
+   - HOT-KALSHI: prediction market shift; factor direction into thesis
+   Multiple signals on one ticker compound confidence.
+
+9. ML PATTERN RECOGNITION — Review Section 5b ML confidence scores and signals:
+   - STRONG (>=0.7): Historical patterns strongly favor this trade
+   - NEUTRAL (0.4-0.7): Mixed or limited historical data
+   - WEAK (<=0.4): Historical patterns suggest caution
+   Use ML as an additional signal factor alongside the human-readable signals.
+   Higher ML confidence should increase your conviction; lower confidence
+   warrants smaller position sizes or skipping the trade entirely.
+
+========================================================================
+MULTI-TRADE RANKING (REQUIRED)
+========================================================================
+
+Rank ALL eligible candidates by conviction. Trade ALL tickers that have
+genuine HOT signals and merit a position — do not limit to a single winner.
+
+
+For each ticker, determine:
+  - Action: BUY, SELL, or SKIP (no position warranted)
+  - Conviction: score 1–10 (10 = highest)
+  - Sector: the universe category (e.g. mega_cap, financials, healthcare_biotech, energy_materials, mid_cap_growth, etf_sector, etc.)
+  - Rationale: 1–2 sentences
+
+Position sizing is handled automatically downstream based on signal
+confluence. You do NOT need to specify quantities. Focus on which
+tickers to trade and why.
+
+========================================================================
+REQUIRED OUTPUT
+========================================================================
+
+Produce a JSON object with a "trades" array containing ALL recommended
+trades, ranked by conviction (highest first). Include every ticker that
+warrants a BUY or SELL. Skip tickers with no edge.
+
+{
+  "trades": [
+    {
+      "action": "BUY",
+      "ticker": "<ticker>",
+      "sector": "<universe category>",
+      "conviction": <1-10>,
+      "rationale": "<1-2 sentences>"
+    },
+    ...more trades if warranted...
+  ],
+  "tickers_evaluated": ["AAPL"],
+  "skipped": "<brief note on why remaining tickers were not traded>"
+}
+
+Rules:
+  - Include ALL tickers that merit a trade, not just the top one.
+  - If NO ticker warrants a trade, return an empty trades array.
+  - Tag REVERSION trades in the rationale for ledger tracking.
+  - Sector MUST match one of the universe categories.

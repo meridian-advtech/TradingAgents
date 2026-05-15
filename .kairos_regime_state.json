@@ -1,0 +1,14 @@
+{
+  "regime": "NORMAL",
+  "timestamp": "2026-04-23T18:44:23Z",
+  "data": {
+    "vix": 19.32,
+    "vix_5d_ago": 17.94,
+    "spy_price": 708.44,
+    "spy_50ma": 676.55,
+    "spy_200ma": 668.2,
+    "spy_put_call_ratio": 7.37,
+    "treasury_spread": 0.52,
+    "kalshi_recession_pct": null
+  }
+}

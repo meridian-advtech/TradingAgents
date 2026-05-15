@@ -1,0 +1,666 @@
+"""
+Kairos Alerts — Shared Slack (Bot API) + Monitor Log Helpers
+
+Centralizes alert emission so all pipeline components use the same
+plumbing: kairos_run.py (timeout alerts), kairos_execute.py (trade
+alerts), and any future alerting needs.
+
+Uses the Slack Bot API via slack_sdk.  Config in kairos_config.json:
+
+    slack.bot_token          — Bot User OAuth Token (xoxb-...)
+    slack.channels.alerts    — channel ID for trade alerts, timeouts
+    slack.channels.reports   — channel ID for daily performance
+    slack.channels.commands  — channel ID for inbound commands
+    slack.channels.log       — channel ID for verbose pipeline logs
+
+Every public function is fault-tolerant: prints a warning on failure
+but never raises, so a Slack outage can never block a trade.
+
+Usage:
+    python3 kairos_alerts.py --test     # send a test message
+    python3 kairos_alerts.py --setup    # create kairos-* channels (needs scope)
+"""
+
+import argparse
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+MONITOR_LOG = os.path.join(SCRIPT_DIR, "kairos_monitor.log")
+
+
+# ── Config ────────────────────────────────────────────────────────────
+
+def _load_slack_config() -> dict:
+    """Load Slack config from kairos_config.json."""
+    config_file = os.path.join(SCRIPT_DIR, "kairos_config.json")
+    defaults = {
+        "bot_token": "",
+        "channels": {
+            "alerts": "",
+            "reports": "",
+            "commands": "",
+            "log": "",
+            "trades": "",
+            "watchlist": "",
+        },
+    }
+    if os.path.exists(config_file):
+        try:
+            with open(config_file) as f:
+                cfg = json.load(f)
+            slack = cfg.get("slack", {})
+            if slack.get("bot_token"):
+                defaults["bot_token"] = slack["bot_token"]
+            if slack.get("channels"):
+                defaults["channels"].update(slack["channels"])
+        except (json.JSONDecodeError, IOError):
+            pass
+    return defaults
+
+
+# ── Low-level helpers ─────────────────────────────────────────────────
+
+def post_message(
+    channel_key: str,
+    text: str,
+    blocks: list | None = None,
+    cfg: dict | None = None,
+) -> bool:
+    """Post a message to a Slack channel by logical name.
+
+    Args:
+        channel_key: one of "alerts", "reports", "commands", "log",
+                     OR a literal channel ID (e.g. "C0A0XJYNM29").
+        text:        plain-text fallback / notification text.
+        blocks:      optional Block Kit blocks for rich formatting.
+        cfg:         override for Slack config.
+
+    Returns True on success, False on failure (never raises).
+    """
+    if cfg is None:
+        cfg = _load_slack_config()
+
+    token = cfg.get("bot_token", "")
+    if not token:
+        print(f"  Slack skipped — no bot_token in kairos_config.json")
+        return False
+
+    channels_map = cfg.get("channels", {})
+    channel_id = channels_map.get(channel_key, channel_key)
+
+    if not channel_id:
+        print(f"  Slack skipped — no channel ID for '{channel_key}'")
+        return False
+
+    try:
+        from slack_sdk import WebClient
+        from slack_sdk.errors import SlackApiError
+
+        client = WebClient(token=token)
+        kwargs = {"channel": channel_id, "text": text}
+        if blocks:
+            kwargs["blocks"] = blocks
+
+        resp = client.chat_postMessage(**kwargs)
+
+        if resp.get("ok"):
+            print(f"  Slack → {channel_key} ({channel_id})")
+            return True
+        else:
+            print(f"  Slack error: {resp.get('error', 'unknown')}")
+            return False
+
+    except Exception as exc:
+        print(f"  WARNING: Slack post failed: {exc}")
+        return False
+
+
+def log_monitor_event(event: str, **fields) -> None:
+    """Append a JSON record to kairos_monitor.log."""
+    record = {
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "event": event,
+        **fields,
+    }
+    try:
+        with open(MONITOR_LOG, "a") as f:
+            f.write(json.dumps(record) + "\n")
+    except IOError as exc:
+        print(f"  WARNING: Could not write to monitor log: {exc}")
+
+
+# ── High-level alert functions ────────────────────────────────────────
+
+def alert_reasoning_timeout(timeout_s: int) -> None:
+    """Alert: Phase 2 reasoning timed out.  → alerts channel."""
+    log_monitor_event(
+        "PHASE2_TIMEOUT",
+        phases=["reason"],
+        asset_class="equity",
+        success=False,
+        error=f"Claude Code reasoning timed out after {timeout_s}s",
+        duration_s=timeout_s,
+    )
+    print(f"  Timeout logged to {MONITOR_LOG}")
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    post_message(
+        "alerts",
+        f":warning: *Kairos Phase 2 Timeout*\n"
+        f"Claude Code reasoning did not produce a decision "
+        f"within {timeout_s}s.\n"
+        f"No trade will be executed this cycle.\n"
+        f"Timestamp: `{ts}`\n"
+        f"Action required: check Claude CLI availability and "
+        f"kairos_prompt.txt contents.",
+    )
+
+
+def alert_trade_executed(
+    decision: dict,
+    execution: dict,
+    confluence: dict | None = None,
+    runner_up_signals: list[str] | None = None,
+    conviction_trade: bool = False,
+    closed_lots: list[dict] | None = None,
+    source_tier: str | None = None,
+) -> None:
+    """Alert: Trade was filled — lists all co-firing signals.  → alerts channel.
+
+    Only call this for Submitted/Filled trades — never for Skipped/Cancelled.
+
+    Args:
+        decision:          the decision dict (action, ticker, quantity, rationale…)
+        execution:         execution result (status, fill_price…)
+        confluence:        confluence scoring result (from compute_confluence)
+        runner_up_signals: signal tags for the runner-up ticker (optional)
+        conviction_trade:  True if this is a Mode C conviction-only trade
+        closed_lots:       for SELL fills — list of closed holding lots from DB
+                           [{entry_price, quantity, holding_days}, ...]
+        source_tier:       "A", "B", or "C" — prepend badge for Tier C hits
+    """
+    # Defense in depth: only post for actual fills, never for HOLD/Skipped/etc.
+    status = execution.get("status", "?")
+    if status not in ("Filled", "Submitted"):
+        return
+
+    action = decision.get("action", "?")
+    ticker = decision.get("ticker", "?")
+    qty = decision.get("quantity", 0)
+    fill_price = execution.get("fill_price")
+    rationale = decision.get("rationale", "")
+    runner_up = decision.get("runner_up", "")
+
+    if conviction_trade:
+        emoji = ":brain:"
+        title = "Kairos Conviction-Only Trade"
+    elif action == "BUY":
+        emoji = ":chart_with_upwards_trend:"
+        title = "Kairos Trade Executed"
+    elif action == "SELL":
+        emoji = ":chart_with_downwards_trend:"
+        title = "Kairos Trade Executed"
+    else:
+        emoji = ":pause_button:"
+        title = "Kairos Trade Executed"
+
+    price_str = f" @ ${fill_price:.2f}" if fill_price else ""
+
+    # ── SELL P&L breakdown ────────────────────────────────────────
+    sell_str = ""
+    if action.upper() == "SELL" and fill_price and closed_lots:
+        total_cost = sum(lot["entry_price"] * lot["quantity"] for lot in closed_lots)
+        total_proceeds = fill_price * sum(lot["quantity"] for lot in closed_lots)
+        gross_pnl = total_proceeds - total_cost
+        avg_entry = total_cost / sum(lot["quantity"] for lot in closed_lots) if closed_lots else 0
+
+        pnl_pct = (gross_pnl / total_cost * 100) if total_cost > 0 else 0.0
+        pnl_sign = "+" if gross_pnl >= 0 else ""
+        pnl_emoji = ":white_check_mark:" if gross_pnl >= 0 else ":x:"
+
+        sell_str = (
+            f"\n{pnl_emoji} *P&L: {pnl_sign}${gross_pnl:,.2f} ({pnl_sign}{pnl_pct:.1f}%)*\n"
+            f"Entry: ${avg_entry:,.2f} \u2192 Exit: ${fill_price:,.2f}  |  {qty} shares\n"
+        )
+        for lot in closed_lots:
+            days = lot["holding_days"]
+            tax_rate = "long-term" if days >= 365 else "short-term"
+            lot_pnl = (fill_price - lot["entry_price"]) * lot["quantity"]
+            sell_str += (
+                f"  \u2022 {lot['quantity']} shares held {days}d ({tax_rate}) "
+                f"\u2192 {'+' if lot_pnl >= 0 else ''}${lot_pnl:,.2f}\n"
+            )
+
+    # Confluence section
+    conf_str = ""
+    if conviction_trade:
+        conv_score = decision.get("conviction", "?")
+        conf_str = f"\n*Mode C — Conviction {conv_score}/10, no HOT signals (1% NLV cap)*\n"
+    elif confluence and confluence.get("score", 0) > 0:
+        signals = confluence.get("signals",
+                                 list(confluence.get("signals_detail", {}).keys()))
+        # multiplier for equity, nlv_pct for crypto
+        sizing_str = (
+            f"{confluence['multiplier']}x sizing"
+            if confluence.get("multiplier")
+            else f"{confluence.get('nlv_pct', 0):.2%} NLV"
+        )
+        conf_str = (
+            f"\n*Confluence: {confluence['tier']} "
+            f"(score {confluence['score']}, {sizing_str})*\n"
+            f"Signals fired:\n"
+        )
+        for sig in signals:
+            conf_str += f"  \u2022 {sig}\n"
+    elif confluence:
+        conf_str = "\n*Confluence: None (no signals)*\n"
+
+    runner_str = ""
+    if runner_up:
+        runner_str = f"\nRunner-up: {runner_up}"
+        if runner_up_signals:
+            runner_str += f" ({', '.join(runner_up_signals)})"
+
+    rat_str = ""
+    if rationale:
+        rat_str = f"\n_{rationale[:200]}_"
+
+    text = (
+        f"{emoji} *{title}*\n"
+        f"{action} {qty} {ticker}{price_str} ({status})"
+        f"{sell_str}{conf_str}{runner_str}{rat_str}"
+    )
+
+    # Prepend Tier C badge if this ticker came from opportunistic watchlist
+    if source_tier:
+        text = format_tier_prefix(ticker, source_tier, text)
+
+    log_monitor_event(
+        "TRADE_EXECUTED",
+        action=action,
+        ticker=ticker,
+        quantity=qty,
+        fill_price=fill_price,
+        status=status,
+        confluence_score=confluence.get("score") if confluence else None,
+        confluence_tier=confluence.get("tier") if confluence else None,
+        conviction_trade=conviction_trade,
+        source_tier=source_tier,
+    )
+
+    # Route BUY/SELL fills to trades channel
+    post_message("trades", text)
+
+
+def alert_trade_blocked(
+    decision: dict,
+    reason: str,
+    confluence: dict | None = None,
+) -> None:
+    """Log a blocked trade to monitor — NO Slack alert for blocked/skipped trades."""
+    action = decision.get("action", "?")
+    ticker = decision.get("ticker", "?")
+    qty = decision.get("quantity", 0)
+
+    log_monitor_event(
+        "TRADE_BLOCKED",
+        action=action,
+        ticker=ticker,
+        quantity=qty,
+        reason=reason,
+        confluence_score=confluence.get("score") if confluence else None,
+    )
+    # Intentionally no post_message — blocked trades are logged only
+
+
+def alert_pipeline_event(message: str, channel: str = "log") -> None:
+    """Generic pipeline event.  Default → log channel."""
+    log_monitor_event("PIPELINE_EVENT", message=message)
+    post_message(channel, message)
+
+
+def send_end_of_day_summary(window: str = "equity") -> None:
+    """Send end-of-day summary to #kairos-reports.
+
+    Args:
+        window: "equity" (4:15 PM ET weekday) or "crypto" (10:05 PM ET daily)
+
+    Pulls today's trades from kairos.db, current portfolio from IBKR,
+    and formats a clean multi-section summary.
+    """
+    import sqlite3
+
+    DB_PATH = os.path.join(SCRIPT_DIR, "kairos.db")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # ── Query today's executed trades ─────────────────────────────
+    buys, sells, realized_pnl, capital_deployed = [], [], 0.0, 0.0
+    tickers_traded = set()
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+
+        rows = conn.execute("""
+            SELECT ticker, action, quantity, execution_price, execution_status,
+                   data_inputs, conviction_trade
+            FROM decisions
+            WHERE timestamp LIKE ? || '%'
+              AND execution_status IN ('Filled', 'Submitted')
+        """, (today,)).fetchall()
+
+        for r in rows:
+            r = dict(r)
+            ticker = r["ticker"]
+            action = r["action"].upper()
+            qty = r.get("quantity", 0)
+            price = r.get("execution_price") or 0
+            tickers_traded.add(ticker)
+
+            if action == "BUY":
+                buys.append(r)
+                capital_deployed += qty * price
+            elif action == "SELL":
+                sells.append(r)
+                # Compute realized P&L from holdings table
+                entry_lots = conn.execute("""
+                    SELECT entry_price, quantity FROM holdings
+                    WHERE ticker = ? AND sold_date LIKE ? || '%'
+                """, (ticker, today)).fetchall()
+                for lot in entry_lots:
+                    realized_pnl += (price - lot["entry_price"]) * lot["quantity"]
+
+        # ── Skipped count for today ─────────────────────────────
+        skipped_count = conn.execute("""
+            SELECT COUNT(*) FROM decisions
+            WHERE timestamp LIKE ? || '%'
+              AND execution_status = 'Skipped'
+        """, (today,)).fetchone()[0]
+
+        conn.close()
+    except Exception as exc:
+        print(f"  WARNING: EOD summary DB query failed: {exc}")
+        buys, sells, skipped_count = [], [], 0
+
+    # ── Query IBKR for current portfolio state ───────────────────
+    nlv, cash, positions_text = 0.0, 0.0, ""
+    unrealized_pnl = 0.0
+    try:
+        from ib_insync import IB
+        import random
+        ib = IB()
+        ib.connect("127.0.0.1", 7497, clientId=random.randint(40, 49), timeout=10)
+
+        wanted = {"NetLiquidation", "TotalCashValue", "UnrealizedPnL"}
+        acct = {v.tag: float(v.value)
+                for v in ib.accountSummary() if v.tag in wanted}
+        nlv = acct.get("NetLiquidation", 0.0)
+        cash = acct.get("TotalCashValue", 0.0)
+        unrealized_pnl = acct.get("UnrealizedPnL", 0.0)
+
+        pos_lines = []
+        for p in ib.positions():
+            sym = p.contract.symbol
+            qty = float(p.position)
+            avg = float(p.avgCost)
+            # Request current price for unrealized P&L per position
+            ib.reqMarketDataType(4)
+            mkt = ib.reqMktData(p.contract)
+            ib.sleep(1)
+            cur_price = None
+            for attr in ("last", "close", "bid", "ask"):
+                val = getattr(mkt, attr, None)
+                if val is not None and val == val and val > 0:
+                    cur_price = float(val)
+                    break
+            ib.cancelMktData(p.contract)
+            if cur_price and qty != 0:
+                pos_pnl = (cur_price - avg) * qty
+                pnl_sign = "+" if pos_pnl >= 0 else ""
+                pos_lines.append(
+                    f"  {sym:<6} {qty:>6.0f} sh  "
+                    f"avg ${avg:>8.2f}  now ${cur_price:>8.2f}  "
+                    f"P&L {pnl_sign}${pos_pnl:,.0f}"
+                )
+            elif qty != 0:
+                pos_lines.append(f"  {sym:<6} {qty:>6.0f} sh  avg ${avg:>8.2f}")
+
+        ib.disconnect()
+        positions_text = "\n".join(pos_lines) if pos_lines else "  (no open positions)"
+    except Exception as exc:
+        print(f"  WARNING: EOD IBKR query failed: {exc}")
+        positions_text = "  (IBKR unavailable)"
+
+    # ── Format summary ───────────────────────────────────────────
+    window_label = "Equity Close (4:15 PM ET)" if window == "equity" else "Crypto Close (10:05 PM ET)"
+    rpnl_sign = "+" if realized_pnl >= 0 else ""
+    upnl_sign = "+" if unrealized_pnl >= 0 else ""
+
+    buy_tickers = ", ".join(r["ticker"] for r in buys) or "(none)"
+    sell_tickers = ", ".join(r["ticker"] for r in sells) or "(none)"
+
+    text = (
+        f":bar_chart: *Kairos End-of-Day Summary — {window_label}*\n"
+        f"Date: {today}\n"
+        f"\n"
+        f"*Trades Executed Today*\n"
+        f"  Buys:  {len(buys)} ({buy_tickers})\n"
+        f"  Sells: {len(sells)} ({sell_tickers})\n"
+        f"  Skipped: {skipped_count}\n"
+    )
+
+    if capital_deployed > 0:
+        text += f"  Capital deployed: ${capital_deployed:,.0f}\n"
+    if sells:
+        text += f"  Realized P&L: {rpnl_sign}${realized_pnl:,.2f}\n"
+
+    text += (
+        f"\n"
+        f"*Portfolio*\n"
+        f"  Total value: ${nlv:,.2f}\n"
+        f"  Cash:        ${cash:,.2f}\n"
+        f"  Unrealized:  {upnl_sign}${unrealized_pnl:,.2f}\n"
+        f"\n"
+        f"*Open Positions*\n"
+        f"```\n{positions_text}\n```"
+    )
+
+    log_monitor_event("EOD_SUMMARY", window=window, buys=len(buys),
+                      sells=len(sells), skipped=skipped_count,
+                      capital_deployed=capital_deployed,
+                      realized_pnl=realized_pnl, nlv=nlv, cash=cash)
+
+    post_message("reports", text)
+
+
+# ── CLI ───────────────────────────────────────────────────────────────
+
+def _cli_test():
+    """Send a test message to verify Slack connectivity."""
+    cfg = _load_slack_config()
+    token = cfg.get("bot_token", "")
+
+    print("=" * 60)
+    print("  KAIROS ALERTS — Connectivity Test")
+    print("=" * 60)
+
+    if not token:
+        print("  ERROR: No bot_token in kairos_config.json")
+        sys.exit(1)
+
+    print(f"  Bot token: {token[:15]}...")
+    print(f"  Channels:")
+    for key, cid in cfg.get("channels", {}).items():
+        print(f"    {key:<10} → {cid}")
+
+    # Auth test
+    try:
+        from slack_sdk import WebClient
+        client = WebClient(token=token)
+        auth = client.auth_test()
+        print(f"\n  Bot name:  {auth['user']}")
+        print(f"  Workspace: {auth['team']}")
+        print(f"  Bot ID:    {auth['user_id']}")
+    except Exception as exc:
+        print(f"\n  Auth FAILED: {exc}")
+        sys.exit(1)
+
+    # Send test to each configured channel
+    print()
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    for key, cid in cfg.get("channels", {}).items():
+        if not cid or cid.startswith("_"):
+            print(f"  {key}: skipped (no ID)")
+            continue
+        ok = post_message(
+            key,
+            f":white_check_mark: *Kairos Alerts Online*\n"
+            f"Channel: `{key}` | Test at `{ts}`\n"
+            f"slack_sdk integration verified.",
+            cfg=cfg,
+        )
+        status = "OK" if ok else "FAILED"
+        print(f"  {key}: {status}")
+
+    print("\n" + "=" * 60)
+
+
+def _cli_setup():
+    """Attempt to create kairos-* channels (requires channels:manage scope)."""
+    cfg = _load_slack_config()
+    token = cfg.get("bot_token", "")
+
+    if not token:
+        print("  ERROR: No bot_token in kairos_config.json")
+        sys.exit(1)
+
+    from slack_sdk import WebClient
+    from slack_sdk.errors import SlackApiError
+
+    client = WebClient(token=token)
+    desired = {
+        "alerts": "kairos-alerts",
+        "reports": "kairos-reports",
+        "commands": "kairos-commands",
+        "log": "kairos-log",
+    }
+
+    created = {}
+    for key, name in desired.items():
+        try:
+            resp = client.conversations_create(name=name, is_private=False)
+            cid = resp["channel"]["id"]
+            created[key] = cid
+            print(f"  Created #{name} → {cid}")
+        except SlackApiError as e:
+            err = e.response["error"]
+            if err == "name_taken":
+                print(f"  #{name} already exists (look up ID manually)")
+            elif err == "missing_scope":
+                print(f"\n  Bot needs 'channels:manage' scope to create channels.")
+                print(f"  Create them manually in Slack, then update kairos_config.json")
+                print(f"  with the channel IDs (right-click channel → View channel details → ID at bottom).")
+                print(f"\n  Channels needed:")
+                for k, n in desired.items():
+                    print(f"    {k:<10} → #{n}")
+                sys.exit(1)
+            else:
+                print(f"  #{name}: {err}")
+
+    if created:
+        # Update config file
+        config_file = os.path.join(SCRIPT_DIR, "kairos_config.json")
+        with open(config_file) as f:
+            full_cfg = json.load(f)
+        for key, cid in created.items():
+            full_cfg["slack"]["channels"][key] = cid
+        with open(config_file, "w") as f:
+            json.dump(full_cfg, f, indent=2)
+        print(f"\n  Updated kairos_config.json with new channel IDs")
+
+
+def format_tier_prefix(ticker: str, source_tier: str, text: str) -> str:
+    """Prepend a Tier C badge to alert text when source_tier is 'C'."""
+    if source_tier == "C":
+        return f"\U0001f195 TIER C | {text}"
+    return text
+
+
+# ── !add-ticker command handler ──────────────────────────────────────
+
+def handle_add_ticker(symbol: str, reason: str) -> dict:
+    """Handle the !add-ticker Slack command.
+
+    Uses yfinance to resolve ticker name/sector, then delegates to
+    kairos_tier_c.add(). Returns a dict suitable for Slack reply.
+
+    Args:
+        symbol: ticker symbol (e.g. "PLTR")
+        reason: user-provided reason string
+
+    Returns:
+        {"ok": True, "message": "..."} or {"ok": False, "error": "..."}
+    """
+    symbol = symbol.upper().strip()
+
+    # Resolve name and sector via yfinance
+    name = None
+    sector = None
+    try:
+        import yfinance as yf
+        info = yf.Ticker(symbol).info
+        name = info.get("longName") or info.get("shortName")
+        sector = info.get("sector")
+    except Exception as exc:
+        print(f"  WARNING: yfinance lookup failed for {symbol}: {exc}")
+
+    if not name:
+        msg = (
+            f"Could not resolve ticker `{symbol}` via yfinance. "
+            f"Please add manually:\n"
+            f"`python kairos_tier_c.py add {symbol} \"Company Name\" \"Sector\" \"{reason}\"`"
+        )
+        post_message("commands", msg)
+        return {"ok": False, "error": msg}
+
+    if not sector:
+        sector = "Unknown"
+
+    # Delegate to kairos_tier_c
+    sys.path.insert(0, SCRIPT_DIR)
+    from kairos_tier_c import add as tier_c_add
+    result = tier_c_add(symbol, name, sector, reason)
+
+    if result["ok"]:
+        entry = result["entry"]
+        reply = (
+            f":white_check_mark: Added `${symbol}` ({name}) to Tier C.\n"
+            f"Sector: {sector} | Expires: {entry['expires_date']}\n"
+            f"Reason: {reason}"
+        )
+        post_message("commands", reply)
+        return {"ok": True, "message": reply}
+    else:
+        post_message("commands", f":x: {result['error']}")
+        return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Kairos Alerts — Slack integration")
+    parser.add_argument("--test", action="store_true", help="Send test message to all channels")
+    parser.add_argument("--setup", action="store_true", help="Create kairos-* channels (needs scope)")
+    args = parser.parse_args()
+
+    if args.setup:
+        _cli_setup()
+    elif args.test:
+        _cli_test()
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()

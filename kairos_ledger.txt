@@ -1,0 +1,63 @@
+--- PATTERN SUMMARY ---
+  Closed trades: 51  Win rate: 51%  Cumulative P&L: -125.7%
+
+  LOSING PATTERNS (2 occurrences):
+    [REALLOCATION]  22W / 16L / 38 total  cumulative -143.7%  ← AVOID
+    [news=neutral macro=stable crypto=mixed legis=neutral THESIS-INVALID]  0W / 7L / 7 total  cumulative -66.3%  ← AVOID
+
+  WINNING PATTERNS (2 occurrences):
+    [TAKE-PROFIT]  2W / 0L / 2 total  cumulative +40.3%  ← REPEAT
+    [news=neutral macro=stable crypto=mixed legis=neutral TAKE-PROFIT]  2W / 0L / 2 total  cumulative +69.6%  ← REPEAT
+
+--- TRADE LOG ---
+2026-04-17 | COIN  | SELL |  TAKE-PROFIT | +22.66% | PASS | 130010
+2026-04-20 | U     | SELL |  TAKE-PROFIT | +17.62% | PASS | 130010
+2026-04-21 | A     | SELL |  REALLOCATION | +6.04% | PASS | 130010
+2026-04-21 | A     | SELL |  REALLOCATION | +4.35% | PASS | 130010
+2026-04-21 | A     | SELL |  REALLOCATION | +4.12% | PASS | 130010
+2026-04-22 | BA    | SELL |  REALLOCATION | +1.80% | PASS | 130010
+2026-04-22 | CAT   | SELL |  REALLOCATION | +2.85% | PASS | 130010
+2026-04-22 | CAT   | SELL |  REALLOCATION | +2.60% | PASS | 130010
+2026-04-22 | CI    | SELL |  REALLOCATION | +2.22% | PASS | 130010
+2026-04-22 | D     | SELL |  REALLOCATION | -3.19% | FAIL | 130010
+2026-04-22 | D     | SELL |  REALLOCATION | -3.53% | FAIL | 130010
+2026-04-22 | DE    | SELL |  REALLOCATION | -3.08% | FAIL | 130010
+2026-04-22 | DE    | SELL |  REALLOCATION | -3.18% | FAIL | 130010
+2026-04-22 | ET    | SELL |  REALLOCATION | +0.32% | PASS | 130010
+2026-04-22 | ET    | SELL |  REALLOCATION | -0.26% | FAIL | 130010
+2026-04-23 | HON   | SELL |  REALLOCATION | -7.18% | FAIL | 130010
+2026-04-23 | F     | SELL |  REALLOCATION | +3.72% | PASS | 130010
+2026-04-23 | MS    | SELL |  REALLOCATION | +6.53% | PASS | 130010
+2026-04-23 | NU    | SELL |  REALLOCATION | -2.27% | FAIL | 130010
+2026-04-23 | NU    | SELL |  REALLOCATION | -2.60% | FAIL | 130010
+2026-04-23 | O     | SELL |  REALLOCATION | +1.65% | PASS | 130010
+2026-04-23 | O     | SELL |  REALLOCATION | +1.49% | PASS | 130010
+2026-04-23 | O     | SELL |  REALLOCATION | +1.44% | PASS | 130010
+2026-04-23 | AAPL  | SELL |  REALLOCATION | -29.01% | FAIL | 130010
+2026-04-23 | AAPL  | SELL |  REALLOCATION | -29.16% | FAIL | 130010
+2026-04-23 | AAPL  | SELL |  REALLOCATION | -29.43% | FAIL | 130010
+2026-04-23 | AAPL  | SELL |  REALLOCATION | -29.68% | FAIL | 130010
+2026-04-23 | AAPL  | SELL |  REALLOCATION | -29.70% | FAIL | 130010
+2026-04-23 | AAPL  | SELL |  REALLOCATION | -30.94% | FAIL | 130010
+2026-04-23 | ABT   | SELL |  STOP-LOSS | -8.66% | FAIL | 130010
+2026-04-23 | SE    | SELL |  REALLOCATION | -3.71% | FAIL | 130010
+2026-04-24 | S     | SELL |  REALLOCATION | +7.64% | PASS | 130010
+2026-04-24 | S     | SELL |  REALLOCATION | +6.16% | PASS | 130010
+2026-04-24 | TT    | SELL |  REALLOCATION | +3.58% | PASS | 130010
+2026-04-24 | TT    | SELL |  REALLOCATION | +3.32% | PASS | 130010
+2026-04-24 | A     | SELL |  REALLOCATION | +1.87% | PASS | 130010
+2026-04-24 | A     | SELL |  REALLOCATION | +1.16% | PASS | 130010
+2026-04-24 | A     | SELL |  REALLOCATION | +0.71% | PASS | 130010
+2026-04-24 | COIN  | SELL |  REALLOCATION | +2.16% | PASS | 130010
+2026-04-24 | SO    | SELL |  REALLOCATION | -2.58% | FAIL | 130010
+2026-04-24 | APP   | SELL |  REALLOCATION | +0.12% | PASS | 130010
+2026-05-11 | ANET  | SELL | news=neutral macro=stable crypto=mixed legis=neutral THESIS-INVALID | -17.93% | FAIL | 095300
+2026-05-11 | BAC   | SELL | news=neutral macro=stable crypto=mixed legis=neutral THESIS-INVALID | -5.13% | FAIL | 095317
+2026-05-11 | CRWD  | SELL | news=neutral macro=stable crypto=mixed legis=neutral TAKE-PROFIT | +26.38% | PASS | 095336
+2026-05-11 | DHR   | SELL | news=neutral macro=stable crypto=mixed legis=neutral THESIS-INVALID | -8.90% | FAIL | 095342
+2026-05-11 | FTNT  | SELL | news=neutral macro=stable crypto=mixed legis=neutral TAKE-PROFIT | +43.25% | PASS | 095356
+2026-05-11 | JPM   | SELL | news=neutral macro=stable crypto=mixed legis=neutral THESIS-INVALID | -4.30% | FAIL | 095411
+2026-05-11 | LW    | SELL | news=neutral macro=stable crypto=mixed legis=neutral THESIS-INVALID | -9.92% | FAIL | 095454
+2026-05-11 | NTRS  | SELL | news=neutral macro=stable crypto=mixed legis=neutral THESIS-INVALID | -5.60% | FAIL | 095518
+2026-05-13 | HUBS  | SELL | news=neutral macro=stable crypto=mixed legis=neutral THESIS-INVALID | -14.56% | FAIL | 094542
+2026-05-13 | MELI  | SELL | news=neutral macro=stable crypto=mixed legis=neutral STOP-LOSS | -16.99% | FAIL | 094706

@@ -1,0 +1,25 @@
+{
+  "timestamp": "2026-05-15 09:17:21 UTC",
+  "signal_tags": {},
+  "rsi_hits": {},
+  "reversion_hits": {},
+  "momentum_hits": {},
+  "macro": {
+    "fired": false,
+    "fear_greed": 43,
+    "details": "fear/greed=43 (<50, cautious); S&P500: market closed (fear/greed only)"
+  },
+  "baseline": {
+    "fired": false,
+    "btc_price": 80562.0,
+    "sma_7d": 80607.29,
+    "pct_above": -0.06
+  },
+  "assets_scanned": [
+    "BTC",
+    "ETH",
+    "BNB",
+    "XRP",
+    "SOL"
+  ]
+}

@@ -1,0 +1,1172 @@
+[
+  {
+    "ticker": "SMC",
+    "name": "Summit Midstream Corporation",
+    "sector": "Energy",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "OpenInsider: $37.9M purchase by Connect Midstream, LLC",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "COE",
+    "name": "51Talk Online Education Group",
+    "sector": "Consumer Defensive",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "OpenInsider: $35.3M purchase by Huang Jack Jiajia",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "OSCR",
+    "name": "Oscar Health, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "OpenInsider: $11.9M purchase by Bertolini Mark T",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "VANI",
+    "name": "Vivani Medical, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "SEC EDGAR Form 4: $2.0m insider purchase by Williams Gregg (1587301 shares @ $1.26)",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "MESO",
+    "name": "Mesoblast Limited",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "OpenInsider: $11.4M purchase by George Gregory",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "HYMC",
+    "name": "Hycroft Mining Holding Corporation",
+    "sector": "Basic Materials",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "OpenInsider: $7.7M purchase by Sprott Eric",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "LW",
+    "name": "Lamb Weston Holdings, Inc.",
+    "sector": "Consumer Defensive",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "OpenInsider: $6.4M purchase by Jana Partners Management, LP",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "SG",
+    "name": "Sweetgreen, Inc.",
+    "sector": "Consumer Cyclical",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "OpenInsider: $3.4M purchase by Goldman Sachs Group Inc",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "CGCT",
+    "name": "Cartesian Growth Corporation III",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "OpenInsider: $3.1M purchase by Cgc III Sponsor LLC",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "HTO",
+    "name": "H2O America",
+    "sector": "Utilities",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "OpenInsider: $3.0M purchase by Atlas Infrastructure Partners (Uk) Ltd.",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "BOT",
+    "name": "BOT",
+    "sector": "Unknown",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "OpenInsider: $2.9M purchase by Fp Strategies LLC",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "RPAY",
+    "name": "Repay Holdings Corporation",
+    "sector": "Technology",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "OpenInsider: $2.3M purchase by Forager Fund, L.P.",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "GF",
+    "name": "The New Germany Fund, Inc.",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "OpenInsider: $2.2M purchase by Saba Capital Management, L.P.",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "MNR",
+    "name": "Mach Natural Resources LP",
+    "sector": "Energy",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "OpenInsider: $2.0M purchase by Ward Tom L.",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "BETR",
+    "name": "Better Home & Finance Holding Company",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "OpenInsider: $1.8M purchase by Framework Ventures IV L.P.",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "ACET",
+    "name": "Adicet Bio, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "OpenInsider: $1.6M purchase by Ra Capital Management, L.P.",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "SVRE",
+    "name": "SaverOne 2014 Ltd.",
+    "sector": "Technology",
+    "tier": "C",
+    "added_date": "2026-04-16",
+    "expires_date": "2026-04-30",
+    "add_reason": "OpenInsider: $2147.5M purchase by Visionwave Holdings, Inc.",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "BEAT",
+    "name": "HeartBeam, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-04-17",
+    "expires_date": "2026-05-01",
+    "add_reason": "OpenInsider: $600K purchase by Strome Mark E",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "BORR",
+    "name": "Borr Drilling Limited",
+    "sector": "Energy",
+    "tier": "C",
+    "added_date": "2026-04-17",
+    "expires_date": "2026-05-01",
+    "add_reason": "SEC EDGAR Form 4: $2.8m insider purchase by Troim Tor Olav (500000 shares @ $5.58)",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "HOMB",
+    "name": "Home BancShares, Inc.",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-04-20",
+    "expires_date": "2026-05-04",
+    "add_reason": "OpenInsider: $2.7M purchase by Allison John W",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "LNBIX",
+    "name": "Lincoln Bain Capital Total Credit Fund - Class I",
+    "sector": "Unknown",
+    "tier": "C",
+    "added_date": "2026-04-20",
+    "expires_date": "2026-05-04",
+    "add_reason": "SEC EDGAR Form 4: $25.0m insider purchase by Lincoln Financial Investments Corp (2472799 shares @ $10.11)",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "KLRA",
+    "name": "Kailera Therapeutics, Inc. Common Stock",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-04-20",
+    "expires_date": "2026-05-04",
+    "add_reason": "OpenInsider: $134.4M purchase by Bain Capital Investors LLC",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "IMDX",
+    "name": "Insight Molecular Diagnostics Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-04-20",
+    "expires_date": "2026-05-04",
+    "add_reason": "OpenInsider: $653K purchase by Broadwood Partners, L.P.",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "THM",
+    "name": "International Tower Hill Mines Ltd.",
+    "sector": "Basic Materials",
+    "tier": "C",
+    "added_date": "2026-04-21",
+    "expires_date": "2026-05-05",
+    "add_reason": "OpenInsider: $12.6M purchase by Paulson & Co. Inc.",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "ALMR",
+    "name": "Alamar Biosciences, Inc. Common Stock",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-04-21",
+    "expires_date": "2026-05-05",
+    "add_reason": "SEC EDGAR Form 4: $4.0m insider purchase by Illumina Innovation Fund II GP, L.L.C. (235294 shares @ $17.00)",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "ARXS",
+    "name": "Arxis, Inc.",
+    "sector": "Industrials",
+    "tier": "C",
+    "added_date": "2026-04-21",
+    "expires_date": "2026-05-05",
+    "add_reason": "SEC EDGAR Form 4: $1.5m insider purchase by Perhamus Kevin Scott (53600 shares @ $28.00)",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "AVEX",
+    "name": "AEVEX Corp.",
+    "sector": "Industrials",
+    "tier": "C",
+    "added_date": "2026-04-21",
+    "expires_date": "2026-05-05",
+    "add_reason": "SEC EDGAR Form 4: $1.0m insider purchase by Raduenz Brian (50000 shares @ $20.00)",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "BURU",
+    "name": "Nuburu, Inc.",
+    "sector": "Industrials",
+    "tier": "C",
+    "added_date": "2026-04-22",
+    "expires_date": "2026-05-06",
+    "add_reason": "OpenInsider: $1.5M purchase by Zamboni Alessandro",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "MXF",
+    "name": "The Mexico Fund, Inc.",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-04-23",
+    "expires_date": "2026-05-07",
+    "add_reason": "SEC EDGAR Form 4: $2.2m insider purchase by Saba Capital Management, L.P. (100000 shares @ $21.83)",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "RZLV",
+    "name": "Rezolve AI PLC",
+    "sector": "Technology",
+    "tier": "C",
+    "added_date": "2026-04-23",
+    "expires_date": "2026-05-07",
+    "add_reason": "SEC EDGAR Form 4: $2.2m insider purchase by Wagner Daniel Maurice (539637 shares @ $4.00)",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "PRLD",
+    "name": "Prelude Therapeutics Incorporated",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-04-23",
+    "expires_date": "2026-05-07",
+    "add_reason": "OpenInsider: $12.5M purchase by Bonita David P",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "ONMD",
+    "name": "OneMedNet Corporation",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-04-24",
+    "expires_date": "2026-05-08",
+    "add_reason": "OpenInsider: $750K purchase by Yu Jeffrey",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "FMAO",
+    "name": "Farmers & Merchants Bancorp, Inc.",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-04-24",
+    "expires_date": "2026-05-08",
+    "add_reason": "Congressional trade: Robert E. Latta purchase disclosed 2026-04-20",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "SMPL",
+    "name": "The Simply Good Foods Company",
+    "sector": "Consumer Defensive",
+    "tier": "C",
+    "added_date": "2026-04-24",
+    "expires_date": "2026-05-08",
+    "add_reason": "OpenInsider: $991K purchase by Kilts James M",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "TORO",
+    "name": "Toro Corp.",
+    "sector": "Energy",
+    "tier": "C",
+    "added_date": "2026-04-24",
+    "expires_date": "2026-05-08",
+    "add_reason": "SEC EDGAR Form 4: $9.5m insider purchase by Panagiotidis Petros Panagiotis (1465990 shares @ $6.45)",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "EFOR",
+    "name": "Everforth, Inc.",
+    "sector": "Unknown",
+    "tier": "C",
+    "added_date": "2026-04-27",
+    "expires_date": "2026-05-11",
+    "add_reason": "SEC EDGAR Form 4: $1.0m insider purchase by Hanson Theodore S. (51965 shares @ $19.24)",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "AB",
+    "name": "AllianceBernstein Holding L.P.",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-04-27",
+    "expires_date": "2026-05-11",
+    "add_reason": "OpenInsider: $2.6M purchase by Pm Alpha Dac",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "WASH",
+    "name": "Washington Trust Bancorp, Inc.",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-04-27",
+    "expires_date": "2026-05-11",
+    "add_reason": "OpenInsider: $998K purchase by Brown James Cannon",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "NOMA",
+    "name": "Nomadar Corp.",
+    "sector": "Consumer Cyclical",
+    "tier": "C",
+    "added_date": "2026-04-27",
+    "expires_date": "2026-05-11",
+    "add_reason": "OpenInsider: $644K purchase by Sport City Cadiz S.L.",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "GAME",
+    "name": "GameSquare Holdings, Inc.",
+    "sector": "Communication Services",
+    "tier": "C",
+    "added_date": "2026-04-28",
+    "expires_date": "2026-05-12",
+    "add_reason": "SEC EDGAR Form 4: $0.6m insider purchase by Blue & Silver Ventures, Ltd. (922890 shares @ $0.60)",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "CHTR",
+    "name": "Charter Communications, Inc.",
+    "sector": "Communication Services",
+    "tier": "C",
+    "added_date": "2026-04-28",
+    "expires_date": "2026-05-12",
+    "add_reason": "OpenInsider: $1.2M purchase by Winfrey Christopher L",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "NBP",
+    "name": "NovaBridge Biosciences",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-04-28",
+    "expires_date": "2026-05-12",
+    "add_reason": "SEC EDGAR Form 4: $0.6m insider purchase by Hagler Mark Arnold (230000 shares @ $2.51)",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "DKI",
+    "name": "Darkiris Inc.",
+    "sector": "Communication Services",
+    "tier": "C",
+    "added_date": "2026-04-28",
+    "expires_date": "2026-05-12",
+    "add_reason": "OpenInsider: $500K purchase by Hong Zhifang",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "TRAW",
+    "name": "Traws Pharma, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-04-29",
+    "expires_date": "2026-05-13",
+    "add_reason": "OpenInsider: $998K purchase by Orbimed Advisors LLC",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "BDC",
+    "name": "Belden Inc.",
+    "sector": "Technology",
+    "tier": "C",
+    "added_date": "2026-05-01",
+    "expires_date": "2026-05-15",
+    "add_reason": "OpenInsider: $6.0M purchase by Assured Guaranty Ltd",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "CXIIU",
+    "name": "Churchill Capital Corp XII Units",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-05-01",
+    "expires_date": "2026-05-15",
+    "add_reason": "OpenInsider: $3.5M purchase by Klein Michael Stuart",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "IBATF",
+    "name": "International Battery Metals Ltd.",
+    "sector": "Basic Materials",
+    "tier": "C",
+    "added_date": "2026-05-01",
+    "expires_date": "2026-05-15",
+    "add_reason": "OpenInsider: $2.7M purchase by Warnock Jacob Aaron",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "IPX",
+    "name": "IperionX Limited",
+    "sector": "Basic Materials",
+    "tier": "C",
+    "added_date": "2026-05-01",
+    "expires_date": "2026-05-15",
+    "add_reason": "OpenInsider: $2.1M purchase by Hannigan Todd",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "ZBIO",
+    "name": "Zenas BioPharma, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-01",
+    "expires_date": "2026-05-15",
+    "add_reason": "OpenInsider: $1.1M purchase by Moulder Leon O Jr",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "TEN",
+    "name": "Tsakos Energy Navigation Limited",
+    "sector": "Energy",
+    "tier": "C",
+    "added_date": "2026-05-01",
+    "expires_date": "2026-05-15",
+    "add_reason": "OpenInsider: $998K purchase by Tsakos Nikolaos",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "PDX",
+    "name": "PIMCO Dynamic Income Strategy Fund",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-05-01",
+    "expires_date": "2026-05-15",
+    "add_reason": "OpenInsider: $592K purchase by Ivascyn Daniel J",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "PSUS",
+    "name": "Pershing Square USA, Ltd.",
+    "sector": "Unknown",
+    "tier": "C",
+    "added_date": "2026-05-01",
+    "expires_date": "2026-05-15",
+    "add_reason": "OpenInsider: $240.9M purchase by Ackman William A",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "SUNE",
+    "name": "SUNation Energy Inc.",
+    "sector": "Technology",
+    "tier": "C",
+    "added_date": "2026-05-01",
+    "expires_date": "2026-05-15",
+    "add_reason": "SEC EDGAR Form 4: $1.0m insider purchase by Maskin Scott (554712 shares @ $1.77)",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "CECO",
+    "name": "CECO Environmental Corp.",
+    "sector": "Industrials",
+    "tier": "C",
+    "added_date": "2026-05-01",
+    "expires_date": "2026-05-15",
+    "add_reason": "OpenInsider: $1.1M purchase by Wallman Richard F",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "TXT",
+    "name": "Textron Inc.",
+    "sector": "Industrials",
+    "tier": "C",
+    "added_date": "2026-05-01",
+    "expires_date": "2026-05-15",
+    "add_reason": "OpenInsider: $989K purchase by Kennedy Thomas A",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "AVLN",
+    "name": "Avalyn Pharma Inc. Common Stock",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-01",
+    "expires_date": "2026-05-15",
+    "add_reason": "OpenInsider: $5.0M purchase by Carroll Jill",
+    "expiry_alerted": true
+  },
+  {
+    "ticker": "CSGP",
+    "name": "CoStar Group, Inc.",
+    "sector": "Real Estate",
+    "tier": "C",
+    "added_date": "2026-05-04",
+    "expires_date": "2026-05-18",
+    "add_reason": "SEC EDGAR Form 4: $2.4m insider purchase by FLORANCE ANDREW C (68330 shares @ $35.17)",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "SRAD",
+    "name": "Sportradar Group AG",
+    "sector": "Technology",
+    "tier": "C",
+    "added_date": "2026-05-04",
+    "expires_date": "2026-05-18",
+    "add_reason": "OpenInsider: $843K purchase by Walder Marc",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "JEF",
+    "name": "Jefferies Financial Group Inc.",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-05-04",
+    "expires_date": "2026-05-18",
+    "add_reason": "SEC EDGAR Form 4: $310.0m insider purchase by SUMITOMO MITSUI FINANCIAL GROUP, INC. (6429337 shares @ $48.22)",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "FGBI",
+    "name": "First Guaranty Bancshares, Inc.",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-05-04",
+    "expires_date": "2026-05-18",
+    "add_reason": "OpenInsider: $1000K purchase by Smith Edgar R. III",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "GVH",
+    "name": "Globavend Holdings Limited",
+    "sector": "Industrials",
+    "tier": "C",
+    "added_date": "2026-05-04",
+    "expires_date": "2026-05-18",
+    "add_reason": "SEC EDGAR Form 4: $3.5m insider purchase by Yu Tsz Ngo (57224 shares @ $61.16)",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "UUU",
+    "name": "Universal Safety Products, Inc",
+    "sector": "Industrials",
+    "tier": "C",
+    "added_date": "2026-05-04",
+    "expires_date": "2026-05-18",
+    "add_reason": "OpenInsider: $891K purchase by Ault Milton C III",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "SPTX",
+    "name": "Seaport Therapeutics, Inc. Common Stock",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-04",
+    "expires_date": "2026-05-18",
+    "add_reason": "OpenInsider: $19.8M purchase by Arch Venture Partners Xii, LLC",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "TMUS",
+    "name": "T-Mobile US, Inc.",
+    "sector": "Communication Services",
+    "tier": "C",
+    "added_date": "2026-05-04",
+    "expires_date": "2026-05-18",
+    "add_reason": "OpenInsider: $1.0M purchase by Almeida Andre",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "PS",
+    "name": "Pershing Square Inc.",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-05-05",
+    "expires_date": "2026-05-19",
+    "add_reason": "OpenInsider: $19.0M purchase by Ackman William A",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "COAG",
+    "name": "Hemab Therapeutics Holdings, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-09",
+    "expires_date": "2026-05-23",
+    "add_reason": "OpenInsider: $52.2M purchase by Ra Capital Management, L.P.",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "ALKT",
+    "name": "Alkami Technology, Inc.",
+    "sector": "Technology",
+    "tier": "C",
+    "added_date": "2026-05-09",
+    "expires_date": "2026-05-23",
+    "add_reason": "OpenInsider: $34.7M purchase by General Atlantic Genpar (Bermuda), L.P.",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "GOLD",
+    "name": "Gold.com, Inc.",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-05-09",
+    "expires_date": "2026-05-23",
+    "add_reason": "OpenInsider: $23.6M purchase by Tether Global Investments Fund, S.I.C.A.F., S.A.",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "POOL",
+    "name": "Pool Corporation",
+    "sector": "Industrials",
+    "tier": "C",
+    "added_date": "2026-05-09",
+    "expires_date": "2026-05-23",
+    "add_reason": "SEC EDGAR Form 4: $1.9m insider purchase by PEREZ DE LA MESA MANUEL J (10000 shares @ $190.00)",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "GEHC",
+    "name": "GE HealthCare Technologies Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-10",
+    "expires_date": "2026-05-24",
+    "add_reason": "OpenInsider: $5.0M purchase by Culp H Lawrence Jr",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "PAM",
+    "name": "Pampa Energ\u00eda S.A.",
+    "sector": "Industrials",
+    "tier": "C",
+    "added_date": "2026-05-10",
+    "expires_date": "2026-05-24",
+    "add_reason": "OpenInsider: $4.1M purchase by Mariani Gustavo",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "NSP",
+    "name": "Insperity, Inc.",
+    "sector": "Industrials",
+    "tier": "C",
+    "added_date": "2026-05-10",
+    "expires_date": "2026-05-24",
+    "add_reason": "OpenInsider: $2.9M purchase by Sarvadi Paul J",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "OFIX",
+    "name": "Orthofix Medical Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-10",
+    "expires_date": "2026-05-24",
+    "add_reason": "OpenInsider: $2.2M purchase by Engine Capital Management, LP",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "RLYB",
+    "name": "Rallybio Corporation",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-10",
+    "expires_date": "2026-05-24",
+    "add_reason": "OpenInsider: $2.2M purchase by Adar1 Capital Management, LLC",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "BCML",
+    "name": "BayCom Corp",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-05-10",
+    "expires_date": "2026-05-24",
+    "add_reason": "OpenInsider: $998K purchase by Black William J",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "TLX",
+    "name": "Telix Pharmaceuticals Limited",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-10",
+    "expires_date": "2026-05-24",
+    "add_reason": "OpenInsider: $997K purchase by Behrenbruch Christian",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "ANGX",
+    "name": "Angel Studios, Inc.",
+    "sector": "Communication Services",
+    "tier": "C",
+    "added_date": "2026-05-10",
+    "expires_date": "2026-05-24",
+    "add_reason": "OpenInsider: $983K purchase by Sarowitz Steven I",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "GTE",
+    "name": "Gran Tierra Energy Inc.",
+    "sector": "Energy",
+    "tier": "C",
+    "added_date": "2026-05-10",
+    "expires_date": "2026-05-24",
+    "add_reason": "OpenInsider: $891K purchase by Lm Asset Management Inc.",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "PATK",
+    "name": "Patrick Industries, Inc.",
+    "sector": "Consumer Cyclical",
+    "tier": "C",
+    "added_date": "2026-05-10",
+    "expires_date": "2026-05-24",
+    "add_reason": "OpenInsider: $880K purchase by Nemeth Andy L",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "OPCH",
+    "name": "Option Care Health, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-10",
+    "expires_date": "2026-05-24",
+    "add_reason": "OpenInsider: $784K purchase by Kraemer Harry M Jansen Jr",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "L",
+    "name": "Loews Corporation",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-05-10",
+    "expires_date": "2026-05-24",
+    "add_reason": "OpenInsider: $527K purchase by Robusto Dino",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "WTW",
+    "name": "Willis Towers Watson Public Limited Company",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-05-10",
+    "expires_date": "2026-05-24",
+    "add_reason": "OpenInsider: $510K purchase by Hess Carl Aaron",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "OLED",
+    "name": "Universal Display Corporation",
+    "sector": "Technology",
+    "tier": "C",
+    "added_date": "2026-05-11",
+    "expires_date": "2026-05-25",
+    "add_reason": "OpenInsider: $1.0M purchase by Abramson Steven V",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "PSN",
+    "name": "Parsons Corporation",
+    "sector": "Technology",
+    "tier": "C",
+    "added_date": "2026-05-11",
+    "expires_date": "2026-05-25",
+    "add_reason": "OpenInsider: $625K purchase by Smith Carey A.",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "TXO",
+    "name": "TXO Partners, L.P.",
+    "sector": "Energy",
+    "tier": "C",
+    "added_date": "2026-05-11",
+    "expires_date": "2026-05-25",
+    "add_reason": "OpenInsider: $9.5M purchase by Simpson Bob R",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "ATRA",
+    "name": "Atara Biotherapeutics, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-11",
+    "expires_date": "2026-05-25",
+    "add_reason": "OpenInsider: $4.7M purchase by Ecor1 Capital, LLC",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "ACEL",
+    "name": "Accel Entertainment, Inc.",
+    "sector": "Consumer Cyclical",
+    "tier": "C",
+    "added_date": "2026-05-11",
+    "expires_date": "2026-05-25",
+    "add_reason": "OpenInsider: $578K purchase by Wardinski Bruce D",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "PLSE",
+    "name": "Pulse Biosciences, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-11",
+    "expires_date": "2026-05-25",
+    "add_reason": "OpenInsider: $13.0M purchase by Duggan Robert W",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "ATEC",
+    "name": "Alphatec Holdings, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-11",
+    "expires_date": "2026-05-25",
+    "add_reason": "OpenInsider: $996K purchase by Valentine Keith",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "WGS",
+    "name": "GeneDx Holdings Corp.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-12",
+    "expires_date": "2026-05-26",
+    "add_reason": "OpenInsider: $46.8M purchase by Meister Keith A.",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "MOBI",
+    "name": "Mobia Medical, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-12",
+    "expires_date": "2026-05-26",
+    "add_reason": "OpenInsider: $8.0M purchase by Harrington William T",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "ODTX",
+    "name": "Odyssey Therapeutics, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-12",
+    "expires_date": "2026-05-26",
+    "add_reason": "SEC EDGAR Form 4: $4.0m insider purchase by SR ONE CAPITAL MANAGEMENT, LLC (222222 shares @ $18.00)",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "LZ",
+    "name": "LegalZoom.com, Inc.",
+    "sector": "Industrials",
+    "tier": "C",
+    "added_date": "2026-05-12",
+    "expires_date": "2026-05-26",
+    "add_reason": "OpenInsider: $769K purchase by Stibel Jeffrey M",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "CAI",
+    "name": "Caris Life Sciences, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-12",
+    "expires_date": "2026-05-26",
+    "add_reason": "SEC EDGAR Form 4: $0.5m insider purchase by Vacirca Jeff L (31050 shares @ $16.15)",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "CVBF",
+    "name": "CVB Financial Corp.",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-05-12",
+    "expires_date": "2026-05-26",
+    "add_reason": "OpenInsider: $1000K purchase by Borba George A Jr",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "AXIA",
+    "name": "AXIA Energia SA",
+    "sector": "Utilities",
+    "tier": "C",
+    "added_date": "2026-05-12",
+    "expires_date": "2026-05-26",
+    "add_reason": "OpenInsider: $43.5M purchase by Batista De Lima Filho Pedro",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "MKTW",
+    "name": "MarketWise, Inc.",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-05-12",
+    "expires_date": "2026-05-26",
+    "add_reason": "OpenInsider: $975K purchase by Stansberry Frank Porter",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "BSM",
+    "name": "Black Stone Minerals, L.P.",
+    "sector": "Energy",
+    "tier": "C",
+    "added_date": "2026-05-12",
+    "expires_date": "2026-05-26",
+    "add_reason": "OpenInsider: $909K purchase by Carter Thomas L Jr",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "FCNCA",
+    "name": "First Citizens BancShares, Inc.",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-05-13",
+    "expires_date": "2026-05-27",
+    "add_reason": "OpenInsider: $10.3M purchase by Holding Frank B Jr",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "APC",
+    "name": "ARKO Petroleum Corp.",
+    "sector": "Energy",
+    "tier": "C",
+    "added_date": "2026-05-13",
+    "expires_date": "2026-05-27",
+    "add_reason": "SEC EDGAR Form 4: $1.8m insider purchase by Blackstone Holdings I L.P. (100000 shares @ $17.66)",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "FOUR",
+    "name": "Shift4 Payments, Inc.",
+    "sector": "Technology",
+    "tier": "C",
+    "added_date": "2026-05-13",
+    "expires_date": "2026-05-27",
+    "add_reason": "SEC EDGAR Form 4: $8.1m insider purchase by Isaacman Jared (195500 shares @ $41.41)",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "STIM",
+    "name": "Neuronetics, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-13",
+    "expires_date": "2026-05-27",
+    "add_reason": "SEC EDGAR Form 4: $0.6m insider purchase by Chernett Jorey (475000 shares @ $1.34)",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "WCN",
+    "name": "Waste Connections, Inc.",
+    "sector": "Industrials",
+    "tier": "C",
+    "added_date": "2026-05-13",
+    "expires_date": "2026-05-27",
+    "add_reason": "SEC EDGAR Form 4: $7.6m insider purchase by MITTELSTAEDT RONALD J (50000 shares @ $152.24)",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "MRP",
+    "name": "Millrose Properties, Inc.",
+    "sector": "Real Estate",
+    "tier": "C",
+    "added_date": "2026-05-13",
+    "expires_date": "2026-05-27",
+    "add_reason": "SEC EDGAR Form 4: $5.3m insider purchase by Richman Darren (195000 shares @ $27.31)",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "VRDN",
+    "name": "Viridian Therapeutics, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-13",
+    "expires_date": "2026-05-27",
+    "add_reason": "OpenInsider: $20.0M purchase by Fairmount Funds Management LLC",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "ARTV",
+    "name": "Artiva Biotherapeutics, Inc.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-13",
+    "expires_date": "2026-05-27",
+    "add_reason": "OpenInsider: $75.0M purchase by Ra Capital Management, L.P.",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "NOMD",
+    "name": "Nomad Foods Limited",
+    "sector": "Consumer Defensive",
+    "tier": "C",
+    "added_date": "2026-05-13",
+    "expires_date": "2026-05-27",
+    "add_reason": "OpenInsider: $6.6M purchase by Gottesman Noam",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "PFLEX",
+    "name": "PIMCO Flexible Credit Income Fund",
+    "sector": "Unknown",
+    "tier": "C",
+    "added_date": "2026-05-13",
+    "expires_date": "2026-05-27",
+    "add_reason": "OpenInsider: $2.0M purchase by Mittal Mohit",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "BLND",
+    "name": "Blend Labs, Inc.",
+    "sector": "Technology",
+    "tier": "C",
+    "added_date": "2026-05-14",
+    "expires_date": "2026-05-28",
+    "add_reason": "OpenInsider: $2.8M purchase by Haveli Investments, L.P.",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "FCN",
+    "name": "FTI Consulting, Inc.",
+    "sector": "Industrials",
+    "tier": "C",
+    "added_date": "2026-05-14",
+    "expires_date": "2026-05-28",
+    "add_reason": "SEC EDGAR Form 4: $1.0m insider purchase by Gunby Steven Henry (6658 shares @ $143.87)",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "IIIV",
+    "name": "i3 Verticals, Inc.",
+    "sector": "Technology",
+    "tier": "C",
+    "added_date": "2026-05-14",
+    "expires_date": "2026-05-28",
+    "add_reason": "OpenInsider: $962K purchase by Daily Gregory S",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "AAT",
+    "name": "American Assets Trust, Inc.",
+    "sector": "Real Estate",
+    "tier": "C",
+    "added_date": "2026-05-14",
+    "expires_date": "2026-05-28",
+    "add_reason": "OpenInsider: $3.6M purchase by Rady Ernest S",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "PFX",
+    "name": "PhenixFIN Corporation",
+    "sector": "Financial Services",
+    "tier": "C",
+    "added_date": "2026-05-14",
+    "expires_date": "2026-05-28",
+    "add_reason": "OpenInsider: $1.7M purchase by Lorber David A",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "LODE",
+    "name": "Comstock Inc.",
+    "sector": "Basic Materials",
+    "tier": "C",
+    "added_date": "2026-05-14",
+    "expires_date": "2026-05-28",
+    "add_reason": "OpenInsider: $1.4M purchase by Pei Steven Yu-Tsung",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "JYNT",
+    "name": "The Joint Corp.",
+    "sector": "Healthcare",
+    "tier": "C",
+    "added_date": "2026-05-14",
+    "expires_date": "2026-05-28",
+    "add_reason": "OpenInsider: $1.3M purchase by Jobson Charles E",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "BH",
+    "name": "Biglari Holdings Inc.",
+    "sector": "Consumer Cyclical",
+    "tier": "C",
+    "added_date": "2026-05-15",
+    "expires_date": "2026-05-29",
+    "add_reason": "OpenInsider: $13.4M purchase by Biglari, Sardar",
+    "expiry_alerted": false
+  },
+  {
+    "ticker": "UA",
+    "name": "Under Armour, Inc.",
+    "sector": "Consumer Cyclical",
+    "tier": "C",
+    "added_date": "2026-05-15",
+    "expires_date": "2026-05-29",
+    "add_reason": "OpenInsider: $5.9M purchase by Watsa V Prem Et Al",
+    "expiry_alerted": false
+  }
+]

@@ -181,6 +181,14 @@ def check_thresholds(ticker_data: dict, config: dict) -> tuple[bool, dict]:
     profile = ticker_data.get("profile", {})
     candle = ticker_data.get("candle", [])
     
+    # Guard against None values from failed fetches
+    if quote is None:
+        quote = {}
+    if profile is None:
+        profile = {}
+    if candle is None:
+        candle = []
+    
     details = {
         "ticker": ticker,
         "passes": True,
@@ -196,8 +204,8 @@ def check_thresholds(ticker_data: dict, config: dict) -> tuple[bool, dict]:
     # Extract values
     price = quote.get("c")
     today_volume = quote.get("v")
-    avg_volume_30d = profile.get("avgVolume") if profile else None
-    market_cap = profile.get("marketCapitalization") if profile else None
+    avg_volume_30d = profile.get("avgVolume")
+    market_cap = profile.get("marketCapitalization")
     
     # Compute 5-day price change
     price_change_5d_pct = None
