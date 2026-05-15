@@ -1,8 +1,0 @@
-Timestamp:       2026-03-25 11:09:58 UTC
-Ticker:          AAPL
-Action:          BUY
-Quantity:        1
-Fill Price:      $254.00
-Order Status:    Filled
-Acct Balance:    $1,013,163.48 (was $1,013,163.48)
-------------------------------------------------------------

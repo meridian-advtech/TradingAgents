@@ -1768,7 +1768,6 @@ def run_scheduled_cycle(args) -> None:
     """
     run_equity = False
     run_crypto = False
-    run_crypto = False
     sched = _load_scheduler_config()
     state = _load_state()
     cycle = state["cycle_count"]
