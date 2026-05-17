@@ -181,7 +181,11 @@ def fetch_portfolio_state(ib: IB) -> dict:
         sym = p.contract.symbol
         qty = float(p.position)
         avg = float(p.avgCost)
-        mkt_val = abs(qty * avg)  # approximate market value
+        # Use live IBKR market value if available, fall back to qty × avg_cost
+        if hasattr(p, 'marketValue') and p.marketValue is not None and p.marketValue != 0:
+            mkt_val = abs(float(p.marketValue))
+        else:
+            mkt_val = abs(qty * avg)
         positions[sym] = {"qty": qty, "avg_cost": round(avg, 2), "market_value": round(mkt_val, 2)}
 
         sector = lookup_sector(sym)
@@ -507,6 +511,81 @@ def _lookup_sector(ticker: str) -> str | None:
         return None
 
 
+# ── Trim trigger ──────────────────────────────────────────────────────
+
+def check_trim_triggers(portfolio: dict, ib: IB, nlv: float) -> list[dict]:
+    """Scan positions for oversized + underwater holdings and generate partial SELLs.
+
+    A position triggers a trim if:
+      - It exceeds 8% of NLV, AND
+      - Current price is below avg_cost (underwater)
+
+    Trims bring the position down to 6% of NLV.
+    Returns list of executed trim results for logging.
+    """
+    trims_executed = []
+    if nlv <= 0:
+        return trims_executed
+
+    for sym, pos_data in portfolio["positions"].items():
+        mkt_val = pos_data["market_value"]
+        weight = mkt_val / nlv
+        avg_cost = pos_data["avg_cost"]
+
+        if weight <= 0.08:
+            continue
+
+        # Fetch live price to confirm underwater
+        current_price = get_reference_price(ib, sym)
+        if current_price is None:
+            continue
+
+        if current_price >= avg_cost:
+            continue  # not underwater
+
+        # Trim to 6% of NLV
+        target_value = nlv * 0.06
+        current_value = pos_data["qty"] * current_price
+        excess_value = current_value - target_value
+        if excess_value <= 0:
+            continue
+
+        trim_qty = int(excess_value / current_price)
+        if trim_qty < 1:
+            continue
+
+        reason = (f"TRIM: oversized + underwater — {sym} at {weight:.1%} of NLV, "
+                  f"price ${current_price:.2f} < avg ${avg_cost:.2f}, trimming {trim_qty} shares to ~6%")
+        print(f"  {reason}")
+
+        # Execute the trim
+        execution = execute_order(ib, sym, "SELL", trim_qty)
+        trims_executed.append({"ticker": sym, "qty": trim_qty, "execution": execution, "reason": reason})
+
+        # Log to decisions log
+        trim_trade = {
+            "action": "SELL",
+            "ticker": sym,
+            "quantity": trim_qty,
+            "rationale": reason,
+            "sector": "",
+        }
+        log_execution({"trades": [], "tickers_evaluated": []}, trim_trade, execution)
+
+        # Slack alert
+        try:
+            from kairos_alerts import post_message
+            status = execution.get("status", "Unknown")
+            fill = f" @ ${execution['fill_price']:.2f}" if execution.get("fill_price") else ""
+            post_message("alerts",
+                f":scissors: *{reason}*\n"
+                f"Sold {trim_qty} shares{fill} — status: {status}")
+        except Exception:
+            pass
+
+    return trims_executed
+
+
 # ── main ────────────────────────────────────────────────────────────
 
 def main():
@@ -583,6 +662,18 @@ def main():
             pct = val / nlv * 100 if nlv > 0 else 0
             print(f"    {sector:<25} ${val:>12,.0f}  ({pct:.1f}%)")
 
+    # ── Trim triggers (oversized + underwater positions) ──────────
+    print(banner("Trim Check"))
+    trims = check_trim_triggers(portfolio, ib, nlv)
+    if trims:
+        print(f"  Executed {len(trims)} trim(s)")
+        # Refresh portfolio state after trims
+        portfolio = fetch_portfolio_state(ib)
+        nlv = portfolio["nlv"]
+        cash = portfolio["cash"]
+    else:
+        print("  No trim triggers.")
+
     # ── Execute each trade with pre-execution guardrail check ─────
     executed_count = 0
     skipped_count = 0
@@ -626,6 +717,53 @@ def main():
             if qty != original_qty:
                 print(f"    Regime sizing: {regime_name} → {int(pos_mult*100)}% cap "
                       f"({original_qty} → {qty} shares)")
+
+        # ── Unrealized loss gate (BUY adds only) ─────────────────
+        if action == "BUY" and ticker in portfolio["positions"]:
+            existing_avg = portfolio["positions"][ticker]["avg_cost"]
+            if existing_avg > 0 and ref_price is not None:
+                unrealized_pnl_pct = (ref_price - existing_avg) / existing_avg
+                if unrealized_pnl_pct < -0.05:
+                    reason = (f"Unrealized loss gate: {ticker} at {unrealized_pnl_pct:.1%} "
+                              f"(< -5%), blocking add entirely")
+                    print(f"    BLOCKED: {reason}")
+                    skipped_count += 1
+                    skip_reasons.append({"ticker": ticker, "reason": reason})
+                    log_execution(decision, trade, {"status": "Skipped", "reason": reason})
+                    continue
+                elif unrealized_pnl_pct < -0.02:
+                    # Between -2% and -5%: require confluence score ≥ 4
+                    if confluence["score"] < 4:
+                        reason = (f"Unrealized loss gate: {ticker} at {unrealized_pnl_pct:.1%}, "
+                                  f"confluence {confluence['score']} < 4 required")
+                        print(f"    BLOCKED: {reason}")
+                        skipped_count += 1
+                        skip_reasons.append({"ticker": ticker, "reason": reason})
+                        log_execution(decision, trade, {"status": "Skipped", "reason": reason})
+                        continue
+                    else:
+                        print(f"    Unrealized loss: {unrealized_pnl_pct:.1%} but confluence "
+                              f"{confluence['score']} ≥ 4, proceeding")
+
+        # ── Portfolio-weight penalty on adds (BUY only) ───────────
+        if action == "BUY" and qty > 0 and nlv > 0:
+            current_pos_val = portfolio["positions"].get(ticker, {}).get("market_value", 0)
+            current_weight = current_pos_val / nlv
+            if current_weight > 0.06:
+                # Linear scale: 6%→full, 8%→50%, 10%→10%
+                if current_weight >= 0.10:
+                    weight_mult = 0.10
+                elif current_weight >= 0.08:
+                    # Linear from 0.50 at 8% to 0.10 at 10%
+                    weight_mult = 0.50 - (current_weight - 0.08) / 0.02 * 0.40
+                else:
+                    # Linear from 1.0 at 6% to 0.50 at 8%
+                    weight_mult = 1.0 - (current_weight - 0.06) / 0.02 * 0.50
+                original_qty = qty
+                qty = max(1, int(qty * weight_mult))
+                if qty != original_qty:
+                    print(f"    Weight penalty: position at {current_weight:.1%} of NLV → "
+                          f"{weight_mult:.0%} sizing ({original_qty} → {qty} shares)")
 
         trade["_confluence"] = {
             "score": confluence["score"],
