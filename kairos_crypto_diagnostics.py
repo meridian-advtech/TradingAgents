@@ -215,17 +215,21 @@ def log_crypto_diagnostics():
             f.write(json.dumps(diagnostics, indent=2))
             f.write('\n' + '='*60 + '\n')
         
-        # Log to Slack
-        try:
-            from kairos_alerts import post_message
-            slack_message = f"*CRYPTO DIAGNOSTICS*\n```{json.dumps(diagnostics, indent=2)}```"
-            success = post_message("log", slack_message)
-            if success:
-                logging.info("Posted crypto diagnostics to #kairos-log")
-            else:
-                logging.warning("Slack posting to #kairos-log failed")
-        except Exception as e:
-            logging.warning(f"Slack posting failed: {e}")
+        # Log to Slack — only when at least one signal fires (suppress all-false noise)
+        any_signal = any(diagnostics['signals'].values())
+        if any_signal:
+            try:
+                from kairos_alerts import post_message
+                slack_message = f"*CRYPTO DIAGNOSTICS*\n```{json.dumps(diagnostics, indent=2)}```"
+                success = post_message("log", slack_message)
+                if success:
+                    logging.info("Posted crypto diagnostics to #kairos-log")
+                else:
+                    logging.warning("Slack posting to #kairos-log failed")
+            except Exception as e:
+                logging.warning(f"Slack posting failed: {e}")
+        else:
+            logging.info("Crypto diagnostics: no signals fired — skipping Slack post")
         
         return diagnostics
         
