@@ -88,12 +88,12 @@
     "_comment": "NLV-based conviction sizing. Tiers set position as % of Net Liquidation Value. Guardrails: 1% cash reserve (commissions + settlement), 25% sector max, 10% single position max."
   },
   "tier0_filter": {
-    "min_30day_avg_volume": 500000,
+    "min_30day_avg_volume": 0,
     "min_price": 5.0,
-    "min_market_cap": 1000000000,
+    "min_market_cap": 0,
     "min_5day_price_change_pct": 0.0,
     "min_today_volume_ratio": 0.0,
-    "_comment": "Tier 0 pre-filter. min_today_volume_ratio and min_5day_price_change_pct both set to 0.0 \u2014 these are intraday/short-term gates that block valid opportunities. Price, market cap, and avg volume filters remain active."
+    "_comment": "Tier 0 pre-filter. All thresholds set to 0 \u2014 Finnhub profile API returning missing data for market_cap and avg_volume_30d, causing all 714 tickers to fail. Ollama Tier 1 handles quality filtering. Only min_price ($5) remains active to exclude penny stocks."
   },
   "reallocation": {
     "MIN_CONVICTION": 7,
