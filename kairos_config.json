@@ -91,9 +91,9 @@
     "min_30day_avg_volume": 500000,
     "min_price": 5.0,
     "min_market_cap": 1000000000,
-    "min_5day_price_change_pct": 1.5,
+    "min_5day_price_change_pct": 0.0,
     "min_today_volume_ratio": 0.0,
-    "_comment": "Tier 0 rules-based pre-filter thresholds. min_today_volume_ratio set to 0.0 \u2014 intraday volume check moved to execution phase to avoid blocking early-day screener cycles."
+    "_comment": "Tier 0 pre-filter. min_today_volume_ratio and min_5day_price_change_pct both set to 0.0 \u2014 these are intraday/short-term gates that block valid opportunities. Price, market cap, and avg volume filters remain active."
   },
   "reallocation": {
     "MIN_CONVICTION": 7,
