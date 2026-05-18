@@ -650,7 +650,14 @@ def run_screen(dry_run: bool = False, max_tier2: int = 15) -> dict:
     phase_banner("0.5", "TIER 1 SCREEN — Ollama Broad Universe Scan")
 
     from kairos_screener import run_screen as do_screen
-    result = do_screen(dry_run=dry_run, max_tier2=max_tier2)
+    import json as _json
+    try:
+        with open(os.path.join(SCRIPT_DIR, "kairos_config.json")) as _f:
+            _cfg = _json.load(_f)
+        _skip_t0 = _cfg.get("tier0_filter", {}).get("skip_tier0", False)
+    except Exception:
+        _skip_t0 = False
+    result = do_screen(dry_run=dry_run, max_tier2=max_tier2, skip_tier0=_skip_t0)
 
     # Persist shortlist so downstream phases can pick it up
     with open(SCREEN_RESULT_FILE, "w") as f:

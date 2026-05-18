@@ -93,7 +93,8 @@
     "min_market_cap": 0,
     "min_5day_price_change_pct": 0.0,
     "min_today_volume_ratio": 0.0,
-    "_comment": "Tier 0 pre-filter. All thresholds set to 0 \u2014 Finnhub profile API returning missing data for market_cap and avg_volume_30d, causing all 714 tickers to fail. Ollama Tier 1 handles quality filtering. Only min_price ($5) remains active to exclude penny stocks."
+    "_comment": "Tier 0 pre-filter. All thresholds set to 0 \u2014 Finnhub profile API returning missing data for market_cap and avg_volume_30d, causing all 714 tickers to fail. Ollama Tier 1 handles quality filtering. Only min_price ($5) remains active to exclude penny stocks.",
+    "skip_tier0": true
   },
   "reallocation": {
     "MIN_CONVICTION": 7,
