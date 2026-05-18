@@ -362,26 +362,31 @@ def run_screen(dry_run: bool = False, max_tier2: int = MAX_TIER2_DEFAULT,
     print(banner("Tier 0 Pre-Filter"))
     tier0_passing = tickers  # Default: all pass if no filtering
     tier0_filtered_count = 0
-    
+    # Quote data captured during Tier 0 — reused below to avoid a second Finnhub call.
+    prefilter_quote_data: dict[str, dict] = {}
+
     if not skip_tier0:
         api_key = os.environ.get("FINNHUB_API_KEY")
         from kairos_prefilter import run_tier0_filter
-        
+
         if dry_run:
             # In dry run, pre-filter also uses dry run mode
             tier0_passing = run_tier0_filter(tickers, api_key=None, dry_run=True)
             tier0_filtered_count = len(tickers) - len(tier0_passing)
             print(f"  DRY RUN — pre-filter bypassed, all {len(tier0_passing)} tickers passed")
         elif api_key:
-            tier0_passing = run_tier0_filter(tickers, api_key=api_key, dry_run=False)
+            tier0_passing, prefilter_quote_data = run_tier0_filter(
+                tickers, api_key=api_key, dry_run=False, return_data=True
+            )
             tier0_filtered_count = len(tickers) - len(tier0_passing)
-            print(f"  Pre-filter passed {len(tier0_passing)}/{len(tickers)} tickers")
+            print(f"  Pre-filter passed {len(tier0_passing)}/{len(tickers)} tickers "
+                  f"(quote data captured for {len(prefilter_quote_data)} tickers)")
         else:
             print("  WARNING: FINNHUB_API_KEY not set — skipping Tier 0 pre-filter")
             tier0_passing = tickers
     else:
         print("  Tier 0 pre-filter skipped (--skip-tier0 flag)")
-    
+
     # Update tickers to only those that passed Tier 0
     tickers = tier0_passing
 
@@ -398,13 +403,33 @@ def run_screen(dry_run: bool = False, max_tier2: int = MAX_TIER2_DEFAULT,
         if not api_key:
             print("  WARNING: FINNHUB_API_KEY not set — using fallback scoring")
         else:
-            print(f"  Fetching quotes for {len(tickers)} tickers (parallel, rate-limited)...")
-            quotes = fetch_quotes_batch(tickers, api_key)
-            print(f"  Received quotes for {len(quotes)}/{len(tickers)} tickers")
+            # Reuse quote data captured during Tier 0 — only call Finnhub for any
+            # tickers the pre-filter didn't already cover. Prevents a duplicate
+            # 13-minute fetch that was getting rate-limited to 0/726 quotes.
+            missing = [t for t in tickers if t not in prefilter_quote_data]
+            reused = len(tickers) - len(missing)
+            if missing:
+                print(f"  Pre-filter quote data covers {reused}/{len(tickers)} tickers")
+                print(f"  Fetching {len(missing)} missing tickers from Finnhub...")
+                quotes = fetch_quotes_batch(missing, api_key)
+                print(f"  Received quotes for {len(quotes)}/{len(missing)} fallback tickers")
+            else:
+                print(f"  Pre-filter quote data covers all {len(tickers)} tickers — "
+                      f"skipping fallback Finnhub fetch")
 
-    # Build batch items
+    # Build batch items — prefer pre-filter data, then fallback quotes, then zeros
     batch_items = []
     for t in tickers:
+        pf = prefilter_quote_data.get(t)
+        if pf:
+            batch_items.append({
+                "ticker": t,
+                "price": pf["price"],
+                "change_pct": pf["change_pct"],
+                "volume_signal": pf["volume_signal"],
+            })
+            continue
+
         q = quotes.get(t)
         if q:
             price = q.get("c", 0.0)
@@ -425,6 +450,11 @@ def run_screen(dry_run: bool = False, max_tier2: int = MAX_TIER2_DEFAULT,
                 "change_pct": 0.0,
                 "volume_signal": "unknown",
             })
+
+    # Total tickers with usable quote data (pre-filter or fallback fetch)
+    quotes_with_data = sum(
+        1 for t in tickers if t in prefilter_quote_data or t in quotes
+    )
 
     # Score in batches via Ollama (parallel)
     print(banner("Ollama Tier 1 Scoring"))
@@ -499,7 +529,8 @@ def run_screen(dry_run: bool = False, max_tier2: int = MAX_TIER2_DEFAULT,
     print(f"  Universe:       {original_universe_size} tickers loaded")
     print(f"  Tier 0 filtered: {tier0_filtered_count} tickers removed")
     print(f"  After Tier 0:    {len(tickers)} tickers screened")
-    print(f"  Quotes:         {len(quotes)} fetched from Finnhub")
+    print(f"  Quotes:         {quotes_with_data} tickers with data "
+          f"({len(prefilter_quote_data)} reused from pre-filter, {len(quotes)} fallback)")
     signal_counts = [
         ("HOT-REVERSION", hot_reversion), ("HOT-EARNINGS", hot_earnings),
         ("HOT-RSI", hot_rsi), ("HOT-INSIDER", hot_insider),
@@ -545,7 +576,7 @@ def run_screen(dry_run: bool = False, max_tier2: int = MAX_TIER2_DEFAULT,
         "universe_size": original_universe_size,
         "tier0_filtered_count": tier0_filtered_count,
         "post_tier0_count": len(tickers),
-        "quotes_fetched": len(quotes),
+        "quotes_fetched": quotes_with_data,
         "scores": all_scores,
         "source_tiers": source_tiers,
         "signal_tags": signal_tags,

@@ -303,17 +303,28 @@ def fetch_batch_data(tickers: list[str], api_key: str, max_workers: int = 8) -> 
     return results
 
 
-def run_tier0_filter(tickers: list[str], api_key: str = None, dry_run: bool = False) -> list[str]:
+def run_tier0_filter(
+    tickers: list[str],
+    api_key: str = None,
+    dry_run: bool = False,
+    return_data: bool = False,
+):
     """Run Tier 0 rules-based pre-filter on a list of tickers.
-    
+
     Args:
         tickers: List of ticker symbols to filter
         api_key: Finnhub API key. If None and not dry_run, raises ValueError
         dry_run: If True, skip Finnhub and use placeholder data
-    
+        return_data: If True, also return a quote_data_dict mapping
+            ticker -> {"price": float, "change_pct": float, "volume_signal": str}
+            for every ticker whose Finnhub quote was successfully fetched.
+            Lets downstream callers reuse pre-filter quote data instead of
+            re-hitting Finnhub.
+
     Returns:
-        List of ticker symbols that pass all thresholds
-    
+        If return_data is False (default): list of tickers that pass thresholds.
+        If return_data is True: tuple (passing_list, quote_data_dict).
+
     Logs:
         - How many tickers in
         - How many passed
@@ -336,6 +347,8 @@ def run_tier0_filter(tickers: list[str], api_key: str = None, dry_run: bool = Fa
         # For testing purposes, just return all tickers
         logger.info(f"  Passed: {len(tickers)} tickers (dry run bypass)")
         logger.info(f"  Filtered: 0 tickers")
+        if return_data:
+            return tickers, {}
         return tickers
     
     if not api_key:
@@ -352,7 +365,8 @@ def run_tier0_filter(tickers: list[str], api_key: str = None, dry_run: bool = Fa
     passing = []
     filtered = []
     missing_data_count = 0
-    
+    quote_data_dict: dict[str, dict] = {}
+
     for ticker in tickers:
         ticker_data = all_data.get(ticker)
         if not ticker_data:
@@ -360,9 +374,22 @@ def run_tier0_filter(tickers: list[str], api_key: str = None, dry_run: bool = Fa
             missing_data_count += 1
             filtered.append(ticker)
             continue
-        
+
+        # Capture quote data for any ticker with a valid Finnhub quote so
+        # callers can reuse it instead of issuing a second batch fetch.
+        quote = ticker_data.get("quote")
+        if quote:
+            price = quote.get("c")
+            dp = quote.get("dp")
+            if price is not None and dp is not None:
+                quote_data_dict[ticker] = {
+                    "price": float(price),
+                    "change_pct": float(dp),
+                    "volume_signal": "high" if abs(float(dp)) > 2 else "normal",
+                }
+
         passes, details = check_thresholds(ticker_data, config)
-        
+
         if passes:
             passing.append(ticker)
         else:
@@ -383,9 +410,11 @@ def run_tier0_filter(tickers: list[str], api_key: str = None, dry_run: bool = Fa
         logger.info(f"  Tickers with missing data: {missing_data_count}")
     
     if passing:
-        logger.info(f"  Passing tickers: {', '.join(sorted(passing)[:20])}" + 
+        logger.info(f"  Passing tickers: {', '.join(sorted(passing)[:20])}" +
                     (f" ... ({len(passing) - 20} more)" if len(passing) > 20 else ""))
-    
+
+    if return_data:
+        return passing, quote_data_dict
     return passing
 
 
