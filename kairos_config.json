@@ -9,7 +9,7 @@
   "ollama": {
     "screen_model": "phi4-mini",
     "reason_model": "qwen3:14b",
-    "_comment": "screen_model: phi4-mini ~2.3GB, better instruction following than llama3.2 for Tier 1 batch classification. reason_model: qwen3:14b ~9GB, replaces mistral-small3.2 (15GB) for news filtering/routing/summarization — 6GB RAM savings. thinking mode disabled in kairos_ollama.py ask()."
+    "_comment": "screen_model: phi4-mini ~2.3GB, better instruction following than llama3.2 for Tier 1 batch classification. reason_model: qwen3:14b ~9GB, replaces mistral-small3.2 (15GB) for news filtering/routing/summarization \u2014 6GB RAM savings. thinking mode disabled in kairos_ollama.py ask()."
   },
   "claude": {
     "cli_path": "/opt/homebrew/bin/claude",
@@ -92,8 +92,8 @@
     "min_price": 5.0,
     "min_market_cap": 1000000000,
     "min_5day_price_change_pct": 1.5,
-    "min_today_volume_ratio": 0.5,
-    "_comment": "Tier 0 rules-based pre-filter thresholds. All values must be met for a ticker to pass to Tier 1 (LLM screening)."
+    "min_today_volume_ratio": 0.0,
+    "_comment": "Tier 0 rules-based pre-filter thresholds. min_today_volume_ratio set to 0.0 \u2014 intraday volume check moved to execution phase to avoid blocking early-day screener cycles."
   },
   "reallocation": {
     "MIN_CONVICTION": 7,
