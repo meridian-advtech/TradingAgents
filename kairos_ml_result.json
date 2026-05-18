@@ -1,0 +1,98 @@
+{
+  "timestamp": "2026-05-18 19:56:50 UTC",
+  "candidates": [
+    {
+      "ticker": "ALMR",
+      "ml_confidence": 0.5,
+      "ml_signal": "NEUTRAL",
+      "ml_trained_on": 0
+    },
+    {
+      "ticker": "AMAT",
+      "ml_confidence": 0.5,
+      "ml_signal": "NEUTRAL",
+      "ml_trained_on": 0
+    },
+    {
+      "ticker": "APH",
+      "ml_confidence": 0.5,
+      "ml_signal": "NEUTRAL",
+      "ml_trained_on": 0
+    },
+    {
+      "ticker": "ARTV",
+      "ml_confidence": 0.5,
+      "ml_signal": "NEUTRAL",
+      "ml_trained_on": 0
+    },
+    {
+      "ticker": "AVLN",
+      "ml_confidence": 0.5,
+      "ml_signal": "NEUTRAL",
+      "ml_trained_on": 0
+    },
+    {
+      "ticker": "BBAI",
+      "ml_confidence": 0.5,
+      "ml_signal": "NEUTRAL",
+      "ml_trained_on": 0
+    },
+    {
+      "ticker": "BETR",
+      "ml_confidence": 0.5,
+      "ml_signal": "NEUTRAL",
+      "ml_trained_on": 0
+    },
+    {
+      "ticker": "BILL",
+      "ml_confidence": 0.5,
+      "ml_signal": "NEUTRAL",
+      "ml_trained_on": 0
+    },
+    {
+      "ticker": "BOT",
+      "ml_confidence": 0.5,
+      "ml_signal": "NEUTRAL",
+      "ml_trained_on": 0
+    },
+    {
+      "ticker": "BURU",
+      "ml_confidence": 0.5,
+      "ml_signal": "NEUTRAL",
+      "ml_trained_on": 0
+    },
+    {
+      "ticker": "CAT",
+      "ml_confidence": 0.5,
+      "ml_signal": "NEUTRAL",
+      "ml_trained_on": 0
+    },
+    {
+      "ticker": "CIEN",
+      "ml_confidence": 0.5,
+      "ml_signal": "NEUTRAL",
+      "ml_trained_on": 0
+    },
+    {
+      "ticker": "CMI",
+      "ml_confidence": 0.5,
+      "ml_signal": "NEUTRAL",
+      "ml_trained_on": 0
+    },
+    {
+      "ticker": "COAG",
+      "ml_confidence": 0.5,
+      "ml_signal": "NEUTRAL",
+      "ml_trained_on": 0
+    },
+    {
+      "ticker": "COE",
+      "ml_confidence": 0.5,
+      "ml_signal": "NEUTRAL",
+      "ml_trained_on": 0
+    }
+  ],
+  "model_info": {
+    "trained_on": 0
+  }
+}
