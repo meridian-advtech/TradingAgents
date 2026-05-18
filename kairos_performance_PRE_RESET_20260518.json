@@ -1,0 +1,321 @@
+{
+  "start_date": "2026-03-26",
+  "start_value": 1000000.0,
+  "snapshots": [
+    {
+      "date": "2026-03-26",
+      "value": 1013259.98,
+      "equity_value": 3563.84,
+      "crypto_value": 0.0,
+      "cash": 1007601.09
+    },
+    {
+      "date": "2026-03-27",
+      "value": 1013263.9,
+      "equity_value": 3567.76,
+      "crypto_value": 0.0,
+      "cash": 1007601.09
+    },
+    {
+      "date": "2026-03-28",
+      "value": 1013245.36,
+      "equity_value": 3461.92,
+      "crypto_value": 0.0,
+      "cash": 1007601.09
+    },
+    {
+      "date": "2026-03-30",
+      "value": 1013268.83,
+      "equity_value": 8335.78,
+      "crypto_value": 0.0,
+      "cash": 1002663.69
+    },
+    {
+      "date": "2026-03-31",
+      "value": 1014117.34,
+      "equity_value": 21345.11,
+      "crypto_value": 0.0,
+      "cash": 990241.84
+    },
+    {
+      "date": "2026-04-01",
+      "value": 1014279.71,
+      "equity_value": 21749.97,
+      "crypto_value": 0.0,
+      "cash": 989912.34
+    },
+    {
+      "date": "2026-04-02",
+      "value": 1014266.27,
+      "equity_value": 21736.53,
+      "crypto_value": 0.0,
+      "cash": 989912.34
+    },
+    {
+      "date": "2026-04-05",
+      "value": 1014504.89,
+      "equity_value": 21803.07,
+      "crypto_value": 0.0,
+      "cash": 989912.34
+    },
+    {
+      "date": "2026-04-06",
+      "value": 1014835.65,
+      "equity_value": 22133.83,
+      "crypto_value": 0.0,
+      "cash": 989912.34
+    },
+    {
+      "date": "2026-04-07",
+      "value": 1015223.52,
+      "equity_value": 22179.82,
+      "crypto_value": 0.0,
+      "cash": 992616.32
+    },
+    {
+      "date": "2026-04-08",
+      "value": 1015626.36,
+      "equity_value": 98204.93,
+      "crypto_value": 0.0,
+      "cash": 916908.33
+    },
+    {
+      "date": "2026-04-09",
+      "value": 1017081.62,
+      "equity_value": 361921.6,
+      "crypto_value": 0.0,
+      "cash": 654561.22
+    },
+    {
+      "date": "2026-04-10",
+      "value": 1005625.05,
+      "equity_value": 375389.93,
+      "crypto_value": 0.0,
+      "cash": 629550.61
+    },
+    {
+      "date": "2026-04-11",
+      "value": 1005704.36,
+      "equity_value": 375390.15,
+      "crypto_value": 0.0,
+      "cash": 629550.6
+    },
+    {
+      "date": "2026-04-12",
+      "value": 1005600.77,
+      "equity_value": 375286.56,
+      "crypto_value": 0.0,
+      "cash": 629550.6
+    },
+    {
+      "date": "2026-04-13",
+      "value": 1021048.45,
+      "equity_value": 908251.34,
+      "crypto_value": 0.0,
+      "cash": 112033.5
+    },
+    {
+      "date": "2026-04-14",
+      "value": 1031426.13,
+      "equity_value": 918460.36,
+      "crypto_value": 0.0,
+      "cash": 112033.5
+    },
+    {
+      "date": "2026-04-15",
+      "value": 1042890.22,
+      "equity_value": 929870.42,
+      "crypto_value": 0.0,
+      "cash": 112033.5
+    },
+    {
+      "date": "2026-04-16",
+      "value": 1045364.72,
+      "equity_value": 932273.02,
+      "crypto_value": 0.0,
+      "cash": 112096.5
+    },
+    {
+      "date": "2026-04-17",
+      "value": 1057067.96,
+      "equity_value": 931543.22,
+      "crypto_value": 0.0,
+      "cash": 124520.63
+    },
+    {
+      "date": "2026-04-18",
+      "value": 1057027.18,
+      "equity_value": 931493.52,
+      "crypto_value": 0.0,
+      "cash": 124520.64
+    },
+    {
+      "date": "2026-04-19",
+      "value": 1057027.18,
+      "equity_value": 931493.52,
+      "crypto_value": 0.0,
+      "cash": 124520.64
+    },
+    {
+      "date": "2026-04-20",
+      "value": 1063392.24,
+      "equity_value": 1041744.25,
+      "crypto_value": 0.0,
+      "cash": 20634.97
+    },
+    {
+      "date": "2026-04-21",
+      "value": 1061469.82,
+      "equity_value": 1018024.32,
+      "crypto_value": 0.0,
+      "cash": 42405.78
+    },
+    {
+      "date": "2026-04-22",
+      "value": 1048573.72,
+      "equity_value": 1022208.1,
+      "crypto_value": 0.0,
+      "cash": 25315.91
+    },
+    {
+      "date": "2026-04-23",
+      "value": 1041504.72,
+      "equity_value": 1025947.93,
+      "crypto_value": 0.0,
+      "cash": 14507.08
+    },
+    {
+      "date": "2026-04-24",
+      "value": 1043324.02,
+      "equity_value": 1047138.67,
+      "crypto_value": 0.0,
+      "cash": -4868.11
+    },
+    {
+      "date": "2026-04-25",
+      "value": 1043342.56,
+      "equity_value": 1047155.88,
+      "crypto_value": 0.0,
+      "cash": -4868.11
+    },
+    {
+      "date": "2026-04-26",
+      "value": 1043342.56,
+      "equity_value": 1047155.88,
+      "crypto_value": 0.0,
+      "cash": -4868.11
+    },
+    {
+      "date": "2026-04-27",
+      "value": 1048130.45,
+      "equity_value": 1051943.77,
+      "crypto_value": 0.0,
+      "cash": -4868.11
+    },
+    {
+      "date": "2026-04-28",
+      "value": 1047999.95,
+      "equity_value": 1051812.1,
+      "crypto_value": 0.0,
+      "cash": -4868.11
+    },
+    {
+      "date": "2026-04-29",
+      "value": 1048076.92,
+      "equity_value": 1051889.07,
+      "crypto_value": 0.0,
+      "cash": -4868.11
+    },
+    {
+      "date": "2026-05-01",
+      "value": 1057007.81,
+      "equity_value": 1060821.36,
+      "crypto_value": 0.0,
+      "cash": -4868.11
+    },
+    {
+      "date": "2026-05-02",
+      "value": 1056639.45,
+      "equity_value": 1060454.4,
+      "crypto_value": 0.0,
+      "cash": -4868.11
+    },
+    {
+      "date": "2026-05-03",
+      "value": 1056639.45,
+      "equity_value": 1060454.4,
+      "crypto_value": 0.0,
+      "cash": -4868.11
+    },
+    {
+      "date": "2026-05-04",
+      "value": 1052108.66,
+      "equity_value": 1055923.61,
+      "crypto_value": 0.0,
+      "cash": -4868.11
+    },
+    {
+      "date": "2026-05-05",
+      "value": 1058928.78,
+      "equity_value": 1062172.23,
+      "crypto_value": 0.0,
+      "cash": -3241.35
+    },
+    {
+      "date": "2026-05-11",
+      "value": 1035296.63,
+      "equity_value": 905470.16,
+      "crypto_value": 0.0,
+      "cash": 129829.65
+    },
+    {
+      "date": "2026-05-12",
+      "value": 1035482.23,
+      "equity_value": 905640.77,
+      "crypto_value": 0.0,
+      "cash": 129846.93
+    },
+    {
+      "date": "2026-05-13",
+      "value": 1031165.66,
+      "equity_value": 824501.81,
+      "crypto_value": 0.0,
+      "cash": 206669.32
+    },
+    {
+      "date": "2026-05-14",
+      "value": 1030510.25,
+      "equity_value": 823835.99,
+      "crypto_value": 0.0,
+      "cash": 206669.31
+    },
+    {
+      "date": "2026-05-15",
+      "value": 1025258.9,
+      "equity_value": 818574.22,
+      "crypto_value": 0.0,
+      "cash": 206669.31
+    },
+    {
+      "date": "2026-05-16",
+      "value": 1025193.8,
+      "equity_value": 818509.12,
+      "crypto_value": 0.0,
+      "cash": 206669.31
+    },
+    {
+      "date": "2026-05-17",
+      "value": 1025210.9,
+      "equity_value": 818509.12,
+      "crypto_value": 0.0,
+      "cash": 206669.31
+    },
+    {
+      "date": "2026-05-18",
+      "value": 1022522.37,
+      "equity_value": 0.0,
+      "crypto_value": 0.0,
+      "cash": 1022489.9
+    }
+  ]
+}
