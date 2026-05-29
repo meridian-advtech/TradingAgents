@@ -852,32 +852,41 @@ def _pid_alive(pid: int) -> bool:
 def acquire_lock() -> bool:
     """Take the single-instance lock. Returns False if another live instance holds it.
 
-    A stale lock (PID no longer running) is reclaimed. On success the current
-    PID is written and an atexit hook is registered to remove the file.
+    Uses an atomic O_CREAT|O_EXCL create so two simultaneous starts can't both
+    win the race. If the file already exists, the holding PID is probed: a live
+    holder means we exit; a dead holder (stale lock) is reclaimed and retried
+    once. On success the PID is written and an atexit hook removes the file.
     """
-    if os.path.exists(PID_FILE):
+    for attempt in range(2):
         try:
-            with open(PID_FILE) as f:
-                existing = int(f.read().strip())
-        except (IOError, ValueError):
-            existing = None
-        if existing and existing != os.getpid() and _pid_alive(existing):
-            log.error("Another commander is already running (pid %s) — "
-                      "exiting.", existing)
-            return False
-        log.warning("Reclaiming stale lock file (pid %s not running).",
-                    existing)
+            fd = os.open(PID_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            try:
+                with open(PID_FILE) as f:
+                    existing = int(f.read().strip())
+            except (IOError, ValueError):
+                existing = None
+            if existing and existing != os.getpid() and _pid_alive(existing):
+                log.error("Another commander is already running (pid %s) — "
+                          "exiting.", existing)
+                return False
+            # Stale lock — reclaim and retry the atomic create once.
+            log.warning("Reclaiming stale lock file (pid %s not running).",
+                        existing)
+            try:
+                os.remove(PID_FILE)
+            except OSError:
+                pass
+            continue
+        else:
+            with os.fdopen(fd, "w") as f:
+                f.write(str(os.getpid()))
+            import atexit
+            atexit.register(release_lock)
+            return True
 
-    try:
-        with open(PID_FILE, "w") as f:
-            f.write(str(os.getpid()))
-    except IOError as exc:
-        log.error("Could not write PID file %s: %s", PID_FILE, exc)
-        return False
-
-    import atexit
-    atexit.register(release_lock)
-    return True
+    log.error("Could not acquire lock after reclaiming stale file — exiting.")
+    return False
 
 
 def release_lock() -> None:
