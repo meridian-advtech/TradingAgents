@@ -56,13 +56,13 @@ COMMAND_CHANNEL_NAME = "kairos-commands"
 CYCLE_COOLDOWN_SECONDS = 10 * 60  # !run / !dry-run guard
 
 # ── Logging ──────────────────────────────────────────────────────────
+# Only a FileHandler: under launchd the plist already redirects stdout to
+# COMMANDER_LOG, so a StreamHandler(sys.stdout) would write every line twice
+# into the same file. The FileHandler covers both manual and launchd runs.
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(COMMANDER_LOG, mode="a"),
-    ],
+    handlers=[logging.FileHandler(COMMANDER_LOG, mode="a")],
 )
 log = logging.getLogger("kairos-commander")
 
