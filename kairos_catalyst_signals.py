@@ -436,6 +436,82 @@ def _detect_setup3(cfg: dict, signal_tags: dict) -> list[dict]:
     return signals
 
 
+# ── Setup LOCKUP: IPO Lock-Up Expiration (bearish, known catalyst) ───
+
+def _detect_lockup(cfg: dict) -> list[dict]:
+    """Emit long-PUT signals for armed IPO lock-up short theses.
+
+    The ipo_lockup_tracker table is the source of truth: kairos_ipo_lockup
+    scores the short thesis ~30 days before a 180-day lock-up expiration and
+    flips a row to status='armed' (two-lock gated). Here we read those armed
+    rows and surface them as bearish long-put setups so the options engine
+    enters them — a defined-risk play on a known, predictably-timed catalyst.
+    """
+    try:
+        from kairos_ipo_lockup import load_lockup_config
+        from kairos_log_db import get_armed_lockup_signals
+    except ImportError:
+        return []
+    if not load_lockup_config().get("enabled", True):
+        return []
+
+    signals: list[dict] = []
+    for row in get_armed_lockup_signals():
+        ticker = (row.get("ticker") or "").upper()
+        if not ticker:
+            continue
+
+        lockup_date = row.get("lockup_expiration_date")
+        days_left = None
+        if lockup_date:
+            try:
+                d = datetime.strptime(str(lockup_date)[:10], "%Y-%m-%d").date()
+                days_left = (d - datetime.now(timezone.utc).date()).days
+            except ValueError:
+                days_left = None
+
+        spot, iv = _fetch_atm_iv(ticker)
+        if iv is not None:
+            record_iv_snapshot(ticker, iv)
+        iv_rank = compute_iv_rank(ticker, iv) if iv else None
+        if spot is None:
+            spot = row.get("current_price")
+
+        perf = row.get("perf_since_ipo_pct")
+        insider = row.get("insider_pct")
+        score = row.get("short_score")
+        perf_s = f"{perf:+.1f}%" if isinstance(perf, (int, float)) else "n/a"
+        ins_s = f"{insider:.0f}%" if isinstance(insider, (int, float)) else "n/a"
+
+        signals.append({
+            "ticker": ticker,
+            "setup": "LOCKUP",
+            "right": "P",
+            "direction": "bearish",
+            "delta_band": "default",
+            "iv": iv,
+            "iv_rank": iv_rank,
+            "spot": spot,
+            "rationale": (
+                f"{ticker} 180-day IPO lock-up expires {lockup_date}"
+                + (f" ({days_left}d)" if days_left is not None else "")
+                + f"; up {perf_s} since IPO, insider concentration {ins_s}, "
+                f"short thesis {score}/10. Predictable supply unlock — long "
+                f"puts (Lock-Up)."
+            ),
+            "signals_fired": ["HOT-CATALYST", "LOCKUP-EXPIRY"],
+            "context": {
+                "lockup_date": lockup_date,
+                "days_to_expiration": days_left,
+                "perf_since_ipo_pct": perf,
+                "insider_pct": insider,
+                "short_score": score,
+                "ipo_price": row.get("ipo_price"),
+            },
+        })
+    return signals
+
+
 # ── Public entry ─────────────────────────────────────────────────────
 
 def detect_catalyst_signals(
@@ -461,6 +537,7 @@ def detect_catalyst_signals(
     signals.extend(_detect_setup1(cfg))
     signals.extend(_detect_setup2(tickers, cfg))
     signals.extend(_detect_setup3(cfg, signal_tags))
+    signals.extend(_detect_lockup(cfg))
 
     # Long-only invariant guard: drop anything that isn't a clean C/P buy.
     clean = [s for s in signals if s.get("right") in ("C", "P")]

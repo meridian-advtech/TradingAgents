@@ -148,6 +148,17 @@
     },
     "_comment": "HOT-CATALYST long-options-only (buy calls/puts, never sell premium). dry_run=true simulates+logs all orders (override with dry_run=false AND --no-dry-run). Risk: 15% portfolio max in options, 2.5% NLV per position, 50% hard stop, 100% take-profit, close/roll at 21 DTE, no entry on earnings day, 30-60 DTE preferred at entry. Delta bands: default 30-40 (Setup1 pre-catalyst), reversion 40-50 (Setup2 post-crush), flow 25-35 (Setup3 unusual flow). Setup1: enter 7-21d before catalyst when iv_rank<=0.50 (underpriced vol). Setup2: trigger on >=10% drop over <=3 days; thesis-driven direction (reclaim/hold gap low=intact->calls, lower lows=broken->puts). Setup3: follow unusual flow only if no earnings within 5 days."
   },
+  "hot_ipo": {
+    "dry_run": true,
+    "lockup": {
+      "enabled": true,
+      "lockup_days": 180,
+      "scoring_window_days": 30,
+      "score_threshold": 7,
+      "min_perf_since_ipo_pct": 20
+    },
+    "_comment": "HOT-IPO pipeline (tracker, capital reservation, Day-1 executor, lock-up tracker). dry_run=true is the shared first lock for the whole IPO pipeline; real reservations/orders/arming also require each module's --no-dry-run (two-lock). lockup: 180-day lock-up expiration short tracker. Scores the post-IPO short thesis when within scoring_window_days of expiration (performance/valuation vs IPO price + insider concentration from S-1 + timing, 0-10). Arms theses scoring >= score_threshold whose stock is up >= min_perf_since_ipo_pct since IPO; armed rows route to HOT-CATALYST as long-PUT setups. Even when armed, hot_catalyst.dry_run still gates whether a real put is placed."
+  },
   "renaissance_capital": {
     "api_key": "***REDACTED***"
   },

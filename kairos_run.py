@@ -2213,6 +2213,43 @@ def run_scheduled_cycle(args) -> None:
             print(f"  WARNING: IPO executor failed: {exc}\n{tb}")
             _log_phase_crash("ipo_execute", exc, tb)
 
+    # b1d. HOT-IPO lock-up expiration tracker (Phase 3) — tracks 180-day
+    # lock-up dates for priced IPOs, scores the short thesis ~30 days out,
+    # and arms strong ones into ipo_lockup_tracker. The catalyst detector
+    # turns armed rows into long-PUT signals the options engine enters.
+    # Runs after the executor on the same 9:30-9:40 ET weekday window; its
+    # own window check (not is_tracker_due) since the tracker consumed that
+    # daily gate. Honors hot_ipo.dry_run (dry-run scores + reports, never
+    # arms). No IBKR needed — yfinance + EDGAR + DB only.
+    if run_equity:
+        try:
+            from zoneinfo import ZoneInfo
+            from kairos_ipo_tracker import (
+                MARKET_OPEN_HOUR_ET, MARKET_OPEN_MIN_FROM, MARKET_OPEN_MIN_TO,
+            )
+            lk_now_et = datetime.now(ZoneInfo("America/New_York"))
+            lk_in_window = (
+                lk_now_et.weekday() < 5
+                and lk_now_et.hour == MARKET_OPEN_HOUR_ET
+                and MARKET_OPEN_MIN_FROM <= lk_now_et.minute < MARKET_OPEN_MIN_TO
+            )
+            if lk_in_window:
+                phase_banner("IPOL", "HOT-IPO LOCK-UP TRACKER — Short Thesis Scoring")
+                from kairos_ipo_lockup import run_lockup_cycle
+                _lk_dry = True
+                try:
+                    import json as _json
+                    with open("/Users/jelmore/TradingAgents/kairos_config.json") as _f:
+                        _lk_dry = bool(_json.load(_f).get("hot_ipo", {}).get("dry_run", True))
+                except Exception:
+                    pass
+                run_lockup_cycle(dry_run=_lk_dry)
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"  WARNING: IPO lock-up tracker failed: {exc}\n{tb}")
+            _log_phase_crash("ipo_lockup", exc, tb)
+
     # b2. Thesis review — daily at 9:35am ET (weekdays only)
     if run_equity:
         try:

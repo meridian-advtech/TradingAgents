@@ -153,6 +153,32 @@ CREATE TABLE IF NOT EXISTS options_positions (
 );
 """
 
+SCHEMA_IPO_LOCKUP = """
+CREATE TABLE IF NOT EXISTS ipo_lockup_tracker (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker                 TEXT NOT NULL,
+    company_name           TEXT,
+    cik                    TEXT,
+    ipo_date               TEXT,
+    ipo_price              REAL,
+    lockup_expiration_date TEXT NOT NULL,
+    source                 TEXT,
+    current_price          REAL,
+    perf_since_ipo_pct     REAL,
+    insider_pct            REAL,
+    short_score            REAL,
+    score_components       TEXT,
+    status                 TEXT NOT NULL DEFAULT 'tracking',
+    signal_emitted         INTEGER NOT NULL DEFAULT 0,
+    armed_at               TEXT,
+    last_scored_at         TEXT,
+    notes                  TEXT,
+    simulated              INTEGER NOT NULL DEFAULT 0,
+    created_at             TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(ticker, lockup_expiration_date)
+);
+"""
+
 # holding_days is computed at query time, not stored, to avoid
 # SQLite's restriction on non-deterministic generated columns.
 HOLDINGS_SELECT = """
@@ -184,6 +210,7 @@ def init_db(reset: bool = False):
         SCHEMA_DECISIONS + SCHEMA_OUTCOMES + SCHEMA_HOLDINGS
         + SCHEMA_CRYPTO_DECISIONS + SCHEMA_CRYPTO_HOLDINGS
         + SCHEMA_OPTIONS_DECISIONS + SCHEMA_OPTIONS_POSITIONS
+        + SCHEMA_IPO_LOCKUP
     )
     # Migrate: add conviction_trade column if missing (existing DBs)
     try:
@@ -721,6 +748,108 @@ def get_options_decisions(limit: int = 20) -> list[dict]:
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+# ── HOT-IPO lock-up expiration tracker ───────────────────────────────
+
+def upsert_lockup_row(
+    ticker: str,
+    lockup_expiration_date: str,
+    company_name: str | None = None,
+    cik: str | None = None,
+    ipo_date: str | None = None,
+    ipo_price: float | None = None,
+    source: str | None = None,
+    notes: str | None = None,
+) -> int:
+    """Insert a lock-up tracking row (or refresh static fields if it exists).
+
+    Dedup key is (ticker, lockup_expiration_date). Scoring/status fields are
+    left untouched on update — those move through set_lockup_status. Returns
+    the row id.
+    """
+    conn = get_connection()
+    cur = conn.execute(
+        """INSERT INTO ipo_lockup_tracker
+           (ticker, company_name, cik, ipo_date, ipo_price,
+            lockup_expiration_date, source, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(ticker, lockup_expiration_date) DO UPDATE SET
+            company_name = COALESCE(excluded.company_name, company_name),
+            cik          = COALESCE(excluded.cik, cik),
+            ipo_date     = COALESCE(excluded.ipo_date, ipo_date),
+            ipo_price    = COALESCE(excluded.ipo_price, ipo_price),
+            source       = COALESCE(excluded.source, source),
+            notes        = COALESCE(excluded.notes, notes)""",
+        (ticker, company_name, cik, ipo_date, ipo_price,
+         lockup_expiration_date, source, notes),
+    )
+    row_id = cur.lastrowid
+    if not row_id:
+        row = conn.execute(
+            "SELECT id FROM ipo_lockup_tracker "
+            "WHERE ticker = ? AND lockup_expiration_date = ?",
+            (ticker, lockup_expiration_date),
+        ).fetchone()
+        row_id = row["id"] if row else None
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def get_lockup_rows(status: str | None = None) -> list[dict]:
+    """Return lock-up tracker rows, optionally filtered by status."""
+    conn = get_connection()
+    if status:
+        rows = conn.execute(
+            "SELECT * FROM ipo_lockup_tracker WHERE status = ? "
+            "ORDER BY lockup_expiration_date",
+            (status,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM ipo_lockup_tracker ORDER BY lockup_expiration_date"
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def set_lockup_status(row_id: int, status: str, **fields) -> None:
+    """Update a lock-up row's status and any scalar fields passed by name.
+
+    Accepts: current_price, perf_since_ipo_pct, insider_pct, short_score,
+    score_components (dict -> JSON), signal_emitted, armed_at, last_scored_at,
+    simulated, notes. Unknown keys are ignored.
+    """
+    allowed = {
+        "current_price", "perf_since_ipo_pct", "insider_pct", "short_score",
+        "score_components", "signal_emitted", "armed_at", "last_scored_at",
+        "simulated", "notes",
+    }
+    sets = ["status = ?"]
+    vals: list = [status]
+    for key, val in fields.items():
+        if key not in allowed:
+            continue
+        if key == "score_components" and isinstance(val, (dict, list)):
+            val = json.dumps(val)
+        if key in ("signal_emitted", "simulated") and isinstance(val, bool):
+            val = 1 if val else 0
+        sets.append(f"{key} = ?")
+        vals.append(val)
+    vals.append(row_id)
+    conn = get_connection()
+    conn.execute(
+        f"UPDATE ipo_lockup_tracker SET {', '.join(sets)} WHERE id = ?",
+        vals,
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_armed_lockup_signals() -> list[dict]:
+    """Armed lock-up short theses the catalyst detector should emit as puts."""
+    return get_lockup_rows(status="armed")
 
 
 # ── Migration from kairos_decisions.log ──────────────────────────────
