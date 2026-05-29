@@ -34,6 +34,13 @@ OPTIONS_CACHE = os.path.join(SCRIPT_DIR, "kairos_options_activity.json")
 
 W = 72
 
+# Tickers we watch especially closely — relaxed volume-spike threshold
+# (1.5x instead of 2.0x) so smaller unusual moves still flag, and kairos_run
+# runs a second yfinance sweep on any of these that miss the main shortlist.
+EXECUTIVE_WATCHLIST = ["NVDA", "AMD", "ORCL", "PLTR", "BA", "AAPL", "TSLA", "META", "MSFT"]
+VOLUME_SPIKE_THRESHOLD = 2.0
+VOLUME_SPIKE_THRESHOLD_WATCHLIST = 1.5
+
 
 # ── Suppress IBKR error 10091 from console output ────────────────────
 # When running standalone, install the same filter as kairos_run.py.
@@ -313,9 +320,12 @@ def _detect_options_with_yfinance(sym: str, config: dict) -> Optional[dict]:
         call_put_ratio = total_call_vol / total_put_vol if total_put_vol > 0 else float('inf')
         
         # 1. Volume spike detection (call volume vs historical)
-        # For yfinance, we'll use open interest as a proxy for historical volume
+        # For yfinance, we'll use open interest as a proxy for historical volume.
+        # Watchlist tickers get a relaxed 1.5x threshold so smaller moves still flag.
         avg_call_oi = calls['openInterest'].mean() if len(calls['openInterest']) > 0 else 1
-        vol_spike = total_call_vol > (2.0 * avg_call_oi)  # 2x average open interest
+        on_watchlist = sym.upper() in EXECUTIVE_WATCHLIST
+        vol_spike_mult = 1.5 if on_watchlist else 2.0
+        vol_spike = total_call_vol > (vol_spike_mult * avg_call_oi)
         
         # 2. Skew detection (call/put ratio)
         skew_fired = call_put_ratio > 2.5  # bullish unusual flow
@@ -351,7 +361,9 @@ def _detect_options_with_yfinance(sym: str, config: dict) -> Optional[dict]:
             'front_expiry': nearest_expiry,
             'total_call_vol': int(total_call_vol),
             'total_put_vol': int(total_put_vol),
-            'triggered_by': triggered_by
+            'triggered_by': triggered_by,
+            'executive_watchlist': on_watchlist,
+            'vol_spike_threshold': vol_spike_mult,
         }
         
         print(f"  [options] {sym}: yfinance fallback → {triggered_by}")
@@ -363,6 +375,98 @@ def _detect_options_with_yfinance(sym: str, config: dict) -> Optional[dict]:
     except Exception as yf_exc:
         print(f"  [options] {sym}: yfinance error — {yf_exc}")
         return None
+
+
+def fetch_volume_spike_signal(ticker: str) -> dict:
+    """Detect underlying volume spike + unusual call-side options flow via yfinance.
+
+    Threshold is relaxed to 1.5x for EXECUTIVE_WATCHLIST tickers (vs 2.0x default)
+    so smaller-but-significant moves on closely watched names still register.
+
+    Returns:
+        {
+            "volume_ratio":       float,  # current_volume / averageVolume
+            "volume_spike":       bool,   # ratio > per-ticker threshold
+            "options_call_ratio": float,  # call_volume / call_open_interest (near-term expiry)
+            "signal":             "STRONG" | "NEUTRAL" | "WEAK",
+        }
+
+    STRONG = volume spike AND call_volume/OI > 1.0 (fresh call buying on heavy tape).
+    NEUTRAL = exactly one of the two fires.
+    WEAK = neither (or yfinance is unavailable / threw).
+    """
+    default = {
+        "volume_ratio": 0.0,
+        "volume_spike": False,
+        "options_call_ratio": 0.0,
+        "signal": "WEAK",
+    }
+
+    sym = (ticker or "").upper()
+    threshold = (
+        VOLUME_SPIKE_THRESHOLD_WATCHLIST
+        if sym in EXECUTIVE_WATCHLIST
+        else VOLUME_SPIKE_THRESHOLD
+    )
+
+    try:
+        import yfinance as yf
+    except ImportError:
+        return default
+
+    try:
+        tk = yf.Ticker(sym)
+        info = {}
+        try:
+            info = tk.info or {}
+        except Exception:
+            info = {}
+
+        current_vol = (
+            info.get("volume")
+            or info.get("regularMarketVolume")
+            or 0
+        )
+        avg_vol = (
+            info.get("averageVolume")
+            or info.get("averageVolume10days")
+            or 0
+        )
+
+        volume_ratio = (current_vol / avg_vol) if avg_vol else 0.0
+        volume_spike = volume_ratio > threshold
+
+        # Near-term expiry call volume vs open interest
+        options_call_ratio = 0.0
+        try:
+            expirations = tk.options
+            if expirations:
+                chain = tk.option_chain(expirations[0])
+                calls = chain.calls
+                if calls is not None and not calls.empty:
+                    total_call_vol = float(calls["volume"].fillna(0).sum())
+                    total_call_oi = float(calls["openInterest"].fillna(0).sum())
+                    if total_call_oi > 0:
+                        options_call_ratio = total_call_vol / total_call_oi
+        except Exception:
+            pass  # leave at 0.0 — partial signal is fine
+
+        call_flow_hot = options_call_ratio > 1.0
+        if volume_spike and call_flow_hot:
+            signal = "STRONG"
+        elif volume_spike or call_flow_hot:
+            signal = "NEUTRAL"
+        else:
+            signal = "WEAK"
+
+        return {
+            "volume_ratio": round(volume_ratio, 2),
+            "volume_spike": volume_spike,
+            "options_call_ratio": round(options_call_ratio, 2),
+            "signal": signal,
+        }
+    except Exception:
+        return default
 
 
 def detect_options_activity(
@@ -398,7 +502,7 @@ def detect_options_activity(
         try:
             from ib_insync import IB
             ib = IB()
-            ib.connect("127.0.0.1", 7497, clientId=6, timeout=10)
+            ib.connect("127.0.0.1", 7497, clientId=7, timeout=10)
             own_connection = True
         except Exception as exc:
             print(f"  [options] IBKR unavailable: {exc}")
@@ -488,6 +592,13 @@ def detect_options_activity(
             elif cp_ratio > 0 and cp_ratio <= skew_bear:
                 triggered.append("skew_bearish")
 
+            # yfinance volume-spike check runs alongside the IBKR sub-signals.
+            # STRONG signal independently fires HOT-OPTIONS; data is always
+            # attached so reviewers can see the underlying tape context.
+            vol_spike_yf = fetch_volume_spike_signal(sym)
+            if vol_spike_yf.get("signal") == "STRONG":
+                triggered.append("volume_spike_yf")
+
             if not triggered:
                 continue
 
@@ -513,6 +624,7 @@ def detect_options_activity(
                 "total_oi": total_oi,
                 "triggered_by": triggered,
                 "strikes_checked": len(atm_strikes),
+                "volume_spike_yf": vol_spike_yf,
             }
 
         except _OptionsSubscriptionError:

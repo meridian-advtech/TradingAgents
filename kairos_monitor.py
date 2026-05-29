@@ -78,7 +78,7 @@ def check_ibkr_connection() -> dict:
         sys.path.insert(0, SCRIPT_DIR)
         from ib_insync import IB
         ib = IB()
-        ib.connect("127.0.0.1", 7497, clientId=99, timeout=8)
+        ib.connect("127.0.0.1", 7497, clientId=4, timeout=8)
 
         # Quick sanity: pull one account value to confirm the session is live
         tags = {v.tag: v.value for v in ib.accountSummary()
