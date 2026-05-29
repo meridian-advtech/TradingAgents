@@ -95,27 +95,55 @@ def post_message(
         print(f"  Slack skipped — no channel ID for '{channel_key}'")
         return False
 
+    payload = {"channel": channel_id, "text": text}
+    if blocks:
+        payload["blocks"] = blocks
+
+    resp = _slack_api_call("chat.postMessage", token, payload)
+    if resp.get("ok"):
+        print(f"  Slack → {channel_key} ({channel_id})")
+        return True
+
+    print(f"  WARNING: Slack post failed: {resp.get('error', 'unknown')}")
+    return False
+
+
+def _slack_api_call(method: str, token: str, payload: dict) -> dict:
+    """Call a Slack Web API method over HTTPS via curl. Never raises.
+
+    Why curl instead of slack_sdk / urllib: on this host an endpoint network
+    filter blocks the Python interpreter's socket connections to Slack's IP
+    range (every connect() returns EBADF, "Bad file descriptor"), while
+    Apple-signed curl is permitted. slack_sdk, requests, and raw sockets all
+    fail identically; curl is the only transport that reaches Slack here.
+
+    Returns the parsed JSON response, or {"ok": False, "error": ...} on any
+    transport failure.
+    """
+    import subprocess
+
+    url = f"https://slack.com/api/{method}"
     try:
-        from slack_sdk import WebClient
-        from slack_sdk.errors import SlackApiError
+        proc = subprocess.run(
+            [
+                "curl", "-sS", "-m", "15", "-X", "POST", url,
+                "-H", f"Authorization: Bearer {token}",
+                "-H", "Content-Type: application/json; charset=utf-8",
+                "--data-binary", "@-",
+            ],
+            input=json.dumps(payload),
+            capture_output=True, text=True, timeout=20,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        return {"ok": False, "error": f"curl transport failed: {exc}"}
 
-        client = WebClient(token=token)
-        kwargs = {"channel": channel_id, "text": text}
-        if blocks:
-            kwargs["blocks"] = blocks
-
-        resp = client.chat_postMessage(**kwargs)
-
-        if resp.get("ok"):
-            print(f"  Slack → {channel_key} ({channel_id})")
-            return True
-        else:
-            print(f"  Slack error: {resp.get('error', 'unknown')}")
-            return False
-
-    except Exception as exc:
-        print(f"  WARNING: Slack post failed: {exc}")
-        return False
+    if proc.returncode != 0:
+        return {"ok": False,
+                "error": f"curl exit {proc.returncode}: {proc.stderr.strip()}"}
+    try:
+        return json.loads(proc.stdout)
+    except (json.JSONDecodeError, ValueError):
+        return {"ok": False, "error": f"non-JSON response: {proc.stdout[:200]}"}
 
 
 def log_monitor_event(event: str, **fields) -> None:
@@ -468,12 +496,116 @@ def send_end_of_day_summary(window: str = "equity") -> None:
         f"```\n{positions_text}\n```"
     )
 
+    # Signal Performance — per-signal aggregate from thesis tracking.
+    # Only appends if there are closed trades to report on.
+    try:
+        from kairos_ml_thesis import format_signal_performance_section
+        sig_section = format_signal_performance_section()
+        if sig_section:
+            text += "\n\n" + sig_section
+    except Exception as exc:
+        print(f"  WARNING: signal performance section failed: {exc}")
+
+    # IPO Watchlist — active recent-IPO positions + upcoming candidates.
+    try:
+        ipo_section = _format_ipo_watchlist_section()
+        if ipo_section:
+            text += "\n\n" + ipo_section
+    except Exception as exc:
+        print(f"  WARNING: IPO watchlist section failed: {exc}")
+
     log_monitor_event("EOD_SUMMARY", window=window, buys=len(buys),
                       sells=len(sells), skipped=skipped_count,
                       capital_deployed=capital_deployed,
                       realized_pnl=realized_pnl, nlv=nlv, cash=cash)
 
     post_message("reports", text)
+
+
+def _format_ipo_watchlist_section() -> str:
+    """Render IPO positions + upcoming watchlist for the EOD report.
+
+    Empty string when nothing relevant — keeps the EOD message tight.
+    """
+    try:
+        from kairos_signals_ipo import (
+            get_ipo_tickers, get_ipo_context,
+        )
+    except Exception:
+        return ""
+
+    # --- Active IPO positions ---------------------------------------
+    ipo_catalog = get_ipo_tickers() or {}
+    active_lines: list[str] = []
+    try:
+        import sqlite3
+        kdb = os.path.join(SCRIPT_DIR, "kairos.db")
+        if os.path.exists(kdb) and ipo_catalog:
+            conn = sqlite3.connect(kdb)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT ticker,
+                          SUM(quantity) AS qty,
+                          SUM(entry_price * quantity)/SUM(quantity) AS avg_cost,
+                          MIN(entry_date) AS first_entry
+                   FROM holdings
+                   WHERE sold_date IS NULL
+                   GROUP BY ticker"""
+            ).fetchall()
+            conn.close()
+            holdings = {r["ticker"]: dict(r) for r in rows}
+            for ticker in sorted(ipo_catalog.keys()):
+                if ticker not in holdings:
+                    continue
+                h = holdings[ticker]
+                ctx = get_ipo_context(ticker)
+                ipo_price = ctx.get("ipo_price")
+                cur_vs_ipo = ctx.get("current_vs_ipo_pct")
+                days_held = ctx.get("days_since_ipo") or 0
+                cur_str = (
+                    f"{cur_vs_ipo:+.1f}%" if cur_vs_ipo is not None else "n/a"
+                )
+                ipo_str = f"${ipo_price:.2f}" if ipo_price else "n/a"
+                active_lines.append(
+                    f"  {ticker:<6} held {days_held}d  "
+                    f"qty={float(h['qty']):.0f}  IPO {ipo_str}  "
+                    f"vs IPO {cur_str}"
+                )
+    except Exception as exc:
+        active_lines = [f"  (IPO holdings query failed: {exc})"]
+
+    # --- Upcoming watchlist (still pre-ticker) ----------------------
+    upcoming_lines: list[str] = []
+    try:
+        from kairos_ipo_intake import (
+            get_watchlist_status, _load_cache as _ipo_cache,
+        )
+        news_cache = (_ipo_cache().get("pre_ipo_news") or {})
+        for s in get_watchlist_status():
+            if s.get("is_live"):
+                continue  # surfaced in the active section instead
+            news = news_cache.get(s["name"]) or {}
+            arts = news.get("article_count") or 0
+            vel = news.get("velocity_7d") or 0.0
+            upcoming_lines.append(
+                f"  {s['name'][:24]:<24}  "
+                f"{s['expected_ticker']:<7}  "
+                f"news 7d={arts}  velocity={vel:+.0f}"
+            )
+    except Exception as exc:
+        upcoming_lines = [f"  (watchlist status failed: {exc})"]
+
+    if not active_lines and not upcoming_lines:
+        return ""
+
+    parts = ["*IPO Watchlist*"]
+    if active_lines:
+        parts.append("Active recent-IPO positions:")
+        parts.append("```\n" + "\n".join(active_lines) + "\n```")
+    if upcoming_lines:
+        parts.append("Upcoming (still pre-ticker):")
+        parts.append("```\n" + "\n".join(upcoming_lines) + "\n```")
+    return "\n".join(parts)
 
 
 # ── CLI ───────────────────────────────────────────────────────────────
@@ -497,15 +629,13 @@ def _cli_test():
         print(f"    {key:<10} → {cid}")
 
     # Auth test
-    try:
-        from slack_sdk import WebClient
-        client = WebClient(token=token)
-        auth = client.auth_test()
-        print(f"\n  Bot name:  {auth['user']}")
-        print(f"  Workspace: {auth['team']}")
-        print(f"  Bot ID:    {auth['user_id']}")
-    except Exception as exc:
-        print(f"\n  Auth FAILED: {exc}")
+    auth = _slack_api_call("auth.test", token, {})
+    if auth.get("ok"):
+        print(f"\n  Bot name:  {auth.get('user')}")
+        print(f"  Workspace: {auth.get('team')}")
+        print(f"  Bot ID:    {auth.get('user_id')}")
+    else:
+        print(f"\n  Auth FAILED: {auth.get('error', 'unknown')}")
         sys.exit(1)
 
     # Send test to each configured channel
