@@ -2159,6 +2159,60 @@ def run_scheduled_cycle(args) -> None:
             print(f"  WARNING: IPO tracker failed: {exc}\n{tb}")
             _log_phase_crash("ipo_tracker", exc, tb)
 
+    # b1c. HOT-IPO Day 1 executor — open-market entry for reservations that
+    # have begun trading. Runs right after the tracker on the same 9:30–9:40
+    # ET weekday window. Uses its own window check (not is_tracker_due) since
+    # the tracker above has already consumed that daily gate by setting
+    # last_run. Honors kairos_config["hot_ipo"]["dry_run"] exactly like the
+    # tracker: dry_run probes + simulates without converting reservations;
+    # live (paper) fills call convert_reservation_to_position. Idempotent
+    # across ticks — converted reservations leave the active set and tickers
+    # with open orders are skipped, so it's safe to fire on each tick in the
+    # window.
+    if run_equity:
+        try:
+            from zoneinfo import ZoneInfo
+            from kairos_ipo_tracker import (
+                MARKET_OPEN_HOUR_ET, MARKET_OPEN_MIN_FROM, MARKET_OPEN_MIN_TO,
+            )
+            ipo_now_et = datetime.now(ZoneInfo("America/New_York"))
+            ipo_in_window = (
+                ipo_now_et.weekday() < 5
+                and ipo_now_et.hour == MARKET_OPEN_HOUR_ET
+                and MARKET_OPEN_MIN_FROM <= ipo_now_et.minute < MARKET_OPEN_MIN_TO
+            )
+            if ipo_in_window:
+                phase_banner("IPOX", "HOT-IPO DAY 1 EXECUTOR — Open-Market Entry")
+                from kairos_ipo_execute import run_ipo_execution_cycle
+                _ipo_dry = True
+                try:
+                    import json as _json
+                    with open("/Users/jelmore/TradingAgents/kairos_config.json") as _f:
+                        _ipo_dry = bool(_json.load(_f).get("hot_ipo", {}).get("dry_run", True))
+                except Exception:
+                    pass
+                _ipo_ib = None
+                try:
+                    import random
+                    from ib_insync import IB
+                    _ipo_ib = IB()
+                    _ipo_ib.connect("127.0.0.1", 7497,
+                                    clientId=random.randint(70, 79), timeout=10)
+                except Exception as conn_exc:
+                    print(f"  IBKR connect skipped ({conn_exc}); "
+                          f"reservations left untouched.")
+                    _ipo_ib = None
+                try:
+                    run_ipo_execution_cycle(dry_run=_ipo_dry, ib=_ipo_ib)
+                finally:
+                    if _ipo_ib:
+                        _ipo_ib.disconnect()
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"  WARNING: IPO executor failed: {exc}\n{tb}")
+            _log_phase_crash("ipo_execute", exc, tb)
+
     # b2. Thesis review — daily at 9:35am ET (weekdays only)
     if run_equity:
         try:
