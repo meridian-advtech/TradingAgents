@@ -720,6 +720,17 @@ No closed trades yet. The ledger will populate as positions are closed.
                 except (json.JSONDecodeError, IOError):
                     pass
 
+        # HOT-CATALYST long-option setups (surfaced for awareness/dedup only —
+        # the options engine self-selects and executes these in its own phase).
+        catalyst_hits = {}
+        catalyst_file = os.path.join(SCRIPT_DIR, "kairos_catalyst_signals.json")
+        if os.path.exists(catalyst_file):
+            try:
+                with open(catalyst_file) as f:
+                    catalyst_hits = json.load(f).get("by_ticker", {})
+            except (json.JSONDecodeError, IOError):
+                pass
+
         # Build per-ticker signal detail lines
         ticker_lines = []
         for t in shortlist:
@@ -756,6 +767,15 @@ No closed trades yet. The ledger will populate as positions are closed.
                     f"IV rank {o.get('iv_rank', 0):.0%}, "
                     f"C/P {o.get('call_put_ratio', '?')}x "
                     f"({o.get('direction', '?')}) [{triggers}]")
+            if t in catalyst_hits:
+                for c in catalyst_hits[t]:
+                    rt = "calls" if c.get("right") == "C" else "puts"
+                    ivr = c.get("iv_rank")
+                    ivr_str = f", IVrank {ivr:.0%}" if isinstance(ivr, (int, float)) else ""
+                    ticker_lines.append(
+                        f"         CATALYST: {c.get('setup', '?')} "
+                        f"({c.get('direction', '?')}→{rt}{ivr_str}) — "
+                        f"options engine handles this separately")
 
         ticker_detail = "\n".join(ticker_lines)
 
@@ -787,6 +807,9 @@ Signal legend:
   HOT-REVERSION  = dropped >3% — needs fundamental vs. sentiment check
   HOT-KALSHI     = Kalshi prediction market shifted >10%
   HOT-OPTIONS    = unusual options activity (vol/OI spike, high IV rank, or skewed call/put)
+  HOT-CATALYST   = long-option setup (pre-catalyst vol / post-crush reversion / unusual flow);
+                   the options engine selects + executes the contract in its own phase —
+                   do NOT size an equity position on this tag, it is for awareness only
   HOT/WARM       = price momentum + volume (Ollama screened)
 
 CONFLUENCE SCORING (position sizing is automatic — do NOT set quantities):
@@ -1112,6 +1135,15 @@ Produce a JSON object with a "trades" array containing ALL recommended
 trades, ranked by conviction (highest first). Include every ticker that
 warrants a BUY or SELL. Skip tickers with no edge.
 
+For every BUY, include a thesis block so we can track prediction accuracy:
+  - predicted_direction:  "UP" | "DOWN" | "NEUTRAL"
+  - predicted_timeframe_days:  integer (typical horizon: 3–21 days)
+  - predicted_return_pct:  expected move in %, signed (e.g. +6.5 or -3.0)
+  - key_conditions:  2–3 short bullets (one string, newline-separated) describing
+                     what must remain true for the thesis to hold
+  - invalidation_conditions:  2–3 short bullets describing what would PROVE the
+                              thesis wrong (e.g. "earnings miss", "breaks $X support")
+
 {{
   "trades": [
     {{
@@ -1119,7 +1151,12 @@ warrants a BUY or SELL. Skip tickers with no edge.
       "ticker": "<ticker>",
       "sector": "<universe category>",
       "conviction": <1-10>,
-      "rationale": "<1-2 sentences>"
+      "rationale": "<1-2 sentences>",
+      "predicted_direction": "UP",
+      "predicted_timeframe_days": 7,
+      "predicted_return_pct": 5.0,
+      "key_conditions": "- macro stays risk-on\\n- sector flows positive\\n- no negative earnings revision",
+      "invalidation_conditions": "- closes below 50-day MA\\n- earnings miss\\n- sector rotation against"
     }},
     ...more trades if warranted...
   ],
@@ -1132,6 +1169,7 @@ Rules:
   - If NO ticker warrants a trade, return an empty trades array.
   - Tag REVERSION trades in the rationale for ledger tracking.
   - Sector MUST match one of the universe categories.
+  - Thesis fields are REQUIRED for every BUY (omit them on SELL/HOLD).
 """
 
     with open(PROMPT_FILE, "w") as f:

@@ -473,6 +473,64 @@ def manage_positions(cfg: dict, dry_run: bool, ib=None) -> list[dict]:
     return actions
 
 
+# ── Cycle orchestration (pipeline entry point) ───────────────────────
+
+def run_options_cycle(cfg: dict, nlv: float, dry_run: bool, ib=None,
+                      tickers=None, manage_only: bool = False) -> dict:
+    """Manage open positions, then (unless manage_only) detect + enter signals.
+
+    Caller owns the IBKR connection (pass `ib` for live orders / NLV) and is
+    responsible for disconnecting. Returns a summary:
+        {"closed", "entered", "skipped", "closes": [...], "entries": [...]}
+    """
+    # ── Manage existing positions first (free up budget) ──────────
+    print(banner("Managing Open Positions"))
+    closes = manage_positions(cfg, dry_run, ib)
+    if not closes:
+        print("  No positions hit stop / take-profit / DTE rules.")
+    else:
+        for c in closes:
+            tag = " [sim]" if c["simulated"] else ""
+            print(f"  CLOSE {c['ticker']} {c['strike']}{c['right']} {c['expiry']} "
+                  f"— {c['reason']}{tag}: {c['entry_premium']:.2f} -> "
+                  f"{c['close_premium']:.2f}  PnL ${c['realized_pnl']:,.0f}")
+
+    if manage_only:
+        print(banner("Manage-only mode — skipping entries"))
+        return {"closed": len(closes), "entered": 0, "skipped": 0,
+                "closes": closes, "entries": []}
+
+    # ── Entries ───────────────────────────────────────────────────
+    print(banner("Detecting Catalyst Signals"))
+    from kairos_catalyst_signals import detect_catalyst_signals
+    signals = detect_catalyst_signals(tickers=tickers, config=cfg)
+    print(f"  {len(signals)} signal(s) detected.")
+
+    print(banner("Executing Entries"))
+    entries: list[dict] = []
+    executed = 0
+    skipped = 0
+    for s in signals:
+        res = execute_signal(s, cfg, nlv, dry_run, ib)
+        status = res.get("status")
+        if status in ("simulated", "filled", "submitted"):
+            executed += 1
+            entries.append(res)
+            tag = " [sim]" if status == "simulated" else ""
+            deg = " (degraded/BS)" if res.get("degraded") else ""
+            print(f"  {res['action']} {res['ticker']} {res['strike']}{res['right']} "
+                  f"{res['expiry']} x{res['contracts']} @ ${res['premium']:.2f}{tag}{deg}")
+            print(f"      [{res['setup']}] dte={res['dte']} Δ={res['delta']} "
+                  f"cost=${res['cost_basis']:,.0f}  decision#{res['decision_id']} "
+                  f"pos#{res['position_id']}")
+        else:
+            skipped += 1
+            print(f"  SKIP {res['ticker']}: {res.get('reason', status)}")
+
+    return {"closed": len(closes), "entered": executed, "skipped": skipped,
+            "closes": closes, "entries": entries}
+
+
 # ── main ─────────────────────────────────────────────────────────────
 
 def main():
@@ -522,57 +580,19 @@ def main():
     else:
         print(f"  NLV: ${nlv:,.0f}")
 
-    # ── Manage existing positions first (free up budget) ──────────
-    print(banner("Managing Open Positions"))
-    closes = manage_positions(cfg, dry_run, ib)
-    if not closes:
-        print("  No positions hit stop / take-profit / DTE rules.")
-    else:
-        for c in closes:
-            tag = " [sim]" if c["simulated"] else ""
-            print(f"  CLOSE {c['ticker']} {c['strike']}{c['right']} {c['expiry']} "
-                  f"— {c['reason']}{tag}: {c['entry_premium']:.2f} -> "
-                  f"{c['close_premium']:.2f}  PnL ${c['realized_pnl']:,.0f}")
-
-    # ── Entries ───────────────────────────────────────────────────
-    if args.manage_only:
-        print(banner("Manage-only mode — skipping entries"))
-        if ib:
-            ib.disconnect()
-        return
-
-    print(banner("Detecting Catalyst Signals"))
-    from kairos_catalyst_signals import detect_catalyst_signals
     tickers = ([t.strip().upper() for t in args.tickers.split(",") if t.strip()]
                if args.tickers else None)
-    signals = detect_catalyst_signals(tickers=tickers, config=cfg)
-    print(f"  {len(signals)} signal(s) detected.")
-
-    print(banner("Executing Entries"))
-    executed = 0
-    skipped = 0
-    for s in signals:
-        res = execute_signal(s, cfg, nlv, dry_run, ib)
-        status = res.get("status")
-        if status in ("simulated", "filled", "submitted"):
-            executed += 1
-            tag = " [sim]" if status == "simulated" else ""
-            deg = " (degraded/BS)" if res.get("degraded") else ""
-            print(f"  {res['action']} {res['ticker']} {res['strike']}{res['right']} "
-                  f"{res['expiry']} x{res['contracts']} @ ${res['premium']:.2f}{tag}{deg}")
-            print(f"      [{res['setup']}] dte={res['dte']} Δ={res['delta']} "
-                  f"cost=${res['cost_basis']:,.0f}  decision#{res['decision_id']} "
-                  f"pos#{res['position_id']}")
-        else:
-            skipped += 1
-            print(f"  SKIP {res['ticker']}: {res.get('reason', status)}")
-
-    if ib:
-        ib.disconnect()
+    try:
+        summary = run_options_cycle(cfg, nlv, dry_run, ib=ib, tickers=tickers,
+                                    manage_only=args.manage_only)
+    finally:
+        if ib:
+            ib.disconnect()
 
     print("\n" + "━" * W)
     print(f"  OPTIONS EXECUTOR COMPLETE  ({mode})")
-    print(f"  Closed: {len(closes)}  Entered: {executed}  Skipped: {skipped}")
+    print(f"  Closed: {summary['closed']}  Entered: {summary['entered']}  "
+          f"Skipped: {summary['skipped']}")
     print("━" * W)
 
 

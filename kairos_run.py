@@ -433,6 +433,15 @@ def _call_anthropic_api(prompt_text: str, system_instruction: str, cfg: dict) ->
     return None
 
 
+def _ticker_is_recent_ipo(ticker: str) -> bool:
+    """Thin wrapper used for log-output counting; never raises."""
+    try:
+        from kairos_signals_ipo import is_recent_ipo
+        return is_recent_ipo(ticker)
+    except Exception:
+        return False
+
+
 def _invoke_claude_reasoning(prompt_file: str, cfg: dict) -> dict | None:
     """Call the Anthropic API for equity reasoning.
 
@@ -447,12 +456,50 @@ def _invoke_claude_reasoning(prompt_file: str, cfg: dict) -> dict | None:
         print(f"  ERROR reading prompt: {exc}")
         return None
 
+    # Prepend an IPO context block if any shortlisted ticker IPO'd in the
+    # last IPO_HOLD_DAYS. The block instructs Claude to raise conviction
+    # for the affected tickers (encoding the size_multiplier + boost from
+    # score_ipo_momentum into a higher JSON conviction value).
+    try:
+        shortlist_for_ipo = get_screening_shortlist() or []
+        if shortlist_for_ipo:
+            from kairos_signals_ipo import format_ipo_prompt_block
+            ipo_block = format_ipo_prompt_block(shortlist_for_ipo)
+            if ipo_block:
+                prompt_text = ipo_block + prompt_text
+                print(f"  IPO context: injected for "
+                      f"{sum(1 for t in shortlist_for_ipo if _ticker_is_recent_ipo(t))} "
+                      f"shortlisted ticker(s)")
+    except Exception as ipo_exc:
+        print(f"  WARNING: IPO prompt injection failed: {ipo_exc}")
+
+    # Prepend the event-driven seasonality block whenever a tracked
+    # calendar event is in window. Block instructs Claude to raise
+    # conviction on matching tickers per the per-pattern multiplier.
+    try:
+        from kairos_signals_events import get_active_events, format_event_prompt_block
+        active_events = get_active_events()
+        if active_events:
+            event_block = format_event_prompt_block(active_events)
+            if event_block:
+                prompt_text = event_block + prompt_text
+                print(f"  Event context: injected for "
+                      f"{len(active_events)} active event(s) — "
+                      f"{', '.join(sorted({e['ticker'] for e in active_events}))}")
+    except Exception as evt_exc:
+        print(f"  WARNING: Event prompt injection failed: {evt_exc}")
+
     system_instruction = (
         "Output ONLY the JSON object. No markdown fences, "
         "no explanation, no preamble. Raw JSON with a 'trades' array "
-        "containing ALL recommended trades:\n"
+        "containing ALL recommended trades. Every BUY MUST include the "
+        "thesis fields (predicted_direction, predicted_timeframe_days, "
+        "predicted_return_pct, key_conditions, invalidation_conditions):\n"
         '{"trades":[{"action":"BUY","ticker":"...","sector":"...",'
-        '"conviction":N,"rationale":"..."},...],'
+        '"conviction":N,"rationale":"...",'
+        '"predicted_direction":"UP|DOWN|NEUTRAL",'
+        '"predicted_timeframe_days":N,"predicted_return_pct":F,'
+        '"key_conditions":"...","invalidation_conditions":"..."},...],'
         '"tickers_evaluated":[...],"skipped":"..."}\n'
     )
 
@@ -658,6 +705,12 @@ def run_screen(dry_run: bool = False, max_tier2: int = 15) -> dict:
     except Exception:
         _skip_t0 = False
     result = do_screen(dry_run=dry_run, max_tier2=max_tier2, skip_tier0=_skip_t0)
+    # Explicitly unload screen model before Qwen3 loads for Tier 2
+    try:
+        from kairos_ollama import unload_model, get_screen_model
+        unload_model(get_screen_model())
+    except Exception:
+        pass
 
     # Persist shortlist so downstream phases can pick it up
     with open(SCREEN_RESULT_FILE, "w") as f:
@@ -797,6 +850,9 @@ def run_gather(use_ollama: bool = True, shortlist: list[str] | None = None):
     if shortlist:
         _run_options_detection(shortlist)
 
+    # ── HOT-CATALYST long-options detection (event calendar + crush scan) ──
+    _run_catalyst_detection(shortlist)
+
     # Pass regime context into the prompt if available
     regime = get_current_regime()
     regime_section = regime["prompt_section"] if regime else None
@@ -850,6 +906,133 @@ def _run_options_detection(shortlist: list[str]) -> None:
                 pass
     else:
         print(f"  │  No unusual options activity detected ({elapsed}s)")
+
+    # ── Second pass: yfinance sweep of EXECUTIVE_WATCHLIST tickers ───────
+    # Catches unusual flow on closely-watched names that didn't make the
+    # Tier-1 shortlist. Tagged HOT-OPTIONS-EXEC so downstream prompt
+    # assembly can distinguish them from IBKR-quality main hits.
+    try:
+        from kairos_signals_options import (
+            EXECUTIVE_WATCHLIST,
+            _detect_options_with_yfinance,
+            _load_options_config,
+        )
+    except ImportError as exc:
+        print(f"  │  Watchlist sweep skipped: {exc}")
+        print(f"  └──────────────────────────────────────────────────────┘")
+        return
+
+    shortlist_set = {t.upper() for t in shortlist}
+    extra_tickers = [t for t in EXECUTIVE_WATCHLIST if t.upper() not in shortlist_set]
+    exec_results: dict[str, dict] = {}
+
+    if extra_tickers:
+        print(f"  │  Watchlist sweep: {len(extra_tickers)} non-shortlist tickers via yfinance")
+        cfg = _load_options_config()
+        t1 = time.time()
+        for sym in extra_tickers:
+            yf_data = _detect_options_with_yfinance(sym, cfg)
+            if yf_data:
+                exec_results[sym] = yf_data
+        sweep_elapsed = round(time.time() - t1, 1)
+
+        if exec_results:
+            print(f"  │  HOT-OPTIONS-EXEC hits: {len(exec_results)} ({sweep_elapsed}s)")
+            for sym, data in exec_results.items():
+                triggers = ", ".join(data.get("triggered_by", []))
+                print(f"  │    {sym}: vol/OI={data.get('vol_oi_ratio', 0):.1f}x  "
+                      f"C/P={data.get('call_put_ratio', 0):.1f}x  [{triggers}]")
+
+            summary_file = os.path.join(SCRIPT_DIR, "kairos_signal_summary.json")
+            if os.path.exists(summary_file):
+                try:
+                    with open(summary_file) as f:
+                        summary = json.load(f)
+                    for ticker in exec_results:
+                        tags = summary.setdefault("signal_tags", {}).setdefault(ticker, [])
+                        if "HOT-OPTIONS-EXEC" not in tags:
+                            tags.append("HOT-OPTIONS-EXEC")
+                    merged = dict(summary.get("options_hits") or {})
+                    merged.update(exec_results)
+                    summary["options_hits"] = merged
+                    with open(summary_file, "w") as f:
+                        json.dump(summary, f, indent=2, default=str)
+                except (json.JSONDecodeError, IOError):
+                    pass
+        else:
+            print(f"  │  Watchlist sweep: no hits ({sweep_elapsed}s)")
+
+    print(f"  └──────────────────────────────────────────────────────┘")
+
+
+def _run_catalyst_detection(shortlist: list[str] | None) -> None:
+    """Detect HOT-CATALYST long-option setups (event calendar + crush + flow).
+
+    Self-contained, algorithmic detection — the options engine self-selects
+    contracts at execute time. Here we only SURFACE the signals: persist them
+    to kairos_catalyst_signals.json and register a HOT-CATALYST tag into
+    kairos_signal_summary.json so the equity reasoning prompt is aware of them
+    (awareness / dedup, exactly like HOT-OPTIONS). No contracts are chosen here.
+    """
+    print(f"\n  ┌─ HOT-CATALYST Detection ──────────────────────────────┐")
+    try:
+        from kairos_catalyst_signals import (
+            detect_catalyst_signals, load_hot_catalyst_config,
+        )
+    except ImportError as exc:
+        print(f"  │  SKIP: {exc}")
+        print(f"  └──────────────────────────────────────────────────────┘")
+        return
+
+    t0 = time.time()
+    try:
+        cfg = load_hot_catalyst_config()
+        signals = detect_catalyst_signals(tickers=shortlist, config=cfg)
+    except Exception as exc:
+        print(f"  │  Detection failed: {exc}")
+        print(f"  └──────────────────────────────────────────────────────┘")
+        return
+    elapsed = round(time.time() - t0, 1)
+
+    if not signals:
+        print(f"  │  No catalyst setups detected ({elapsed}s)")
+        print(f"  └──────────────────────────────────────────────────────┘")
+        return
+
+    by_ticker: dict[str, list] = {}
+    for s in signals:
+        by_ticker.setdefault(s["ticker"], []).append(s)
+
+    print(f"  │  HOT-CATALYST setups: {len(signals)} ({elapsed}s)")
+    for s in signals:
+        rt = "calls" if s["right"] == "C" else "puts"
+        ivr = s.get("iv_rank")
+        ivr_str = f"{ivr:.0%}" if isinstance(ivr, (int, float)) else "n/a"
+        print(f"  │    {s['ticker']}: {s['setup']} ({s['direction']}→{rt})  "
+              f"IVrank={ivr_str}")
+
+    catalyst_file = os.path.join(SCRIPT_DIR, "kairos_catalyst_signals.json")
+    try:
+        with open(catalyst_file, "w") as f:
+            json.dump({"signals": signals, "by_ticker": by_ticker}, f,
+                      indent=2, default=str)
+    except IOError:
+        pass
+
+    # Register HOT-CATALYST tag into the equity prompt summary (awareness/dedup).
+    summary_file = os.path.join(SCRIPT_DIR, "kairos_signal_summary.json")
+    if os.path.exists(summary_file):
+        try:
+            with open(summary_file) as f:
+                summary = json.load(f)
+            for ticker in by_ticker:
+                tags = summary.setdefault("signal_tags", {}).setdefault(ticker, [])
+                if "HOT-CATALYST" not in tags:
+                    tags.append("HOT-CATALYST")
+            with open(summary_file, "w") as f:
+                json.dump(summary, f, indent=2, default=str)
+        except (json.JSONDecodeError, IOError):
+            pass
 
     print(f"  └──────────────────────────────────────────────────────┘")
 
@@ -1582,6 +1765,63 @@ def run_execute():
     execute_main()
 
 
+def run_options_execute():
+    """Phase 3O: HOT-CATALYST long-options execute (parallel to equity execute).
+
+    Manages open option positions (stop / TP / DTE) then enters new long-option
+    setups. Self-contained engine — selects its own contracts. dry_run is taken
+    from config (currently true → simulate + log); a live order needs BOTH
+    config dry_run=false AND --no-dry-run, neither of which the scheduler passes,
+    so the scheduled path always simulates. IBKR (paper, port 7497) is connected
+    only to read NLV; sizing falls back to the sim default if it can't connect.
+    """
+    phase_banner("3O", "EXECUTE OPTIONS — HOT-CATALYST")
+
+    try:
+        from kairos_catalyst_signals import load_hot_catalyst_config
+        from kairos_options_execute import (
+            run_options_cycle, fetch_nlv, DEFAULT_SIM_NLV,
+        )
+        from kairos_log_db import init_db
+    except ImportError as exc:
+        print(f"  SKIP: HOT-CATALYST modules unavailable ({exc})")
+        return
+
+    try:
+        init_db()
+        cfg = load_hot_catalyst_config()
+        dry_run = True  # scheduler never passes --no-dry-run; always simulate
+
+        ib = None
+        nlv = None
+        try:
+            import random
+            from ib_insync import IB
+            ib = IB()
+            ib.connect("127.0.0.1", 7497, clientId=random.randint(60, 69), timeout=10)
+            nlv = fetch_nlv(ib)
+        except Exception as exc:
+            print(f"  IBKR NLV fetch skipped ({exc}); using sim default.")
+            ib = None
+
+        if nlv is None:
+            nlv = DEFAULT_SIM_NLV
+            print(f"  NLV: ${nlv:,.0f} (simulation default)")
+        else:
+            print(f"  NLV: ${nlv:,.0f}")
+
+        try:
+            summary = run_options_cycle(cfg, nlv, dry_run, ib=ib)
+            print(f"\n  HOT-CATALYST: closed {summary['closed']}, "
+                  f"entered {summary['entered']}, skipped {summary['skipped']} "
+                  f"({'simulated' if dry_run else 'LIVE'})")
+        finally:
+            if ib:
+                ib.disconnect()
+    except Exception as exc:
+        print(f"  HOT-CATALYST execute error (non-fatal): {exc}")
+
+
 def _apply_tax_filter():
     """Read the latest decision; if SELL, run tax efficiency check."""
     from kairos_execute import read_latest_decision
@@ -1678,11 +1918,10 @@ def _check_ollama_models():
         print(f"  Installed models: {', '.join(status['available']) or '(none)'}")
         sys.exit(1)
 
-    # Preload models into VRAM so cold-start latency doesn't eat into
-    # the timed pipeline phases.  Screen model first (used first), then
-    # reason model (used for Tier 2 / crypto classification).
+    # Preload screen model only — reason model loads on-demand after screening
+    # completes. keep_alive=0 ensures it unloads immediately after use,
+    # so Qwen3 never coexists in memory with phi4-mini.
     warmup(status["screen_name"])
-    warmup(status["reason_name"])
 
 
 # ── Cycle-counter scheduler ──────────────────────────────────────────
@@ -1833,6 +2072,20 @@ def run_scheduled_cycle(args) -> None:
     run_crypto = args.mode in ("crypto", "both")
     do_screen = not args.no_screen and use_ollama and run_equity
 
+    # Phase 0: Stale order cleanup — cancel any open IBKR orders older
+    # than 8 hours so they don't tie up cash across cycles.
+    if run_equity:
+        phase_banner(0, "STALE ORDER CLEANUP")
+        try:
+            from kairos_execute import cancel_stale_orders
+            n = cancel_stale_orders(max_age_hours=8)
+            print(f"  Stale orders cancelled: {n}")
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"  WARNING: Stale order cleanup failed: {exc}\n{tb}")
+            _log_phase_crash("stale_order_cleanup", exc, tb)
+
     # a. Intake
     if _should_run("intake", cycle, intervals):
         phase_banner("I", "TIER C INTAKE")
@@ -1856,6 +2109,55 @@ def run_scheduled_cycle(args) -> None:
             tb = traceback.format_exc()
             print(f"  WARNING: Tier C audit failed: {exc}\n{tb}")
             _log_phase_crash("audit", exc, tb)
+
+    # b1. IPO intake — daily at market open (9:30-9:35 ET, weekdays).
+    # EDGAR + Finnhub don't need 30-min cadence; one scan/day is plenty.
+    # The gate inside is_full_scan_due() also checks cache['last_full_scan']
+    # so a single window crossing won't fire it twice.
+    if run_equity:
+        try:
+            from kairos_ipo_intake import is_full_scan_due, run_ipo_intake
+            if is_full_scan_due():
+                phase_banner("IPO", "IPO INTAKE — Daily Watchlist + EDGAR + News")
+                run_ipo_intake()
+                # Event seasonality scan rides on the same daily cadence:
+                # fetches yfinance price/high, scores active events, and
+                # posts a Slack alert when a fresh PRE-EVENT-DIP fires.
+                try:
+                    from kairos_signals_events import run_event_scan
+                    phase_banner("EVT", "EVENT SEASONALITY SCAN — Active Calendar Events")
+                    run_event_scan()
+                except Exception as evt_exc:
+                    print(f"  WARNING: Event seasonality scan failed: {evt_exc}")
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"  WARNING: IPO intake failed: {exc}\n{tb}")
+            _log_phase_crash("ipo_intake", exc, tb)
+
+    # b1b. HOT-IPO tracker — discovery, conviction scoring, capital
+    # reservation. Runs immediately after intake on the same 9:30 ET
+    # weekday cadence (gate widens to 9:30–9:40 so both fit).
+    # Reservations default to dry_run=True; flip kairos_config["hot_ipo"]
+    # ["dry_run"] = false to actually reserve & liberate.
+    if run_equity:
+        try:
+            from kairos_ipo_tracker import is_tracker_due, run_ipo_tracker
+            if is_tracker_due():
+                phase_banner("IPOT", "HOT-IPO TRACKER — Pipeline + Conviction Scoring")
+                _dry = True
+                try:
+                    import json as _json
+                    with open("/Users/jelmore/TradingAgents/kairos_config.json") as _f:
+                        _dry = bool(_json.load(_f).get("hot_ipo", {}).get("dry_run", True))
+                except Exception:
+                    pass
+                run_ipo_tracker(dry_run=_dry)
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"  WARNING: IPO tracker failed: {exc}\n{tb}")
+            _log_phase_crash("ipo_tracker", exc, tb)
 
     # b2. Thesis review — daily at 9:35am ET (weekdays only)
     if run_equity:
@@ -1893,6 +2195,17 @@ def run_scheduled_cycle(args) -> None:
                 tb = traceback.format_exc()
                 print(f"  WARNING: Stop-loss phase failed: {exc}\n{tb}")
                 _log_phase_crash("stoploss", exc, tb)
+            # Thesis checkpoints — once per cycle, after stop-loss has
+            # had a chance to close anything off. Failure here must NOT
+            # block the rest of the cycle.
+            try:
+                from kairos_ml_thesis import run_thesis_checkpoints
+                run_thesis_checkpoints(ib=shared_ib_connection)
+            except Exception as exc:
+                import traceback
+                tb = traceback.format_exc()
+                print(f"  WARNING: Thesis checkpoints failed: {exc}\n{tb}")
+                _log_phase_crash("thesis_checkpoints", exc, tb)
         screen_result = run_screen(dry_run=args.screen_dry_run, max_tier2=args.max_tier2)
         shortlist = screen_result["shortlist"]
         
@@ -1917,6 +2230,7 @@ def run_scheduled_cycle(args) -> None:
             if run_equity:
                 run_reason()
                 run_execute()
+                run_options_execute()
             if run_crypto:
                 run_reason_crypto()
                 run_execute_crypto()
@@ -2053,6 +2367,15 @@ def main():
     if use_ollama:
         run_orchestrate()
 
+    # IPO intake — runs after orchestrate, before regime/screen, so any
+    # IPO tickers promoted to Tier C are visible to the screener.
+    if run_equity:
+        try:
+            from kairos_ipo_intake import run_ipo_intake
+            run_ipo_intake()
+        except Exception as exc:
+            print(f"  WARNING: IPO intake failed: {exc}")
+
     regime_result = run_regime()
 
     # Phase 0.1: Stop-loss check (after regime, before screening)
@@ -2061,6 +2384,11 @@ def main():
             run_stoploss(ib=shared_ib_connection)
         except Exception as exc:
             print(f"  WARNING: Stop-loss phase failed: {exc}")
+        try:
+            from kairos_ml_thesis import run_thesis_checkpoints
+            run_thesis_checkpoints(ib=shared_ib_connection)
+        except Exception as exc:
+            print(f"  WARNING: Thesis checkpoints failed: {exc}")
 
     shortlist = None
     if do_screen:
@@ -2082,6 +2410,7 @@ def main():
     if run_equity:
         run_reason()
         run_execute()
+        run_options_execute()
     if run_crypto:
         run_reason_crypto()
         run_execute_crypto()
