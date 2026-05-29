@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Kairos Commander launchd agent (template).
+
+  Install:
+    1. Copy to ~/Library/LaunchAgents/com.kairos.commander.plist
+    2. Replace the REPLACE_WITH_* placeholders with real values
+       (or remove the EnvironmentVariables entry and rely on
+       kairos_config.json["slack"]["bot_token"]).
+    3. launchctl load ~/Library/LaunchAgents/com.kairos.commander.plist
+
+  Do NOT commit the populated copy — it contains live secrets.
+  Single-instance safety is enforced by the PID lock in kairos_commander.py
+  (/tmp/kairos_commander.pid), so a duplicate launchd/manual start exits cleanly.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.kairos.commander</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/jelmore/Kairos-env/bin/python</string>
+		<string>/Users/jelmore/TradingAgents/kairos_commander.py</string>
+	</array>
+
+	<key>WorkingDirectory</key>
+	<string>/Users/jelmore/TradingAgents</string>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>SLACK_BOT_TOKEN</key>
+		<string>REPLACE_WITH_SLACK_BOT_TOKEN</string>
+		<key>ANTHROPIC_API_KEY</key>
+		<string>REPLACE_WITH_ANTHROPIC_API_KEY</string>
+		<key>PYTHONUNBUFFERED</key>
+		<string>1</string>
+	</dict>
+
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+
+	<key>StandardOutPath</key>
+	<string>/Users/jelmore/TradingAgents/kairos_commander.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/jelmore/TradingAgents/kairos_commander.log</string>
+</dict>
+</plist>
