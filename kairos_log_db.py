@@ -101,6 +101,58 @@ CREATE TABLE IF NOT EXISTS crypto_holdings (
 );
 """
 
+SCHEMA_OPTIONS_DECISIONS = """
+CREATE TABLE IF NOT EXISTS options_decisions (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp        TEXT NOT NULL,
+    ticker           TEXT NOT NULL,
+    setup            TEXT NOT NULL,
+    action           TEXT NOT NULL,
+    right            TEXT,
+    strike           REAL,
+    expiry           TEXT,
+    contracts        INTEGER NOT NULL DEFAULT 0,
+    target_delta     REAL,
+    limit_price      REAL,
+    rationale        TEXT,
+    signals_fired    TEXT,
+    conviction       INTEGER,
+    execution_status TEXT,
+    fill_price       REAL,
+    commission       REAL,
+    degraded         INTEGER NOT NULL DEFAULT 0,
+    simulated        INTEGER NOT NULL DEFAULT 0,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+SCHEMA_OPTIONS_POSITIONS = """
+CREATE TABLE IF NOT EXISTS options_positions (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_id      INTEGER REFERENCES options_decisions(id),
+    ticker           TEXT NOT NULL,
+    setup            TEXT,
+    right            TEXT NOT NULL,
+    strike           REAL NOT NULL,
+    expiry           TEXT NOT NULL,
+    dte_at_entry     INTEGER,
+    delta_at_entry   REAL,
+    contracts        INTEGER NOT NULL,
+    entry_premium    REAL NOT NULL,
+    entry_underlying REAL,
+    entry_iv         REAL,
+    cost_basis       REAL,
+    direction        TEXT,
+    status           TEXT NOT NULL DEFAULT 'open',
+    opened_at        TEXT NOT NULL,
+    closed_at        TEXT,
+    close_premium    REAL,
+    close_reason     TEXT,
+    realized_pnl     REAL,
+    simulated        INTEGER NOT NULL DEFAULT 0
+);
+"""
+
 # holding_days is computed at query time, not stored, to avoid
 # SQLite's restriction on non-deterministic generated columns.
 HOLDINGS_SELECT = """
@@ -125,9 +177,13 @@ def init_db(reset: bool = False):
         conn.execute("DROP TABLE IF EXISTS outcomes")
         conn.execute("DROP TABLE IF EXISTS holdings")
         conn.execute("DROP TABLE IF EXISTS decisions")
+    if reset:
+        conn.execute("DROP TABLE IF EXISTS options_positions")
+        conn.execute("DROP TABLE IF EXISTS options_decisions")
     conn.executescript(
         SCHEMA_DECISIONS + SCHEMA_OUTCOMES + SCHEMA_HOLDINGS
         + SCHEMA_CRYPTO_DECISIONS + SCHEMA_CRYPTO_HOLDINGS
+        + SCHEMA_OPTIONS_DECISIONS + SCHEMA_OPTIONS_POSITIONS
     )
     # Migrate: add conviction_trade column if missing (existing DBs)
     try:
@@ -139,6 +195,11 @@ def init_db(reset: bool = False):
         conn.execute("SELECT simulated FROM crypto_decisions LIMIT 1")
     except sqlite3.OperationalError:
         conn.execute("ALTER TABLE crypto_decisions ADD COLUMN simulated INTEGER NOT NULL DEFAULT 0")
+    # Migrate: add degraded column to options_decisions if missing
+    try:
+        conn.execute("SELECT degraded FROM options_decisions LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE options_decisions ADD COLUMN degraded INTEGER NOT NULL DEFAULT 0")
     conn.commit()
     conn.close()
 
@@ -510,6 +571,158 @@ def sell_crypto_holdings(asset: str, qty_to_sell: float, sold_date: str, sold_pr
     return closed
 
 
+# ── Options API (HOT-CATALYST, long-only) ────────────────────────────
+
+def insert_options_decision(
+    timestamp: str,
+    ticker: str,
+    setup: str,
+    action: str,
+    right: str | None = None,
+    strike: float | None = None,
+    expiry: str | None = None,
+    contracts: int = 0,
+    target_delta: float | None = None,
+    limit_price: float | None = None,
+    rationale: str = "",
+    signals_fired: list | None = None,
+    conviction: int | None = None,
+    execution_status: str | None = None,
+    fill_price: float | None = None,
+    commission: float | None = None,
+    degraded: bool = False,
+    simulated: bool = False,
+) -> int:
+    """Insert a HOT-CATALYST options decision and return its row ID.
+
+    action is BUY_CALL / BUY_PUT / CLOSE only — long options exclusively.
+    degraded=True flags rows where greeks came from the Black-Scholes
+    fallback (OPRA subscription unavailable).
+    """
+    conn = get_connection()
+    cur = conn.execute(
+        """INSERT INTO options_decisions
+           (timestamp, ticker, setup, action, right, strike, expiry,
+            contracts, target_delta, limit_price, rationale, signals_fired,
+            conviction, execution_status, fill_price, commission,
+            degraded, simulated)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            timestamp, ticker, setup, action, right, strike, expiry,
+            contracts, target_delta, limit_price, rationale,
+            json.dumps(signals_fired) if signals_fired else None,
+            conviction, execution_status, fill_price, commission,
+            1 if degraded else 0, 1 if simulated else 0,
+        ),
+    )
+    row_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def open_options_position(
+    decision_id: int | None,
+    ticker: str,
+    setup: str,
+    right: str,
+    strike: float,
+    expiry: str,
+    contracts: int,
+    entry_premium: float,
+    opened_at: str,
+    dte_at_entry: int | None = None,
+    delta_at_entry: float | None = None,
+    entry_underlying: float | None = None,
+    entry_iv: float | None = None,
+    direction: str | None = None,
+    simulated: bool = False,
+) -> int:
+    """Open a long options position. cost_basis = premium * contracts * 100."""
+    cost_basis = entry_premium * contracts * 100
+    status = "simulated" if simulated else "open"
+    conn = get_connection()
+    cur = conn.execute(
+        """INSERT INTO options_positions
+           (decision_id, ticker, setup, right, strike, expiry, dte_at_entry,
+            delta_at_entry, contracts, entry_premium, entry_underlying,
+            entry_iv, cost_basis, direction, status, opened_at, simulated)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            decision_id, ticker, setup, right, strike, expiry, dte_at_entry,
+            delta_at_entry, contracts, entry_premium, entry_underlying,
+            entry_iv, cost_basis, direction, status, opened_at,
+            1 if simulated else 0,
+        ),
+    )
+    row_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def close_options_position(
+    position_id: int,
+    close_premium: float,
+    close_reason: str,
+    closed_at: str,
+    realized_pnl: float | None = None,
+) -> None:
+    """Mark an options position closed. close_reason: stop_50/tp_100/dte_21/manual.
+
+    If realized_pnl is None it is computed as
+    (close_premium - entry_premium) * contracts * 100.
+    """
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT entry_premium, contracts, simulated FROM options_positions WHERE id = ?",
+        (position_id,),
+    ).fetchone()
+    if row is None:
+        conn.close()
+        raise ValueError(f"options_positions id {position_id} not found")
+    if realized_pnl is None:
+        realized_pnl = (close_premium - row["entry_premium"]) * row["contracts"] * 100
+    status = "simulated" if row["simulated"] else "closed"
+    conn.execute(
+        """UPDATE options_positions
+           SET status = ?, closed_at = ?, close_premium = ?,
+               close_reason = ?, realized_pnl = ?
+           WHERE id = ?""",
+        (status, closed_at, close_premium, close_reason, realized_pnl, position_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_open_options_positions(ticker: str | None = None) -> list[dict]:
+    """Return positions not yet closed (status open or simulated)."""
+    conn = get_connection()
+    if ticker:
+        rows = conn.execute(
+            "SELECT * FROM options_positions "
+            "WHERE closed_at IS NULL AND ticker = ? ORDER BY opened_at",
+            (ticker,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM options_positions WHERE closed_at IS NULL ORDER BY opened_at"
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_options_decisions(limit: int = 20) -> list[dict]:
+    """Return recent options decisions, newest first."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM options_decisions ORDER BY id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 # ── Migration from kairos_decisions.log ──────────────────────────────
 
 def parse_log_objects(content: str) -> list[dict]:
@@ -666,10 +879,13 @@ def main():
     out_count = conn.execute("SELECT COUNT(*) FROM outcomes").fetchone()[0]
     hold_count = conn.execute("SELECT COUNT(*) FROM holdings").fetchone()[0]
     open_count = conn.execute("SELECT COUNT(*) FROM holdings WHERE sold_date IS NULL").fetchone()[0]
+    opt_dec = conn.execute("SELECT COUNT(*) FROM options_decisions").fetchone()[0]
+    opt_pos = conn.execute("SELECT COUNT(*) FROM options_positions").fetchone()[0]
     conn.close()
     print(f"  Decisions: {dec_count}")
     print(f"  Outcomes:  {out_count}")
     print(f"  Holdings:  {hold_count} ({open_count} open)")
+    print(f"  Options:   {opt_dec} decision(s), {opt_pos} position(s)")
 
     print("\n" + "━" * W)
     print("  Database ready.")
