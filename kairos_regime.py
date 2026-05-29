@@ -88,8 +88,12 @@ REGIMES = {
 
 # ── Data fetchers ────────────────────────────────────────────────────
 
-def _fetch_vix_and_spy_ibkr() -> dict:
-    """Pull VIX current value, SPY price, and SPY 50/200-day MAs from IBKR."""
+def _fetch_vix_and_spy_ibkr(client_id: int = 15) -> dict:
+    """Pull VIX current value, SPY price, and SPY 50/200-day MAs from IBKR.
+
+    client_id lets callers use a dedicated IBKR clientId so concurrent regime
+    lookups (e.g. the scheduler and the Slack commander) don't collide on 15.
+    """
     result = {
         "vix": None, "vix_5d_ago": None,
         "spy_price": None, "spy_50ma": None, "spy_200ma": None,
@@ -99,7 +103,7 @@ def _fetch_vix_and_spy_ibkr() -> dict:
     try:
         from ib_insync import IB, Index, Stock
         ib = IB()
-        ib.connect("127.0.0.1", 7497, clientId=15, timeout=10)
+        ib.connect("127.0.0.1", 7497, clientId=client_id, timeout=10)
 
         # ── VIX current ──────────────────────────────────────────
         vix_contract = Index("VIX", "CBOE")
@@ -491,7 +495,7 @@ def _log_regime_to_db(regime: str, reason: str, data: dict) -> None:
     _save_regime_state(regime, reason, data)
 
 
-def detect_regime(verbose: bool = True) -> dict:
+def detect_regime(verbose: bool = True, client_id: int = 15) -> dict:
     """Run full macro regime detection. Returns dict with:
 
         regime:         str — NORMAL / CAUTION / RISK-OFF / EXTREME-FEAR
@@ -505,7 +509,7 @@ def detect_regime(verbose: bool = True) -> dict:
         print("\n  Fetching macro indicators...")
 
     # ── Gather data in sequence (IBKR first, then HTTP) ──────────
-    ibkr_data = _fetch_vix_and_spy_ibkr()
+    ibkr_data = _fetch_vix_and_spy_ibkr(client_id=client_id)
     treasury_spread = _fetch_fred_spread()
     kalshi_pct = _fetch_kalshi_recession()
 

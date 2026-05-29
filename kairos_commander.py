@@ -51,6 +51,10 @@ STATE_FILE = os.path.join(SCRIPT_DIR, "kairos_state.json")
 PERFORMANCE_FILE = os.path.join(SCRIPT_DIR, "kairos_performance.json")
 COMMANDER_LOG = os.path.join(SCRIPT_DIR, "kairos_commander.log")
 PID_FILE = "/tmp/kairos_commander.pid"
+# Dedicated IBKR clientId for the commander. Lives in the 7–14 gap between
+# regime (15) and stoploss (20–29); every other module sits in 1–6, 15, 99,
+# or the 20–99 random bands. Keeps !regime / snapshot off shared slots.
+IBKR_CLIENT_ID = 10
 COMMAND_CHANNEL_KEY = "commands"
 COMMAND_CHANNEL_NAME = "kairos-commands"
 CYCLE_COOLDOWN_SECONDS = 10 * 60  # !run / !dry-run guard
@@ -194,14 +198,13 @@ def fetch_ibkr_snapshot(timeout_s: int = 8) -> dict:
 
     Caller falls back to last-known DB values if this is empty.
     """
-    import random
     snapshot: dict = {"ok": False}
     ib = None
     try:
         from ib_insync import IB, Stock  # noqa: F401
         ib = IB()
         ib.connect("127.0.0.1", 7497,
-                   clientId=random.randint(80, 99),
+                   clientId=IBKR_CLIENT_ID,
                    timeout=timeout_s)
         wanted = {"NetLiquidation", "TotalCashValue", "UnrealizedPnL",
                   "BuyingPower", "RealizedPnL"}
@@ -537,7 +540,7 @@ def cmd_why(ticker: str) -> str:
 def cmd_regime() -> str:
     try:
         from kairos_regime import detect_regime
-        result = detect_regime(verbose=False)
+        result = detect_regime(verbose=False, client_id=IBKR_CLIENT_ID)
     except Exception as exc:
         log.exception("regime detection failed")
         return f":x: Could not detect regime: `{exc}`"
