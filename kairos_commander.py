@@ -935,8 +935,11 @@ def main():
     log.info("Kairos Commander starting (curl long-poll, paused=%s)…",
              get_paused())
 
-    # Seed cursor to now so we only process NEW messages.
-    last_ts = str(time.time())
+    # Seed cursor to now so we only process NEW messages. Slack timestamps
+    # use exactly 6 fractional digits; str(time.time()) emits 7, which Slack's
+    # conversations.history `oldest` filter rejects (returns nothing), leaving
+    # the cursor permanently stuck. Format to 6 decimals to match Slack.
+    last_ts = f"{time.time():.6f}"
 
     while True:
         try:
