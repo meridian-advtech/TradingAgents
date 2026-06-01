@@ -271,6 +271,7 @@ def cmd_help() -> str:
         "  !resume         Clear the pause flag\n"
         "  !regime         Current macro regime + reason\n"
         "  !ipo            IPO watchlist status + recent S-1 matches\n"
+        "  !chain          AI value-chain Tier 1 movers + HOT-CHAIN signals\n"
         "  !watchlist ...  add TICKER | remove TICKER | list (Tier C)\n"
         "  !help           This list\n"
         "```"
@@ -648,6 +649,19 @@ def cmd_ipo() -> str:
     return "\n".join(lines)
 
 
+def cmd_chain() -> str:
+    """Render AI value-chain status — Tier 1 movers + active HOT-CHAIN signals."""
+    try:
+        from kairos_signals_chain import get_chain_status_summary
+    except Exception as exc:
+        return f":x: Chain signals module unavailable: `{exc}`"
+    try:
+        return get_chain_status_summary()
+    except Exception as exc:
+        log.exception("chain status failed")
+        return f":x: Chain status failed: `{exc}`"
+
+
 def cmd_watchlist(args: str) -> str:
     """Manage the Tier C opportunistic watchlist: add / remove / list.
 
@@ -810,7 +824,7 @@ def parse_command(text: str) -> Optional[tuple[str, str]]:
     rest = stripped[len(first):].strip()
     if first in {
         "status", "positions", "performance", "why", "run",
-        "dry-run", "dryrun", "pause", "resume", "regime", "ipo",
+        "dry-run", "dryrun", "pause", "resume", "regime", "ipo", "chain",
         "watchlist", "help",
     }:
         return first, rest
@@ -856,6 +870,10 @@ def handle_message(text: str, say, thread_ts: Optional[str]) -> None:
             say(text=":hourglass: Probing IPO watchlist + EDGAR…",
                 thread_ts=thread_ts)
             say(text=cmd_ipo(), thread_ts=thread_ts)
+        elif cmd_norm == "chain":
+            say(text=":hourglass: Scanning AI value chain…",
+                thread_ts=thread_ts)
+            say(text=cmd_chain(), thread_ts=thread_ts)
         elif cmd_norm == "watchlist":
             say(text=cmd_watchlist(args), thread_ts=thread_ts)
         elif cmd_norm == "pause":
@@ -1002,13 +1020,20 @@ def main():
     # conversations.history `oldest` filter rejects (returns nothing), leaving
     # the cursor permanently stuck. Format to 6 decimals to match Slack.
     last_ts = f"{time.time():.6f}"
+    log.info("Polling channel %s, seed last_ts=%s", channel_id, last_ts)
 
+    poll_count = 0
     while True:
         try:
             resp = _slack_api_call(
                 "conversations.history", token,
                 {"channel": channel_id, "oldest": last_ts, "limit": 10},
             )
+            poll_count += 1
+            if poll_count % 10 == 0:
+                log.info("Heartbeat: poll #%d ok=%s n_msgs=%d last_ts=%s",
+                         poll_count, resp.get("ok"),
+                         len(resp.get("messages", [])), last_ts)
             if not resp.get("ok"):
                 log.warning("conversations.history failed: %s",
                             resp.get("error"))
