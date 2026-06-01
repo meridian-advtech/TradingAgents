@@ -271,6 +271,7 @@ def cmd_help() -> str:
         "  !resume         Clear the pause flag\n"
         "  !regime         Current macro regime + reason\n"
         "  !ipo            IPO watchlist status + recent S-1 matches\n"
+        "  !watchlist ...  add TICKER | remove TICKER | list (Tier C)\n"
         "  !help           This list\n"
         "```"
     )
@@ -647,6 +648,64 @@ def cmd_ipo() -> str:
     return "\n".join(lines)
 
 
+def cmd_watchlist(args: str) -> str:
+    """Manage the Tier C opportunistic watchlist: add / remove / list.
+
+    Usage:
+      !watchlist add TICKER       (name=TICKER, sector=Unknown, 14-day TTL)
+      !watchlist remove TICKER
+      !watchlist list
+    """
+    try:
+        import kairos_tier_c as tier_c
+    except Exception as exc:
+        return f":x: Tier C module unavailable: `{exc}`"
+
+    parts = args.split()
+    sub = parts[0].lower() if parts else ""
+
+    if sub == "list":
+        entries = tier_c._load_tier_c()
+        if not entries:
+            return ":clipboard: *Tier C watchlist* is empty."
+        lines = [f"  {'TICKER':<8}{'EXPIRES':<12}REASON"]
+        for e in entries:
+            ticker = e.get("ticker", "?")
+            expires = e.get("expires_date", "—")
+            reason = (e.get("add_reason") or "")[:40]
+            lines.append(f"  {ticker:<8}{expires:<12}{reason}")
+        return (":clipboard: *Tier C watchlist*\n```\n"
+                + "\n".join(lines) + "\n```")
+
+    if sub in ("add", "remove"):
+        if len(parts) < 2:
+            return f":grey_question: Usage: `!watchlist {sub} TICKER`"
+        ticker = parts[1].upper().strip()
+        if not re.match(r"^[A-Z][A-Z0-9.\-]{0,6}$", ticker):
+            return f":x: `{ticker}` doesn't look like a ticker symbol."
+
+        if sub == "add":
+            result = tier_c.add(
+                ticker,
+                name=ticker,
+                sector="Unknown",
+                reason="Added via Slack commander",
+            )
+            if result.get("ok"):
+                entry = result.get("entry", {})
+                return (f":white_check_mark: Added `{ticker}` to Tier C "
+                        f"watchlist (expires {entry.get('expires_date', '—')}).")
+            return f":x: {result.get('error', 'add failed')}"
+
+        result = tier_c.remove(ticker)
+        if result.get("ok"):
+            return f":wastebasket: Removed `{ticker}` from Tier C watchlist."
+        return f":x: {result.get('error', 'remove failed')}"
+
+    return (":grey_question: Usage: `!watchlist add TICKER` | "
+            "`!watchlist remove TICKER` | `!watchlist list`")
+
+
 def cmd_pause() -> str:
     set_paused(True)
     return (
@@ -751,7 +810,8 @@ def parse_command(text: str) -> Optional[tuple[str, str]]:
     rest = stripped[len(first):].strip()
     if first in {
         "status", "positions", "performance", "why", "run",
-        "dry-run", "dryrun", "pause", "resume", "regime", "ipo", "help",
+        "dry-run", "dryrun", "pause", "resume", "regime", "ipo",
+        "watchlist", "help",
     }:
         return first, rest
     return None
@@ -796,6 +856,8 @@ def handle_message(text: str, say, thread_ts: Optional[str]) -> None:
             say(text=":hourglass: Probing IPO watchlist + EDGAR…",
                 thread_ts=thread_ts)
             say(text=cmd_ipo(), thread_ts=thread_ts)
+        elif cmd_norm == "watchlist":
+            say(text=cmd_watchlist(args), thread_ts=thread_ts)
         elif cmd_norm == "pause":
             say(text=cmd_pause(), thread_ts=thread_ts)
         elif cmd_norm == "resume":
