@@ -489,6 +489,29 @@ def _invoke_claude_reasoning(prompt_file: str, cfg: dict) -> dict | None:
     except Exception as evt_exc:
         print(f"  WARNING: Event prompt injection failed: {evt_exc}")
 
+    # Prepend the AI value-chain context block for any shortlisted ticker
+    # that sits in the modeled chain (kairos_signals_chain). Gives Claude the
+    # tier / role / thesis and the upstream leading-indicator relationship.
+    try:
+        from kairos_signals_chain import (
+            format_chain_prompt_block, get_chain_tickers,
+        )
+        shortlist_for_chain = get_screening_shortlist() or []
+        if shortlist_for_chain:
+            chain_block = format_chain_prompt_block(shortlist_for_chain)
+            if chain_block:
+                prompt_text = (
+                    "=== AI VALUE CHAIN CONTEXT ===\n"
+                    + chain_block + "\n" + prompt_text
+                )
+                chain_set = get_chain_tickers()
+                tagged = [t for t in shortlist_for_chain
+                          if str(t).upper() in chain_set]
+                print(f"  Chain context: injected for {len(tagged)} "
+                      f"shortlisted ticker(s) — {', '.join(tagged)}")
+    except Exception as chain_exc:
+        print(f"  WARNING: Chain prompt injection failed: {chain_exc}")
+
     system_instruction = (
         "Output ONLY the JSON object. No markdown fences, "
         "no explanation, no preamble. Raw JSON with a 'trades' array "
@@ -672,16 +695,19 @@ def run_regime() -> dict:
 # ── Phase 0.1: Stop-Loss Monitor ────────────────────────────────────
 
 def run_stoploss(ib=None) -> dict:
-    """Phase 0.1 — Check all open positions against regime-adjusted stop-loss.
+    """Phase 0.1 — Five-condition exit engine (Exit Architecture v2).
 
-    Must run after regime detection (Phase 0R) so thresholds are current.
-    ib: optional shared IBKR connection to pass through to the stoploss module.
+    Replaces the old flat regime stop-loss with the unified engine: signal-aware
+    hard stop (regime floor) + trailing stop + HOT-REVERSION time gate. Runs
+    every cycle — the intraday backstop fires any cycle, closing-price stops only
+    inside the configured close window. Must run after regime detection (0R) so
+    the regime floor is current. ib: shared IBKR connection for live prices.
     """
-    phase_banner("0.1", "STOP-LOSS MONITOR — Regime-Adjusted Drawdown Check")
+    phase_banner("0.1", "EXIT ENGINE — Hard Stop + Trailing Stop + Reversion Gate")
 
     regime = _current_regime["regime"] if _current_regime else None
-    from kairos_stoploss import run_stoploss as do_stoploss
-    return do_stoploss(regime=regime, ib=ib)
+    from kairos_exits import run_exit_engine
+    return run_exit_engine(ib=ib, regime=regime)
 
 
 # ── Phase 0.5: Tier 1 Screening ────────────────────────────────────
@@ -726,6 +752,7 @@ def run_screen(dry_run: bool = False, max_tier2: int = 15) -> dict:
             "hot_insider": result.get("hot_insider", []),
             "hot_congress": result.get("hot_congress", []),
             "signal_tags": result.get("signal_tags", {}),
+            "conviction_boosts": result.get("conviction_boosts", {}),
             "source_tiers": result.get("source_tiers", {}),
             "warm": result["warm"],
             "cold_count": result["cold_count"],
@@ -2069,7 +2096,7 @@ def run_scheduled_cycle(args) -> None:
         _check_ollama_models()
 
     run_equity = args.mode in ("equity", "both")
-    run_crypto = args.mode in ("crypto", "both")
+    run_crypto = False  # Disabled — crypto managed separately via Robinhood
     do_screen = not args.no_screen and use_ollama and run_equity
 
     # Phase 0: Stale order cleanup — cancel any open IBKR orders older
@@ -2250,6 +2277,34 @@ def run_scheduled_cycle(args) -> None:
             print(f"  WARNING: IPO lock-up tracker failed: {exc}\n{tb}")
             _log_phase_crash("ipo_lockup", exc, tb)
 
+    # b1d. HOT-DIVIDEND — dividend core maintenance + event signals.
+    # Runs once per ET day (is_dividend_due gate) in the gather phase
+    # alongside the IPO tracker: DRIP reconciliation, protected-position
+    # review alerts, and the three HOT-DIVIDEND sub-signals (tags feed
+    # confluence scoring). Reuses the shared clientId=5 IBKR connection for
+    # position data. No orders are placed here — DRIP only records
+    # reinvestment lots, protected review only alerts. dry_run is
+    # config-gated (dividend.dry_run, default False) since the cycle is
+    # bookkeeping + alerts, not speculative trading.
+    if run_equity:
+        try:
+            from kairos_dividend import is_dividend_due, run_dividend_cycle
+            if is_dividend_due():
+                phase_banner("DIV", "HOT-DIVIDEND — DRIP Reconcile + Protected Review + Signals")
+                _div_dry = False
+                try:
+                    import json as _json
+                    with open("/Users/jelmore/TradingAgents/kairos_config.json") as _f:
+                        _div_dry = bool(_json.load(_f).get("dividend", {}).get("dry_run", False))
+                except Exception:
+                    pass
+                run_dividend_cycle(ib=shared_ib_connection, dry_run=_div_dry)
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"  WARNING: HOT-DIVIDEND cycle failed: {exc}\n{tb}")
+            _log_phase_crash("dividend", exc, tb)
+
     # b2. Thesis review — daily at 9:35am ET (weekdays only)
     if run_equity:
         try:
@@ -2418,7 +2473,7 @@ def main():
     if use_ollama:
         _check_ollama_models()
     run_equity = args.mode in ("equity", "both")
-    run_crypto = args.mode in ("crypto", "both")
+    run_crypto = False  # Disabled — crypto managed separately via Robinhood
 
     do_screen = not args.no_screen and use_ollama and run_equity
 

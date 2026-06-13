@@ -60,13 +60,29 @@ CREATE TABLE IF NOT EXISTS outcomes (
 
 SCHEMA_HOLDINGS = """
 CREATE TABLE IF NOT EXISTS holdings (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    ticker      TEXT NOT NULL,
-    entry_date  TEXT NOT NULL,
-    entry_price REAL NOT NULL,
-    quantity    REAL NOT NULL,
-    sold_date   TEXT,
-    sold_price  REAL
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker        TEXT NOT NULL,
+    entry_date    TEXT NOT NULL,
+    entry_price   REAL NOT NULL,
+    quantity      REAL NOT NULL,
+    sold_date     TEXT,
+    sold_price    REAL,
+    drip_enabled  INTEGER NOT NULL DEFAULT 0,
+    protected     INTEGER NOT NULL DEFAULT 0,
+    peak_gain_pct REAL NOT NULL DEFAULT 0
+);
+"""
+
+# Per-ticker record of the most recent exit, used by the Exit Architecture v2
+# re-entry guard (no-higher-price unless a genuinely new signal fired).
+# One row per ticker — upserted on every engine/thesis/stop sell.
+SCHEMA_POSITION_EXITS = """
+CREATE TABLE IF NOT EXISTS position_exits (
+    ticker       TEXT PRIMARY KEY,
+    exit_date    TEXT,
+    exit_price   REAL,
+    exit_reason  TEXT,
+    exit_signals TEXT
 );
 """
 
@@ -208,6 +224,7 @@ def init_db(reset: bool = False):
         conn.execute("DROP TABLE IF EXISTS options_decisions")
     conn.executescript(
         SCHEMA_DECISIONS + SCHEMA_OUTCOMES + SCHEMA_HOLDINGS
+        + SCHEMA_POSITION_EXITS
         + SCHEMA_CRYPTO_DECISIONS + SCHEMA_CRYPTO_HOLDINGS
         + SCHEMA_OPTIONS_DECISIONS + SCHEMA_OPTIONS_POSITIONS
         + SCHEMA_IPO_LOCKUP
@@ -227,6 +244,20 @@ def init_db(reset: bool = False):
         conn.execute("SELECT degraded FROM options_decisions LIMIT 1")
     except sqlite3.OperationalError:
         conn.execute("ALTER TABLE options_decisions ADD COLUMN degraded INTEGER NOT NULL DEFAULT 0")
+    # Migrate: add drip_enabled / protected columns to holdings if missing
+    try:
+        conn.execute("SELECT drip_enabled FROM holdings LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE holdings ADD COLUMN drip_enabled INTEGER NOT NULL DEFAULT 0")
+    try:
+        conn.execute("SELECT protected FROM holdings LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE holdings ADD COLUMN protected INTEGER NOT NULL DEFAULT 0")
+    # Migrate: add peak_gain_pct column to holdings if missing (Exit Architecture v2)
+    try:
+        conn.execute("SELECT peak_gain_pct FROM holdings LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE holdings ADD COLUMN peak_gain_pct REAL NOT NULL DEFAULT 0")
     conn.commit()
     conn.close()
 
@@ -347,6 +378,103 @@ def insert_holding(ticker: str, entry_date: str, entry_price: float, quantity: f
     conn.commit()
     conn.close()
     return row_id
+
+
+def insert_drip(
+    ticker: str,
+    shares: float,
+    price: float,
+    date: str,
+    net_liq_after: float | None = None,
+) -> tuple[int, int]:
+    """Record a DRIP reinvestment.
+
+    Logs a DRIP decision (action="DRIP") and opens a new holding lot at the
+    reinvestment price so share count and cost basis stay in sync. The exact
+    fractional share count is preserved in the holding lot (REAL) and in the
+    decision's data_inputs JSON; decisions.quantity is INTEGER so it carries
+    only the whole-share part. Returns (decision_id, holding_id).
+    """
+    decision_id = insert_decision(
+        timestamp=date,
+        ticker=ticker,
+        action="DRIP",
+        quantity=int(shares),
+        rationale=f"DRIP reinvestment: {shares:.6f} sh @ ${price:.2f} on {date}",
+        data_inputs={"drip_shares": shares, "drip_price": price},
+        execution_price=price,
+        execution_status="Filled",
+        net_liq_after=net_liq_after,
+    )
+    holding_id = insert_holding(ticker, date, price, shares)
+    return decision_id, holding_id
+
+
+def set_holding_flags(
+    ticker: str,
+    drip_enabled: bool | None = None,
+    protected: bool | None = None,
+) -> int:
+    """Set drip_enabled / protected flags on all open lots of a ticker.
+
+    Pass None to leave a flag unchanged. Returns the number of lots updated.
+    Used by the daily dividend sync to mirror the config-authoritative lists
+    onto the holdings table.
+    """
+    sets: list[str] = []
+    vals: list = []
+    if drip_enabled is not None:
+        sets.append("drip_enabled = ?")
+        vals.append(1 if drip_enabled else 0)
+    if protected is not None:
+        sets.append("protected = ?")
+        vals.append(1 if protected else 0)
+    if not sets:
+        return 0
+    vals.append(ticker)
+    conn = get_connection()
+    cur = conn.execute(
+        f"UPDATE holdings SET {', '.join(sets)} WHERE ticker = ? AND sold_date IS NULL",
+        vals,
+    )
+    n = cur.rowcount
+    conn.commit()
+    conn.close()
+    return n
+
+
+def get_protected_tickers() -> list[str]:
+    """Distinct tickers flagged protected on an open lot (DB-side view)."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT DISTINCT ticker FROM holdings "
+        "WHERE protected = 1 AND sold_date IS NULL ORDER BY ticker"
+    ).fetchall()
+    conn.close()
+    return [r["ticker"] for r in rows]
+
+
+def get_drip_tickers() -> list[str]:
+    """Distinct tickers flagged drip_enabled on an open lot (DB-side view)."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT DISTINCT ticker FROM holdings "
+        "WHERE drip_enabled = 1 AND sold_date IS NULL ORDER BY ticker"
+    ).fetchall()
+    conn.close()
+    return [r["ticker"] for r in rows]
+
+
+def is_protected(ticker: str) -> bool:
+    """True if any open lot of `ticker` is flagged protected."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT 1 FROM holdings WHERE ticker = ? AND protected = 1 "
+        "AND sold_date IS NULL LIMIT 1",
+        (ticker,),
+    ).fetchone()
+    conn.close()
+    return row is not None
 
 
 def sell_holdings(ticker: str, qty_to_sell: float, sold_date: str, sold_price: float) -> list[dict]:
@@ -476,6 +604,91 @@ def get_tax_context(ticker: str) -> dict:
             for s in recent_sells
         ],
     }
+
+
+# ── Exit Architecture v2 — peak tracking + last-exit ─────────────────
+
+def update_peak_gain(ticker: str, gain_pct: float) -> int:
+    """Raise the stored peak_gain_pct on all open lots of a ticker.
+
+    The trailing stop tracks the position's high-water mark. We store the
+    running max of the position-level unrealized gain on every open lot so a
+    FIFO partial sell can never lose the peak. Never lowers an existing peak.
+    Returns the number of lots updated.
+    """
+    conn = get_connection()
+    cur = conn.execute(
+        "UPDATE holdings SET peak_gain_pct = ? "
+        "WHERE ticker = ? AND sold_date IS NULL AND peak_gain_pct < ?",
+        (gain_pct, ticker, gain_pct),
+    )
+    n = cur.rowcount
+    conn.commit()
+    conn.close()
+    return n
+
+
+def get_peak_gain(ticker: str) -> float:
+    """Return the highest peak_gain_pct across a ticker's open lots (0 if none)."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT MAX(peak_gain_pct) AS peak FROM holdings "
+        "WHERE ticker = ? AND sold_date IS NULL",
+        (ticker,),
+    ).fetchone()
+    conn.close()
+    return float(row["peak"]) if row and row["peak"] is not None else 0.0
+
+
+def upsert_position_exit(
+    ticker: str,
+    exit_date: str,
+    exit_price: float,
+    exit_reason: str,
+    exit_signals: list[str] | None = None,
+) -> None:
+    """Record (or overwrite) the most recent exit for a ticker.
+
+    Powers the re-entry guard: a later BUY above this exit price is blocked
+    unless a signal fires that was NOT present at this exit.
+    """
+    conn = get_connection()
+    conn.execute(
+        """INSERT INTO position_exits
+           (ticker, exit_date, exit_price, exit_reason, exit_signals)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(ticker) DO UPDATE SET
+            exit_date    = excluded.exit_date,
+            exit_price   = excluded.exit_price,
+            exit_reason  = excluded.exit_reason,
+            exit_signals = excluded.exit_signals""",
+        (ticker, exit_date, exit_price, exit_reason,
+         json.dumps(exit_signals) if exit_signals else None),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_position_exit(ticker: str) -> dict | None:
+    """Return the last-exit record for a ticker, or None if never exited.
+
+    The returned dict's exit_signals is decoded back into a list[str].
+    """
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT ticker, exit_date, exit_price, exit_reason, exit_signals "
+        "FROM position_exits WHERE ticker = ?",
+        (ticker,),
+    ).fetchone()
+    conn.close()
+    if row is None:
+        return None
+    rec = dict(row)
+    try:
+        rec["exit_signals"] = json.loads(rec["exit_signals"]) if rec["exit_signals"] else []
+    except (json.JSONDecodeError, TypeError):
+        rec["exit_signals"] = []
+    return rec
 
 
 # ── Crypto API ────────────────────────────────────────────────────────

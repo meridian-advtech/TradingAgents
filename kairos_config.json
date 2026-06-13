@@ -1,4 +1,51 @@
 {
+  "dividend": {
+    "protected_tickers": [
+      "O",
+      "JNJ",
+      "KO"
+    ],
+    "drip_enabled_tickers": [
+      "O",
+      "JNJ",
+      "KO"
+    ],
+    "signal_scan_tickers": [
+      "PG",
+      "JNJ",
+      "KO",
+      "O",
+      "MMM",
+      "ABT",
+      "MCD",
+      "PEP",
+      "WMT",
+      "TGT",
+      "EMR",
+      "GPC",
+      "SYY",
+      "BDX",
+      "ADP",
+      "CINF",
+      "FAST",
+      "ITW",
+      "LANC",
+      "LOW"
+    ],
+    "thresholds": {
+      "increase_pct": 5.0,
+      "cut_pct": 20.0,
+      "exdiv_drop_multiple": 1.5,
+      "cut_already_down_guard_pct": 30.0,
+      "protected_loss_alert_pct": 20.0,
+      "signal_fresh_days": 14
+    },
+    "hold_windows": {
+      "increase_days": 14,
+      "cut_days": 10,
+      "reversion_days": 5
+    }
+  },
   "tax": {
     "short_term_rate": 0.37,
     "long_term_rate": 0.2,
@@ -8,8 +55,8 @@
   },
   "ollama": {
     "screen_model": "phi4-mini",
-    "reason_model": "qwen3:14b",
-    "_comment": "screen_model: phi4-mini ~2.3GB, better instruction following than llama3.2 for Tier 1 batch classification. reason_model: qwen3:14b ~9GB, replaces mistral-small3.2 (15GB) for news filtering/routing/summarization \u2014 6GB RAM savings. thinking mode disabled in kairos_ollama.py ask()."
+    "reason_model": "qwen3:30b-a3b",
+    "_comment": "screen_model: phi4-mini ~2.3GB, better instruction following than llama3.2 for Tier 1 batch classification. reason_model: qwen3:30b-a3b ~17GB MoE (3B active per token), upgraded from qwen3:14b \u2014 stronger routing/filtering at inference speed of a 3B model. Load/unload architecture means screener and router never share RAM simultaneously. thinking mode disabled in kairos_ollama.py ask()."
   },
   "claude": {
     "cli_path": "/opt/homebrew/bin/claude",
@@ -25,7 +72,8 @@
       "commands": "C0APFSF09U2",
       "log": "C0APKEES12Q",
       "trades": "C0B1LPGCA9L",
-      "watchlist": "C0A6HHKMM8S"
+      "watchlist": "C0A6HHKMM8S",
+      "arbiter": "C0BAQH32LTS"
     },
     "_comment": "Slack Bot API (slack_sdk). Values are channel IDs. kairos-alerts=C0AQA4ZH0P2, kairos-reports=C0AP9F2P10T, kairos-commands=C0APFSF09U2, kairos-log=C0APKEES12Q, kairos-trades=, kairos-watchlist= (was #new-channel)."
   },
@@ -99,43 +147,89 @@
   "reallocation": {
     "MIN_CONVICTION": 7,
     "MIN_CONVICTION_DELTA": 4.5,
-    "MIN_HOLD_DAYS_FOR_REALLOCATION": 5,
+    "MIN_HOLD_DAYS_FOR_REALLOCATION": 10,
     "MAX_REALLOCATION_LOSS_PCT": -15.0,
     "MAX_TAX_SAVINGS_FOR_EXIT": 1000,
     "MAX_THESIS_REVIEW_AGE_HOURS": 24,
     "MIN_REMAINING_RUNWAY_DAYS": 0,
     "signal_hold_windows": {
       "HOT-EARNINGS": 10,
-      "HOT-INSIDER": 21,
-      "HOT-CONGRESS": 30,
+      "HOT-INSIDER": 365,
+      "HOT-CONGRESS": 90,
       "HOT-OPTIONS": 7,
       "HOT-REVERSION": 5,
-      "HOT-CATALYST": 14,
+      "HOT-CATALYST": 90,
       "HOT-CRYPTO-BASELINE": 3,
       "DEFAULT": 7
     },
-    "_comment": "Reallocation parameters: minimum conviction scores, hold time guard, max loss threshold (-15% = block sells down >15%), max tax cost threshold ($1000), max thesis review age in hours, min remaining runway days, and signal hold windows."
+    "_comment": "Reallocation parameters: minimum conviction scores, hold time guard (now 10 TRADING days), max loss threshold (-15% = block sells down >15%), max tax cost threshold ($1000), max thesis review age in hours. signal_hold_windows is retained for arbiter / ml_thesis checkpoints / commander but NO LONGER gates liberation (Exit Architecture v2 replaced the runway gate with conviction decay)."
+  },
+  "exits": {
+    "stop_loss": {
+      "HOT-REVERSION": {"closing": -6, "intraday_mult": 1.5},
+      "HOT-INSIDER": {"closing": -8, "intraday_mult": 1.5},
+      "HOT-CONGRESS": {"closing": -8, "intraday_mult": 1.5},
+      "STANDARD": {"closing": -8, "intraday_mult": 1.5}
+    },
+    "trailing_stop": {
+      "enabled": true,
+      "tiers": [[15, 8], [30, 10], [50, 12]]
+    },
+    "tax_gate": {
+      "enabled": true,
+      "days_before_anniversary": 30,
+      "deep_retreat_override_pct": 20
+    },
+    "conviction_decay": {
+      "decay_days": {
+        "HOT-EARNINGS": 10,
+        "HOT-INSIDER": 365,
+        "HOT-CONGRESS": 90,
+        "HOT-OPTIONS": 7,
+        "HOT-REVERSION": 5,
+        "HOT-RSI": 7,
+        "HOT-KALSHI": 7,
+        "DEFAULT": 7
+      },
+      "liberation_threshold": 0.5
+    },
+    "reentry": {
+      "no_higher_price_guard": true,
+      "require_new_signal_above_exit": true
+    },
+    "hot_reversion_time_gate": {"days": 7},
+    "close_window_et": {"start": "15:45", "end": "16:00"},
+    "_comment": "Exit Architecture v2 — five-condition exit engine (kairos_exits.py). stop_loss: signal-aware closing % + 1.5x intraday backstop; the regime threshold (kairos_stoploss.STOP_LOSS_THRESHOLDS) is applied as a tighter-of-the-two floor in RISK-OFF/EXTREME-FEAR. trailing_stop: peak-gain tiers [min_gain, trail%] (15/30/50 -> 8/10/12), closing eval + 1.5x intraday backstop. tax_gate: delay non-stop exits within 30d of the 12-mo anniversary while profitable; exempt if >20% retreat from peak. conviction_decay: per-signal linear decay of confluence base points over decay_days; below liberation_threshold a position is liberation-eligible (replaces the old hold-window runway gate). reentry: no-higher-price guard unless a genuinely new signal fired. hot_reversion_time_gate: the ONLY time-based exit (7d). close_window_et: the cycle landing in this ET window is treated as the 'close' for closing-price stops."
   },
   "hot_catalyst": {
     "dry_run": true,
     "max_options_portfolio_pct": 0.15,
     "max_single_position_pct": 0.025,
-    "stop_loss_pct": 0.50,
-    "take_profit_pct": 1.00,
+    "stop_loss_pct": 0.5,
+    "take_profit_pct": 1.0,
     "close_at_dte": 21,
     "dte_min_entry": 30,
     "dte_max_entry": 60,
     "no_entry_on_earnings_day": true,
     "delta_bands": {
-      "default": [0.30, 0.40],
-      "reversion": [0.40, 0.50],
-      "flow": [0.25, 0.35]
+      "default": [
+        0.3,
+        0.4
+      ],
+      "reversion": [
+        0.4,
+        0.5
+      ],
+      "flow": [
+        0.25,
+        0.35
+      ]
     },
     "setup1": {
       "enabled": true,
       "window_days_before_min": 7,
       "window_days_before_max": 21,
-      "iv_rank_max": 0.50
+      "iv_rank_max": 0.5
     },
     "setup2": {
       "enabled": true,
@@ -163,15 +257,96 @@
     "api_key": "***REDACTED***"
   },
   "event_calendar": [
-    {"ticker": "AAPL", "event": "WWDC", "month": 6, "day_estimate": 9, "window_days_before": 21, "window_days_after": 5, "pattern": "dip_then_rip", "notes": "Apple dev conference, typically first or second Monday of June"},
-    {"ticker": "AAPL", "event": "iPhone Launch", "month": 9, "day_estimate": 12, "window_days_before": 14, "window_days_after": 5, "pattern": "dip_then_rip", "notes": "iPhone launch event, typically second Tuesday of September"},
-    {"ticker": "NVDA", "event": "GTC Conference", "month": 3, "day_estimate": 18, "window_days_before": 14, "window_days_after": 5, "pattern": "dip_then_rip", "notes": "NVIDIA GPU Technology Conference"},
-    {"ticker": "MSFT", "event": "Build Conference", "month": 5, "day_estimate": 19, "window_days_before": 14, "window_days_after": 5, "pattern": "dip_then_rip", "notes": "Microsoft developer conference"},
-    {"ticker": "GOOGL", "event": "Google I/O", "month": 5, "day_estimate": 20, "window_days_before": 14, "window_days_after": 5, "pattern": "dip_then_rip", "notes": "Google developer conference"},
-    {"ticker": "META", "event": "Connect", "month": 10, "day_estimate": 15, "window_days_before": 14, "window_days_after": 5, "pattern": "dip_then_rip", "notes": "Meta AR/VR conference"},
-    {"ticker": "AMZN", "event": "Prime Day", "month": 7, "day_estimate": 15, "window_days_before": 21, "window_days_after": 3, "pattern": "buildup", "notes": "Amazon Prime Day, typically mid-July"},
-    {"ticker": "WMT", "event": "Holiday Buildup", "month": 10, "day_estimate": 15, "window_days_before": 30, "window_days_after": 0, "pattern": "buildup", "notes": "Retail holiday season positioning"},
-    {"ticker": "TGT", "event": "Holiday Buildup", "month": 10, "day_estimate": 15, "window_days_before": 30, "window_days_after": 0, "pattern": "buildup", "notes": "Retail holiday season positioning"}
+    {
+      "ticker": "AAPL",
+      "event": "WWDC",
+      "month": 6,
+      "day_estimate": 9,
+      "window_days_before": 21,
+      "window_days_after": 5,
+      "pattern": "dip_then_rip",
+      "notes": "Apple dev conference, typically first or second Monday of June"
+    },
+    {
+      "ticker": "AAPL",
+      "event": "iPhone Launch",
+      "month": 9,
+      "day_estimate": 12,
+      "window_days_before": 14,
+      "window_days_after": 5,
+      "pattern": "dip_then_rip",
+      "notes": "iPhone launch event, typically second Tuesday of September"
+    },
+    {
+      "ticker": "NVDA",
+      "event": "GTC Conference",
+      "month": 3,
+      "day_estimate": 18,
+      "window_days_before": 14,
+      "window_days_after": 5,
+      "pattern": "dip_then_rip",
+      "notes": "NVIDIA GPU Technology Conference"
+    },
+    {
+      "ticker": "MSFT",
+      "event": "Build Conference",
+      "month": 5,
+      "day_estimate": 19,
+      "window_days_before": 14,
+      "window_days_after": 5,
+      "pattern": "dip_then_rip",
+      "notes": "Microsoft developer conference"
+    },
+    {
+      "ticker": "GOOGL",
+      "event": "Google I/O",
+      "month": 5,
+      "day_estimate": 20,
+      "window_days_before": 14,
+      "window_days_after": 5,
+      "pattern": "dip_then_rip",
+      "notes": "Google developer conference"
+    },
+    {
+      "ticker": "META",
+      "event": "Connect",
+      "month": 10,
+      "day_estimate": 15,
+      "window_days_before": 14,
+      "window_days_after": 5,
+      "pattern": "dip_then_rip",
+      "notes": "Meta AR/VR conference"
+    },
+    {
+      "ticker": "AMZN",
+      "event": "Prime Day",
+      "month": 7,
+      "day_estimate": 15,
+      "window_days_before": 21,
+      "window_days_after": 3,
+      "pattern": "buildup",
+      "notes": "Amazon Prime Day, typically mid-July"
+    },
+    {
+      "ticker": "WMT",
+      "event": "Holiday Buildup",
+      "month": 10,
+      "day_estimate": 15,
+      "window_days_before": 30,
+      "window_days_after": 0,
+      "pattern": "buildup",
+      "notes": "Retail holiday season positioning"
+    },
+    {
+      "ticker": "TGT",
+      "event": "Holiday Buildup",
+      "month": 10,
+      "day_estimate": 15,
+      "window_days_before": 30,
+      "window_days_after": 0,
+      "pattern": "buildup",
+      "notes": "Retail holiday season positioning"
+    }
   ],
   "paused": false,
   "ipo_watchlist": [
@@ -214,5 +389,242 @@
       "sector": "Technology",
       "notes": "LIVE - IPO May 14 2026, ARK buying aggressively, wafer-scale AI chips"
     }
+  ],
+  "ai_value_chain": [
+    {
+      "ticker": "NVDA",
+      "chain_tier": 1,
+      "role": "GPU compute",
+      "thesis": "Linchpin of entire AI chain \u2014 GPU demand drives all downstream",
+      "upstream_dependency": null
+    },
+    {
+      "ticker": "MSFT",
+      "chain_tier": 1,
+      "role": "Cloud AI platform",
+      "thesis": "Azure AI and OpenAI partnership drive enterprise AI adoption",
+      "upstream_dependency": null
+    },
+    {
+      "ticker": "GOOGL",
+      "chain_tier": 1,
+      "role": "AI research and cloud",
+      "thesis": "Gemini models and TPUs power Google Cloud AI",
+      "upstream_dependency": null
+    },
+    {
+      "ticker": "META",
+      "chain_tier": 1,
+      "role": "AI infrastructure and models",
+      "thesis": "Llama models and AI-driven ad targeting",
+      "upstream_dependency": null
+    },
+    {
+      "ticker": "AAPL",
+      "chain_tier": 1,
+      "role": "On-device AI",
+      "thesis": "Apple Intelligence drives upgrade cycle across 2B devices",
+      "upstream_dependency": null
+    },
+    {
+      "ticker": "AMD",
+      "chain_tier": 1,
+      "role": "GPU and CPU compute",
+      "thesis": "MI300X competes with NVDA for AI training workloads",
+      "upstream_dependency": null
+    },
+    {
+      "ticker": "ORCL",
+      "chain_tier": 1,
+      "role": "AI cloud infrastructure",
+      "thesis": "OCI winning hyperscale AI contracts against AWS and Azure",
+      "upstream_dependency": null
+    },
+    {
+      "ticker": "PLTR",
+      "chain_tier": 1,
+      "role": "AI analytics platform",
+      "thesis": "AIP platform converting enterprise data into AI decisions",
+      "upstream_dependency": null
+    },
+    {
+      "ticker": "TSLA",
+      "chain_tier": 1,
+      "role": "AI hardware and autonomy",
+      "thesis": "Dojo supercomputer and FSD training require massive compute",
+      "upstream_dependency": null
+    },
+    {
+      "ticker": "CRM",
+      "chain_tier": 1,
+      "role": "Enterprise AI software",
+      "thesis": "Agentforce bringing AI agents to enterprise workflows",
+      "upstream_dependency": null
+    },
+    {
+      "ticker": "MU",
+      "chain_tier": 2,
+      "role": "HBM and DRAM memory",
+      "thesis": "Every NVDA H100/H200 requires HBM \u2014 MU is primary supplier",
+      "upstream_dependency": "NVDA"
+    },
+    {
+      "ticker": "WDC",
+      "chain_tier": 2,
+      "role": "NAND flash storage",
+      "thesis": "AI training datasets require massive NAND storage capacity",
+      "upstream_dependency": "NVDA,MSFT,GOOGL"
+    },
+    {
+      "ticker": "AMAT",
+      "chain_tier": 2,
+      "role": "Semiconductor deposition equipment",
+      "thesis": "Every new chip fab requires AMAT deposition systems",
+      "upstream_dependency": "NVDA,MU"
+    },
+    {
+      "ticker": "LRCX",
+      "chain_tier": 2,
+      "role": "Semiconductor etch systems",
+      "thesis": "Advanced node chip production requires LRCX etch equipment",
+      "upstream_dependency": "NVDA,MU"
+    },
+    {
+      "ticker": "KLAC",
+      "chain_tier": 2,
+      "role": "Wafer inspection equipment",
+      "thesis": "Quality control for all chip fabs \u2014 no fab runs without KLAC",
+      "upstream_dependency": "NVDA,MU,AMAT,LRCX"
+    },
+    {
+      "ticker": "ASML",
+      "chain_tier": 2,
+      "role": "EUV lithography monopoly",
+      "thesis": "Only company in world making EUV machines \u2014 absolute monopoly",
+      "upstream_dependency": "NVDA,MU"
+    },
+    {
+      "ticker": "EQIX",
+      "chain_tier": 2,
+      "role": "Data center REIT",
+      "thesis": "Physical homes for AI compute \u2014 capacity constrained globally",
+      "upstream_dependency": "MSFT,GOOGL,META"
+    },
+    {
+      "ticker": "DLR",
+      "chain_tier": 2,
+      "role": "Hyperscale data center REIT",
+      "thesis": "Hyperscaler data center buildout drives DLR lease demand",
+      "upstream_dependency": "MSFT,GOOGL,META"
+    },
+    {
+      "ticker": "ANET",
+      "chain_tier": 2,
+      "role": "Data center networking",
+      "thesis": "AI GPU clusters require ultra-low-latency Arista switching",
+      "upstream_dependency": "NVDA,MSFT,GOOGL"
+    },
+    {
+      "ticker": "MRVL",
+      "chain_tier": 2,
+      "role": "Custom AI ASICs and networking",
+      "thesis": "Hyperscalers designing custom AI chips on MRVL platform",
+      "upstream_dependency": "MSFT,GOOGL,META"
+    },
+    {
+      "ticker": "DELL",
+      "chain_tier": 2,
+      "role": "AI server systems",
+      "thesis": "DELL ships NVDA GPU servers to enterprise \u2014 fastest growing segment",
+      "upstream_dependency": "NVDA"
+    },
+    {
+      "ticker": "SMCI",
+      "chain_tier": 2,
+      "role": "AI server manufacturing",
+      "thesis": "Fastest time-to-market for NVDA GPU servers at scale",
+      "upstream_dependency": "NVDA"
+    },
+    {
+      "ticker": "VRT",
+      "chain_tier": 3,
+      "role": "Data center cooling and power",
+      "thesis": "Every AI data center needs Vertiv thermal management \u2014 no alternatives at scale",
+      "upstream_dependency": "EQIX,DLR,MSFT,GOOGL"
+    },
+    {
+      "ticker": "ENTG",
+      "chain_tier": 3,
+      "role": "Semiconductor materials and chemicals",
+      "thesis": "Advanced node chips require ENTG specialty materials \u2014 no substitutes",
+      "upstream_dependency": "AMAT,LRCX,KLAC,MU"
+    },
+    {
+      "ticker": "AZTA",
+      "chain_tier": 3,
+      "role": "Semiconductor wafer handling",
+      "thesis": "Wafer transport and storage for chip fabs \u2014 mission critical",
+      "upstream_dependency": "AMAT,LRCX,MU"
+    },
+    {
+      "ticker": "MP",
+      "chain_tier": 3,
+      "role": "Rare earth magnets",
+      "thesis": "AI hardware motors and components require rare earth materials",
+      "upstream_dependency": "NVDA,AMAT"
+    },
+    {
+      "ticker": "APD",
+      "chain_tier": 3,
+      "role": "Specialty gases for chip fabs",
+      "thesis": "Silane and nitrogen gases required for every semiconductor fab",
+      "upstream_dependency": "AMAT,LRCX,MU"
+    },
+    {
+      "ticker": "LIN",
+      "chain_tier": 3,
+      "role": "Specialty gases duopoly",
+      "thesis": "Linde and APD are the only suppliers of semiconductor process gases",
+      "upstream_dependency": "AMAT,LRCX,MU"
+    },
+    {
+      "ticker": "TTM",
+      "chain_tier": 3,
+      "role": "PCBs and substrates",
+      "thesis": "Circuit boards for all AI server and networking hardware",
+      "upstream_dependency": "DELL,SMCI,ANET"
+    },
+    {
+      "ticker": "ONTO",
+      "chain_tier": 3,
+      "role": "Process control equipment",
+      "thesis": "Chip fab process monitoring \u2014 catches defects before yield loss",
+      "upstream_dependency": "AMAT,LRCX,KLAC"
+    },
+    {
+      "ticker": "COHR",
+      "chain_tier": 3,
+      "role": "Optical transceivers",
+      "thesis": "AI data center interconnects require Coherent high-speed optical",
+      "upstream_dependency": "ANET,EQIX,DLR"
+    },
+    {
+      "ticker": "NEE",
+      "chain_tier": 3,
+      "role": "Power generation",
+      "thesis": "AI data centers consume enormous and growing amounts of power",
+      "upstream_dependency": "EQIX,DLR,MSFT,GOOGL"
+    },
+    {
+      "ticker": "ETR",
+      "chain_tier": 3,
+      "role": "Regional power utility",
+      "thesis": "Data center buildout in Entergy service territory drives load growth",
+      "upstream_dependency": "EQIX,DLR"
+    }
+  ],
+  "paused_signals": [
+    "HOT-EARNINGS",
+    "HOT-OPTIONS"
   ]
 }

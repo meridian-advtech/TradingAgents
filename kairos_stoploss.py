@@ -125,8 +125,15 @@ def _log_sell(ticker: str, qty: int, entry_price: float, sell_price: float,
     pnl_pct = (sell_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
     tax_class = "long-term" if holding_days >= 365 else "short-term"
 
-    # Determine trigger type from reason string
-    if "STOP-LOSS" in reason:
+    # Determine trigger type from reason string. Order matters — check the
+    # more specific Exit Architecture v2 triggers before the generic ones.
+    if "PRICE-CONTRADICTION" in reason:
+        trigger = "PRICE-CONTRADICTION"
+    elif "TRAILING-STOP" in reason:
+        trigger = "TRAILING-STOP"
+    elif "REVERSION-TIME-GATE" in reason:
+        trigger = "REVERSION-TIME-GATE"
+    elif "STOP-LOSS" in reason:
         trigger = "STOP-LOSS"
     elif "THESIS-INVALID" in reason:
         trigger = "THESIS-INVALID"
@@ -192,7 +199,7 @@ def _alert_stoploss(ticker: str, entry_price: float, sell_price: float,
     tax_class = "long-term" if holding_days >= 365 else "short-term"
     try:
         from kairos_alerts import post_message
-        post_message("alerts",
+        post_message("trades",
             f":octagonal_sign: *Stop-Loss Triggered: {ticker}*\n"
             f"Entry: ${entry_price:.2f} → Exit: ${sell_price:.2f} "
             f"({drawdown_pct:+.1f}%)\n"
@@ -316,6 +323,17 @@ def run_stoploss(regime: str | None = None, ib=None) -> dict:
 
         _log_sell(ticker, total_qty, avg_cost, sell_price, holding_days,
                   reason, execution)
+
+        try:
+            from kairos_ml_outcomes import init_db as ml_init, write_trade_close, find_open_trade
+            ml_init()
+            open_tid = find_open_trade(ticker, "BUY")
+            if open_tid:
+                write_trade_close(open_tid, sell_price, timestamp_exit=None)
+                print(f"    ML Outcomes: closed {ticker} trade")
+        except Exception as ml_exc:
+            print(f"    WARNING: ML outcomes (stop-loss close) failed: {ml_exc}")
+
         _alert_stoploss(ticker, avg_cost, sell_price, drawdown_pct,
                         holding_days, reason)
 

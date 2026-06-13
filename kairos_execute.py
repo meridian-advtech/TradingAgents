@@ -22,7 +22,7 @@ import os
 import random
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from ib_insync import IB, Stock, LimitOrder
 
@@ -58,6 +58,18 @@ def _load_regime_guardrails() -> dict:
 
 def banner(text: str) -> str:
     return f"\n{'━' * W}\n  {text}\n{'━' * W}"
+
+
+def _is_paused() -> bool:
+    """Return True when kairos_config.json sets paused=true.
+
+    Toggled by kairos_commander.py's !pause / !resume commands.
+    """
+    try:
+        with open(os.path.join(SCRIPT_DIR, "kairos_config.json")) as f:
+            return bool(json.load(f).get("paused", False))
+    except (IOError, json.JSONDecodeError):
+        return False
 
 
 # ── Step 1: Read trades ────────────────────────────────────────────
@@ -199,6 +211,33 @@ def fetch_portfolio_state(ib: IB) -> dict:
     }
 
 
+def get_open_order_tickers(ib: IB) -> set[str]:
+    """Return the set of ticker symbols that currently have an active
+    (open/pending) order at IBKR.
+
+    Used to prevent stacking a duplicate BUY on a ticker that already has
+    a live order waiting to fill or be cancelled.
+    """
+    try:
+        ib.reqAllOpenOrders()
+    except Exception:
+        pass
+
+    active_statuses = {
+        "ApiPending", "PendingSubmit", "PendingCancel",
+        "PreSubmitted", "Submitted",
+    }
+    tickers: set[str] = set()
+    for trade in ib.openTrades():
+        try:
+            status = trade.orderStatus.status
+            if status in active_statuses:
+                tickers.add(trade.contract.symbol)
+        except Exception:
+            continue
+    return tickers
+
+
 def get_reference_price(ib: IB, ticker: str) -> float | None:
     """Get current price for a ticker via IBKR."""
     try:
@@ -294,7 +333,7 @@ def execute_order(ib: IB, ticker: str, action: str, qty: int) -> dict:
     print(f"    Ref: ${ref_price}  Limit: ${limit_price}")
     print(f"    Placing {action} {qty} {ticker} @ limit ${limit_price}")
 
-    order = LimitOrder(action, qty, limit_price, tif="GTC", outsideRth=True)
+    order = LimitOrder(action, qty, limit_price, tif="DAY", outsideRth=True)
     order.overridePercentageConstraints = True
     trade = ib.placeOrder(contract, order)
     print(f"    Order ID: {trade.order.orderId}")
@@ -429,6 +468,37 @@ def log_execution(decision: dict, trade: dict, execution: dict,
                     print(f"    ML Outcomes: trade open {ml_trade_id[:8]}...")
                 except Exception as ml_exc:
                     print(f"    WARNING: ML outcomes (open) failed: {ml_exc}")
+                    ml_trade_id = None
+
+                # Thesis prediction: capture Claude's expected move at entry.
+                # Fields are sourced from the per-trade JSON; if absent, we
+                # still write a row with NULLs so downstream lookups succeed.
+                if ml_trade_id:
+                    try:
+                        from kairos_ml_thesis import (
+                            write_thesis_prediction, pick_primary_signal,
+                        )
+                        thesis_signal = pick_primary_signal(ml_signals) \
+                            if ml_signals else None
+                        write_thesis_prediction(
+                            decision_id=ml_trade_id,
+                            ticker=ticker,
+                            timestamp_entry=timestamp,
+                            predicted_direction=trade.get("predicted_direction"),
+                            predicted_timeframe_days=trade.get("predicted_timeframe_days"),
+                            predicted_return_pct=trade.get("predicted_return_pct"),
+                            key_conditions=trade.get("key_conditions"),
+                            signal_type=thesis_signal,
+                            conviction_score=trade.get("conviction"),
+                            invalidation_conditions=trade.get("invalidation_conditions"),
+                        )
+                        print(f"    Thesis prediction recorded "
+                              f"({trade.get('predicted_direction','?')} "
+                              f"{trade.get('predicted_return_pct','?')}% / "
+                              f"{trade.get('predicted_timeframe_days','?')}d, "
+                              f"signal={thesis_signal or 'n/a'})")
+                    except Exception as th_exc:
+                        print(f"    WARNING: thesis prediction failed: {th_exc}")
 
             elif action_upper == "SELL":
                 closed_lots = sell_holdings(ticker, qty, timestamp, fill_price)
@@ -577,7 +647,7 @@ def check_trim_triggers(portfolio: dict, ib: IB, nlv: float) -> list[dict]:
             from kairos_alerts import post_message
             status = execution.get("status", "Unknown")
             fill = f" @ ${execution['fill_price']:.2f}" if execution.get("fill_price") else ""
-            post_message("alerts",
+            post_message("trades",
                 f":scissors: *{reason}*\n"
                 f"Sold {trim_qty} shares{fill} — status: {status}")
         except Exception:
@@ -586,7 +656,137 @@ def check_trim_triggers(portfolio: dict, ib: IB, nlv: float) -> list[dict]:
     return trims_executed
 
 
+# ── Stale order cleanup ─────────────────────────────────────────────
+
+def cancel_stale_orders(max_age_hours: int = 8) -> int:
+    """Cancel live IBKR orders older than ``max_age_hours``.
+
+    Connects to TWS on port 7497 with a dedicated clientId, pulls all open
+    orders, matches each to its original Submitted row in kairos.db
+    (by ticker + quantity), and cancels any whose original submit timestamp
+    is older than the threshold. The matching decisions row is updated to
+    execution_status='Cancelled', and a summary is posted to #kairos-alerts.
+
+    Returns the number of orders cancelled.
+    """
+    from kairos_log_db import get_connection, init_db
+
+    init_db()
+
+    ib = IB()
+    try:
+        ib.connect("127.0.0.1", 7497, clientId=6, timeout=10)
+    except Exception as exc:
+        print(f"  cancel_stale_orders: IBKR connect failed: {exc}")
+        return 0
+
+    cancelled = 0
+    try:
+        try:
+            ib.reqAllOpenOrders()
+            ib.sleep(2)
+        except Exception as exc:
+            print(f"  cancel_stale_orders: reqAllOpenOrders failed: {exc}")
+
+        active_statuses = {
+            "ApiPending", "PendingSubmit", "PendingCancel",
+            "PreSubmitted", "Submitted",
+        }
+
+        now = datetime.now(timezone.utc)
+        threshold = timedelta(hours=max_age_hours)
+        conn = get_connection()
+
+        for trade in ib.openTrades():
+            try:
+                status = trade.orderStatus.status
+                if status not in active_statuses:
+                    continue
+                ticker = trade.contract.symbol
+                qty = int(trade.order.totalQuantity)
+            except Exception:
+                continue
+
+            row = conn.execute(
+                "SELECT id, timestamp FROM decisions "
+                "WHERE ticker = ? AND quantity = ? AND execution_status = 'Submitted' "
+                "ORDER BY id DESC LIMIT 1",
+                (ticker, qty),
+            ).fetchone()
+
+            if row is None:
+                print(f"  cancel_stale_orders: no Submitted DB row for "
+                      f"{ticker} qty={qty} — skipping age check")
+                continue
+
+            decision_id = row["id"]
+            ts_str = row["timestamp"]
+            try:
+                submitted_at = datetime.strptime(
+                    ts_str, "%Y-%m-%d %H:%M:%S UTC"
+                ).replace(tzinfo=timezone.utc)
+            except ValueError:
+                print(f"  cancel_stale_orders: unparseable timestamp "
+                      f"{ts_str!r} on decision #{decision_id} — skipping")
+                continue
+
+            age = now - submitted_at
+            if age < threshold:
+                continue
+
+            age_h = age.total_seconds() / 3600
+            try:
+                ib.cancelOrder(trade.order)
+                conn.execute(
+                    "UPDATE decisions SET execution_status = 'Cancelled' "
+                    "WHERE id = ?",
+                    (decision_id,),
+                )
+                conn.commit()
+                cancelled += 1
+                print(f"  Cancelled stale order: {ticker} qty={qty} "
+                      f"age={age_h:.1f}h (decision #{decision_id})")
+            except Exception as exc:
+                print(f"  cancel_stale_orders: cancel failed for "
+                      f"{ticker} qty={qty}: {exc}")
+    finally:
+        try:
+            ib.disconnect()
+        except Exception:
+            pass
+
+    if cancelled > 0:
+        try:
+            from kairos_alerts import post_message
+            post_message(
+                "trades",
+                f":wastebasket: Cancelled {cancelled} stale orders older than {max_age_hours}h",
+            )
+        except Exception as exc:
+            print(f"  cancel_stale_orders: Slack post failed: {exc}")
+
+    return cancelled
+
+
 # ── main ────────────────────────────────────────────────────────────
+
+def _get_conviction_boost(ticker: str) -> float:
+    """Read a ticker's conviction_boost from kairos_screen_result.json.
+
+    Returns 1.0 (no boost) when the file/key is absent or unreadable.
+    Populated by the screener for HOT-CHAIN tickers (Tier 2 → 1.2x,
+    Tier 3 → 1.3x).
+    """
+    path = os.path.join(SCRIPT_DIR, "kairos_screen_result.json")
+    if not os.path.exists(path):
+        return 1.0
+    try:
+        with open(path) as f:
+            boosts = json.load(f).get("conviction_boosts") or {}
+        return float(boosts.get(ticker, 1.0))
+    except (json.JSONDecodeError, IOError, TypeError, ValueError):
+        return 1.0
+
 
 def main():
     print("╔" + "═" * W + "╗")
@@ -682,11 +882,33 @@ def main():
     conviction_taken = False          # Mode C: only one conviction trade per cycle
     conviction_sectors: set[str] = set()  # Mode C: one per sector per cycle
 
+    paused = _is_paused()
+
     for i, trade in enumerate(actionable, 1):
         action = trade.get("action", "HOLD").upper()
         ticker = trade.get("ticker", "?")
 
         print(banner(f"Trade {i}/{len(actionable)}: {action} {ticker}"))
+
+        # ── Pause flag (commander !pause) — block BUYs only ──────
+        # SELLs and HOLDs still execute so stop-loss + risk management
+        # remain effective while the pipeline is "paused".
+        if action == "BUY" and paused:
+            reason = "Pipeline paused via !pause — BUY blocked"
+            print(f"    SKIP: {reason}")
+            skipped_count += 1
+            skip_reasons.append({"ticker": ticker, "reason": reason})
+            log_execution(decision, trade, {"status": "Skipped", "reason": reason})
+            continue
+
+        # ── Duplicate-order guard (BUY only) ──────────────────────
+        if action == "BUY" and ticker in get_open_order_tickers(ib):
+            msg = f"SKIP {ticker}: open order already pending"
+            print(f"    {msg}")
+            skipped_count += 1
+            skip_reasons.append({"ticker": ticker, "reason": "open order already pending"})
+            log_execution(decision, trade, {"status": "Skipped", "reason": "open order already pending"})
+            continue
 
         # Get reference price
         ref_price = get_reference_price(ib, ticker)
@@ -708,6 +930,39 @@ def main():
         signal_tags = get_ticker_signals(ticker)
         confluence = compute_confluence(signal_tags)
         qty = compute_position_size(confluence, nlv, ref_price)
+
+        # ── Re-entry guard (BUY only) ─────────────────────────────
+        # Don't re-buy a ticker ABOVE its last exit price unless a genuinely
+        # new signal has fired since that exit (Exit Architecture v2). Re-entry
+        # at/below the exit price is always allowed; there is no time cooldown.
+        if action == "BUY":
+            try:
+                from kairos_exits import reentry_guard_blocks
+                blocked, reentry_reason = reentry_guard_blocks(ticker, ref_price, signal_tags)
+                if blocked:
+                    print(f"    BLOCKED: {reentry_reason}")
+                    skipped_count += 1
+                    skip_reasons.append({"ticker": ticker, "reason": reentry_reason})
+                    log_execution(decision, trade, {"status": "Skipped", "reason": reentry_reason})
+                    try:
+                        from kairos_alerts import post_message
+                        post_message("alerts",
+                            f":no_entry_sign: *Re-Entry Guard: {ticker}*\n{reentry_reason}")
+                    except Exception:
+                        pass
+                    continue
+            except Exception as reentry_exc:
+                print(f"    WARNING: re-entry guard check failed: {reentry_exc}")
+
+        # Chain conviction_boost (HOT-CHAIN: Tier 2 → 1.2x, Tier 3 → 1.3x),
+        # applied like the regime / weight multipliers below.
+        conviction_boost = _get_conviction_boost(ticker)
+        if action == "BUY" and conviction_boost > 1.0 and qty > 0:
+            original_qty = qty
+            qty = max(1, int(qty * conviction_boost))
+            if qty != original_qty:
+                print(f"    Chain boost: {conviction_boost:.1f}x conviction_boost "
+                      f"({original_qty} → {qty} shares)")
 
         # Gate 2: Apply max_position_mult from regime guardrails
         pos_mult = regime_g.get("max_position_mult", 1.0)
@@ -864,6 +1119,16 @@ def main():
                     from kairos_reallocation import evaluate_reallocation, execute_reallocation
                     realloc = evaluate_reallocation(
                         ticker, new_conviction, signal_tags, ib, nlv)
+
+                    # Belt-and-suspenders: never liberate a protected position,
+                    # even if the reallocation engine's own filter missed it.
+                    from kairos_reallocation import _load_protected_tickers
+                    exit_tk = (realloc.get("exit_ticker") or "").upper()
+                    if realloc["recommended"] and exit_tk in _load_protected_tickers():
+                        print(f"    Reallocation BLOCKED: exit candidate {exit_tk} "
+                              f"is a protected position — refusing to liberate.")
+                        realloc = {"recommended": False,
+                                   "reason": f"{exit_tk} is protected"}
 
                     if realloc["recommended"]:
                         sell_exec, buy_exec = execute_reallocation(

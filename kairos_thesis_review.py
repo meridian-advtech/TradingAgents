@@ -1,12 +1,25 @@
 """
-Kairos Thesis Review — Daily Thesis Invalidation + Take-Profit + Stale Check
+Kairos Thesis Review — Primary Qualitative Exit Gate (Exit Architecture v2)
 
-Runs daily at 9:35am ET (scheduled via kairos_run.py). For each open position:
+Runs daily at 9:35am ET (scheduled via kairos_run.py). This is condition 3 of
+the five-condition exit engine — the PRIMARY qualitative gate, not a secondary
+check after a timer. For each open position:
 
-  1. THESIS-INVALID: Sends position context to Claude Code and asks whether
-     the original entry thesis has been invalidated. If YES → SELL.
-  2. TAKE-PROFIT: If unrealized gain >15% with no fresh signals in 7 days → SELL.
-  3. STALE-THESIS: If held >30 days with return <2% and no active signals → SELL.
+  1. PRICE-CONTRADICTION: If price has contradicted the thesis (position under
+     PRICE_CONTRADICTION_PCT) for PRICE_CONTRADICTION_DAYS consecutive reviews
+     → THESIS-INVALID SELL.
+  2. THESIS-INVALID (Claude): Sends position context to Claude and asks whether
+     the original entry thesis has been invalidated (signal reversal,
+     fundamental breakdown). If YES → SELL.
+
+Time-based exits were REMOVED in v2: the old TAKE-PROFIT (now the trailing stop,
+condition 2, in kairos_exits.py) and STALE-THESIS (30-day clock) no longer fire.
+Profit capture is owned by the trailing stop; aging conviction is owned by
+capital liberation (condition 4) via conviction decay.
+
+Tax gate: a profitable position within 30 days of its 12-month entry anniversary
+has its (non-stop) exit DELAYED until the anniversary for long-term capital
+gains treatment (kairos_exits.tax_gate_blocks_exit).
 
 All sells are logged to kairos.db with trigger type, P&L, holding days,
 and tax classification.
@@ -27,10 +40,12 @@ sys.path.insert(0, SCRIPT_DIR)
 
 W = 72
 
-TAKE_PROFIT_PCT = 15.0       # unrealized gain threshold
-TAKE_PROFIT_SIGNAL_DAYS = 7  # no fresh signals within this window
-STALE_DAYS = 30              # minimum hold period for stale check
-STALE_RETURN_PCT = 2.0       # cumulative return below this = stale
+# Price-contradiction gate: a bullish thesis is invalidated when the position
+# sits below PRICE_CONTRADICTION_PCT for PRICE_CONTRADICTION_DAYS consecutive
+# daily reviews. This is the deterministic complement to the Claude check —
+# NOT a hold-window timer. (TAKE-PROFIT and STALE-THESIS were removed in v2.)
+PRICE_CONTRADICTION_PCT = -3.0   # return below this counts as a contradiction
+PRICE_CONTRADICTION_DAYS = 3     # consecutive contradicting reviews → exit
 
 # Per-run audit log. Every reviewed (run_id, ticker) gets a row here,
 # regardless of whether a sell triggered, so the table is also a record
@@ -188,6 +203,36 @@ def _get_entry_rationale(ticker: str) -> str:
     return "(no rationale recorded)"
 
 
+def _recent_contradiction_streak(ticker: str) -> int:
+    """Count consecutive most-recent live reviews where the position was below
+    PRICE_CONTRADICTION_PCT.
+
+    Reads the thesis_reviews audit trail (dry_run = 0) newest-first and stops at
+    the first review that was NOT a contradiction. Today's review hasn't been
+    written yet, so the caller adds the current observation on top.
+    """
+    try:
+        from kairos_log_db import get_connection
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT return_pct FROM thesis_reviews "
+            "WHERE ticker = ? AND dry_run = 0 "
+            "ORDER BY timestamp DESC LIMIT ?",
+            (ticker, PRICE_CONTRADICTION_DAYS),
+        ).fetchall()
+        conn.close()
+        streak = 0
+        for r in rows:
+            rp = r["return_pct"]
+            if rp is not None and rp < PRICE_CONTRADICTION_PCT:
+                streak += 1
+            else:
+                break
+        return streak
+    except Exception:
+        return 0
+
+
 def _ask_claude_thesis(ticker: str, entry_rationale: str,
                        entry_signals: list[str], current_signals: list[str],
                        current_price: float, entry_price: float,
@@ -262,11 +307,23 @@ def _log_and_alert(ticker: str, qty: int, entry_price: float, sell_price: float,
 
     _log_sell(ticker, qty, entry_price, sell_price, holding_days, reason, execution)
 
+    try:
+        from kairos_ml_outcomes import init_db as ml_init, write_trade_close, find_open_trade
+        ml_init()
+        open_tid = find_open_trade(ticker, "BUY")
+        if open_tid:
+            write_trade_close(open_tid, sell_price, timestamp_exit=None)
+            print(f"    ML Outcomes: closed {ticker} trade")
+    except Exception as ml_exc:
+        print(f"    WARNING: ML outcomes (thesis close) failed: {ml_exc}")
+
     pnl = (sell_price - entry_price) * qty
     tax_class = "long-term" if holding_days >= 365 else "short-term"
 
     # Determine emoji based on trigger
-    if "TAKE-PROFIT" in reason:
+    if "PRICE-CONTRADICTION" in reason:
+        emoji = ":warning:"
+    elif "TAKE-PROFIT" in reason:
         emoji = ":moneybag:"
     elif "STALE" in reason:
         emoji = ":hourglass:"
@@ -277,7 +334,7 @@ def _log_and_alert(ticker: str, qty: int, entry_price: float, sell_price: float,
 
     try:
         from kairos_alerts import post_message
-        post_message("alerts",
+        post_message("trades",
             f"{emoji} *Thesis Review Sell: {ticker}*\n"
             f"Entry: ${entry_price:.2f} → Exit: ${sell_price:.2f} ({drawdown_pct:+.1f}%)\n"
             f"P&L: ${pnl:+,.2f} | Held {holding_days}d ({tax_class})\n"
@@ -325,7 +382,7 @@ def run_thesis_review(dry_run: bool = False, no_claude: bool = False) -> dict:
                SUM(quantity) AS total_qty,
                ROUND(SUM(entry_price * quantity) / SUM(quantity), 2) AS avg_cost,
                MIN(entry_date) AS earliest_entry,
-               CAST(julianday(datetime('now')) - julianday(MIN(entry_date)) AS INTEGER) AS holding_days
+               CAST(julianday(datetime('now')) - julianday(REPLACE(MIN(entry_date), ' UTC', '')) AS INTEGER) AS holding_days
         FROM holdings
         WHERE sold_date IS NULL
         GROUP BY ticker
@@ -399,20 +456,20 @@ def run_thesis_review(dry_run: bool = False, no_claude: bool = False) -> dict:
 
         sell_reason = None
 
-        # ── Check 1: Take-profit ─────────────────────────────────
-        if return_pct is not None and return_pct >= TAKE_PROFIT_PCT and not current_signals:
-            sell_reason = (f"TAKE-PROFIT: {return_pct:.1f}% gain with no fresh signals "
-                          f"(threshold {TAKE_PROFIT_PCT}%)")
-            print(f"    → {sell_reason}")
-
-        # ── Check 2: Stale thesis ────────────────────────────────
-        if sell_reason is None and holding_days >= STALE_DAYS:
-            if return_pct is not None and return_pct < STALE_RETURN_PCT and not current_signals:
-                sell_reason = (f"STALE-THESIS: {return_pct:.1f}% return after {holding_days}d "
-                              f"with no active signals")
+        # ── Check 1: Price contradicting thesis for N consecutive reviews ──
+        # (Replaces the removed TAKE-PROFIT and STALE-THESIS time exits.)
+        if return_pct is not None and return_pct < PRICE_CONTRADICTION_PCT:
+            streak = _recent_contradiction_streak(ticker) + 1  # +1 for today
+            if streak >= PRICE_CONTRADICTION_DAYS:
+                # Distinct PRICE-CONTRADICTION trigger (not generic THESIS-INVALID)
+                # so these exits are independently auditable — this is the most
+                # aggressive new gate and is on watch for its first week live.
+                sell_reason = (f"PRICE-CONTRADICTION: price contradicted thesis "
+                               f"{streak} consecutive reviews "
+                               f"(return {return_pct:.1f}% < {PRICE_CONTRADICTION_PCT}%)")
                 print(f"    → {sell_reason}")
 
-        # ── Check 3: Claude thesis invalidation ──────────────────
+        # ── Check 2: Claude thesis invalidation ──────────────────
         if sell_reason is None and not no_claude:
             entry_signals = _get_entry_signals(ticker)
             entry_rationale = _get_entry_rationale(ticker)
@@ -429,6 +486,22 @@ def run_thesis_review(dry_run: bool = False, no_claude: bool = False) -> dict:
                 print(f"    → Claude: NO — {explanation[:80]}")
         elif sell_reason is None and no_claude:
             print(f"    Skipping Claude check (--no-claude)")
+
+        # ── Tax gate: delay a profitable exit near the 12-month anniversary ──
+        # Overlay on condition 3 (this gate) — hard/trailing stops never reach
+        # here, so long-term-gains deferral only ever delays qualitative exits.
+        if sell_reason is not None:
+            try:
+                from kairos_exits import tax_gate_blocks_exit
+                from kairos_log_db import get_peak_gain
+                peak = get_peak_gain(ticker)
+                if tax_gate_blocks_exit(ticker, h["earliest_entry"], current_price,
+                                        avg_cost, peak):
+                    print(f"    ⏳ TAX GATE: holding {ticker} — exit delayed for "
+                          f"long-term capital gains (was: {sell_reason})")
+                    sell_reason = None
+            except Exception as tax_exc:
+                print(f"    WARNING: tax gate check failed: {tax_exc}")
 
         # ── Audit log: one row per (run, ticker) regardless of outcome ──
         _log_review_row(

@@ -5,11 +5,15 @@ When a high-conviction trade is blocked by cash constraints, evaluates
 whether selling the weakest existing position to fund it would be
 NPV-positive after tax and transaction costs.
 
-Activation criteria:
+Activation criteria (Exit Architecture v2 — condition 4, capital liberation):
   - New opportunity has conviction >= 7
-  - An existing position has thesis_freshness_score <= 1
+  - The weakest existing position's DECAYED conviction has fallen below the
+    liberation threshold (aging signals lower conviction — kairos_exits
+    .conviction_decay_score). This replaces the old hold-window "runway" gate.
   - Conviction delta >= 4.5 between new opportunity and weakest position
-  - Position has been held >= 5 days (anti-churn guard)
+  - Position has been held >= 10 TRADING days (anti-churn guard)
+  - Tax gate: not within 30 days of the weakest position's 12-month anniversary
+    while profitable (defers to long-term capital gains)
   - After-tax exit cost is not prohibitive (tax savings < $1,000)
   - No wash sale conflicts on either leg
 
@@ -51,8 +55,10 @@ MIN_CONVICTION = 7
 MIN_CONVICTION_DELTA = 4.5  # Increased by 50% from 3 to 4.5 to reduce churn
 # Max tax savings from waiting before we refuse to exit (prohibitive threshold)
 MAX_TAX_SAVINGS_FOR_EXIT = 1000
-# Minimum hold time in days before a position can be reallocated (anti-churn guard)
-MIN_HOLD_DAYS_FOR_REALLOCATION = 5
+# Minimum hold time in TRADING days before a position can be reallocated
+# (anti-churn guard). Exit Architecture v2 raised this from 5 calendar to 10
+# trading days (~2 calendar weeks).
+MIN_HOLD_DAYS_FOR_REALLOCATION = 10
 # Maximum unrealized loss percentage before blocking reallocation (-15% = block sells down >15%)
 MAX_REALLOCATION_LOSS_PCT = -15.0
 # Maximum age of thesis review in hours (default 24)
@@ -95,9 +101,45 @@ def _load_reallocation_config() -> dict:
         }
 
 
+def _load_protected_tickers() -> set[str]:
+    """Tickers protected from capital liberation (config-authoritative).
+
+    Reads dividend.protected_tickers from kairos_config.json. The reallocation
+    engine must never liquidate these. HOT-IPO is exempt because it runs
+    through a separate path and never calls evaluate_reallocation().
+    """
+    try:
+        config_file = os.path.join(SCRIPT_DIR, "kairos_config.json")
+        with open(config_file) as f:
+            config = json.load(f)
+        tickers = config.get("dividend", {}).get("protected_tickers", [])
+        return {str(t).upper() for t in tickers if t}
+    except Exception:
+        return set()
+
+
 def _get_connection() -> sqlite3.Connection:
     from kairos_log_db import get_connection
     return get_connection()
+
+
+def _trading_days_between(start: datetime, end: datetime) -> int:
+    """Count weekdays (Mon-Fri) between two datetimes, inclusive of partial days.
+
+    A simple proxy for trading days (ignores market holidays). Used by the
+    anti-churn minimum-hold guard.
+    """
+    if end < start:
+        return 0
+    days = 0
+    cur = start.date()
+    last = end.date()
+    while cur <= last:
+        if cur.weekday() < 5:
+            days += 1
+        cur += timedelta(days=1)
+    # Subtract 1 so "entered today" counts as 0 trading days held.
+    return max(0, days - 1)
 
 
 def init_reallocation_tables() -> None:
@@ -217,35 +259,11 @@ def _check_thesis_validity(ticker: str) -> bool:
     return False
 
 
-def _compute_remaining_runway(weakest: dict) -> tuple[int, int]:
-    """Compute remaining thesis runway for a position.
-    
-    Returns (remaining_runway, freshness_score) where:
-    - remaining_runway: days remaining based on longest entry signal window
-    - freshness_score: current thesis freshness score
-    
-    If entry_signals is empty or unavailable, returns (0, freshness_score).
-    """
-    entry_signals = weakest.get("entry_signals", [])
-    if not entry_signals:
-        # No entry signals - skip this gate, allow reallocation
-        freshness_score = _compute_thesis_freshness(weakest["ticker"])[0]
-        return 0, freshness_score
-    
-    # Get the maximum hold window across all entry signals
-    max_window = 0
-    for signal in entry_signals:
-        window = SIGNAL_HOLD_WINDOWS.get(signal, SIGNAL_HOLD_WINDOWS.get("DEFAULT", 7))
-        max_window = max(max_window, window)
-    
-    # Calculate remaining runway
-    holding_days = weakest.get("holding_days", 0)
-    remaining_runway = max_window - holding_days
-    
-    # Get current thesis freshness score
-    freshness_score = _compute_thesis_freshness(weakest["ticker"])[0]
-    
-    return remaining_runway, freshness_score
+# NOTE: _compute_remaining_runway (the hold-window "runway" gate) was removed in
+# Exit Architecture v2. Liberation eligibility is now decided purely by decayed
+# conviction (see Gate 2 in evaluate_reallocation). SIGNAL_HOLD_WINDOWS remains
+# loaded for the arbiter / ML thesis checkpoints / commander, which read it
+# directly, but it no longer gates capital liberation.
 
 
 def evaluate_reallocation(
@@ -284,6 +302,7 @@ def evaluate_reallocation(
         SELECT ticker,
                SUM(quantity) AS total_qty,
                ROUND(SUM(entry_price * quantity) / SUM(quantity), 2) AS avg_cost,
+               MIN(entry_date) AS earliest_entry,
                CAST(julianday(datetime('now')) - julianday(MIN(entry_date)) AS INTEGER) AS holding_days
         FROM holdings
         WHERE sold_date IS NULL
@@ -298,19 +317,33 @@ def evaluate_reallocation(
                                 reason, recommended=False)
         return {"recommended": False, "reason": reason}
 
-    # Score each position
+    # Score each position by DECAYED conviction (Exit Architecture v2):
+    # aging signals lower a position's conviction; below the liberation
+    # threshold it becomes eligible for redeployment. This replaces the old
+    # thesis-freshness ranking + hold-window runway gate.
+    from kairos_exits import conviction_decay_score, get_liberation_threshold
+    lib_threshold = get_liberation_threshold()
+
+    protected = _load_protected_tickers()
     scored = []
     for h in holdings:
         hticker = h["ticker"]
         if hticker == new_ticker:
             continue  # don't sell what we're trying to buy
-        score, current_sigs, entry_sigs = _compute_thesis_freshness(hticker)
+        if hticker.upper() in protected:
+            print(f"    Reallocation: skipping {hticker} — protected position "
+                  f"(capital liberation disabled)")
+            continue
+        freshness, current_sigs, entry_sigs = _compute_thesis_freshness(hticker)
+        conviction = conviction_decay_score(hticker, entry_sigs, h["earliest_entry"])
         scored.append({
             "ticker": hticker,
-            "score": score,
+            "score": conviction,          # decayed conviction (ranking key)
+            "freshness": freshness,        # retained for context/logging
             "total_qty": int(h["total_qty"]),
             "avg_cost": h["avg_cost"],
             "holding_days": h["holding_days"] or 0,
+            "earliest_entry": h["earliest_entry"],
             "current_signals": current_sigs,
             "entry_signals": entry_sigs,
         })
@@ -321,47 +354,39 @@ def evaluate_reallocation(
                                 reason, recommended=False)
         return {"recommended": False, "reason": reason}
 
-    # Rank by thesis freshness ascending (weakest first)
+    # Rank by decayed conviction ascending (weakest first)
     scored.sort(key=lambda x: x["score"])
     weakest = scored[0]
 
     print(f"    Reallocation eval: weakest={weakest['ticker']} "
-          f"(freshness={weakest['score']}, signals={weakest['current_signals'] or 'none'})")
+          f"(decayed conviction={weakest['score']}, freshness={weakest['freshness']}, "
+          f"signals={weakest['current_signals'] or 'none'})")
 
-    # Gate 2: weakest must be a genuinely weak hold
-    if weakest["score"] > 1:
-        reason = (f"Weakest position {weakest['ticker']} has freshness score "
-                  f"{weakest['score']} > 1 (not weak enough to exit)")
+    # Gate 2: weakest must have decayed below the liberation threshold
+    if weakest["score"] >= lib_threshold:
+        reason = (f"Weakest position {weakest['ticker']} decayed conviction "
+                  f"{weakest['score']} >= liberation threshold {lib_threshold} "
+                  f"(conviction has not decayed enough to liberate)")
         print(f"    Reallocation: {reason}")
         _log_reallocation_event(new_ticker, weakest["ticker"], None, None,
                                 weakest["current_signals"], reason, recommended=False)
         return {"recommended": False, "reason": reason}
 
-    # Gate 2.4: minimum hold time (anti-churn guard)
-    from kairos_execute import init_db
-    init_db()
-    import sqlite3
-    conn = sqlite3.connect("kairos.db")
-    cursor = conn.cursor()
-    
-    # Get the buy date for this position
-    cursor.execute("""
-        SELECT entry_date FROM holdings 
-        WHERE ticker = ? AND sold_date IS NULL
-        ORDER BY entry_date DESC LIMIT 1
-    """, (weakest["ticker"],))
-    
-    buy_date_row = cursor.fetchone()
-    conn.close()
-    
-    if buy_date_row:
-        buy_date = datetime.strptime(buy_date_row[0], '%Y-%m-%d %H:%M:%S UTC').replace(tzinfo=timezone.utc)
-        current_date = datetime.now(timezone.utc)
-        hold_days = (current_date - buy_date).days
-        
-        if hold_days < MIN_HOLD_DAYS_FOR_REALLOCATION:
-            reason = (f"Position {weakest['ticker']} held only {hold_days} days "
-                      f"< {MIN_HOLD_DAYS_FOR_REALLOCATION} day minimum (anti-churn guard)")
+    # Gate 2.4: minimum hold time — 10 TRADING days (anti-churn guard)
+    entry_dt = None
+    if weakest.get("earliest_entry"):
+        try:
+            entry_dt = datetime.strptime(
+                weakest["earliest_entry"].replace(" UTC", "").strip(),
+                "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            entry_dt = None
+    if entry_dt is not None:
+        trading_days_held = _trading_days_between(entry_dt, datetime.now(timezone.utc))
+        if trading_days_held < MIN_HOLD_DAYS_FOR_REALLOCATION:
+            reason = (f"Position {weakest['ticker']} held only {trading_days_held} trading "
+                      f"days < {MIN_HOLD_DAYS_FOR_REALLOCATION} trading-day minimum "
+                      f"(anti-churn guard)")
             print(f"    Reallocation: {reason}")
             _log_reallocation_event(new_ticker, weakest["ticker"], None, None,
                                     weakest["current_signals"], reason, recommended=False)
@@ -376,18 +401,9 @@ def evaluate_reallocation(
                                 weakest["current_signals"], reason, recommended=False)
         return {"recommended": False, "reason": reason}
 
-    # Gate 2.6: remaining thesis runway
-    remaining_runway, freshness = _compute_remaining_runway(weakest)
-    if remaining_runway > MIN_REMAINING_RUNWAY_DAYS and freshness > 0:
-        reason = (
-            f"Position {weakest['ticker']} is mid-thesis: "
-            f"{remaining_runway} days of runway remaining, "
-            f"freshness score {freshness} — reallocation blocked"
-        )
-        print(f"    Reallocation: {reason}")
-        _log_reallocation_event(new_ticker, weakest["ticker"], None, None,
-                                weakest["current_signals"], reason, recommended=False)
-        return {"recommended": False, "reason": reason}
+    # (Gate 2.6 "remaining thesis runway" REMOVED in Exit Architecture v2 —
+    #  hold-window runway no longer gates liberation; conviction decay (Gate 2)
+    #  is now the sole eligibility test.)
 
     # Gate 3: conviction delta
     conviction_delta = new_conviction - weakest["score"]
@@ -429,6 +445,25 @@ def evaluate_reallocation(
                                 recommended=False)
         return {"recommended": False, "reason": reason}
     
+    # Gate 3.6: tax gate — defer a profitable exit near the 12-month anniversary
+    # (Exit Architecture v2 overlay on capital liberation). Posts a Slack alert
+    # on activation. Exempt when the position has retreated >20% from its peak.
+    try:
+        from kairos_exits import tax_gate_blocks_exit
+        from kairos_log_db import get_peak_gain
+        peak = get_peak_gain(weakest["ticker"])
+        if tax_gate_blocks_exit(weakest["ticker"], weakest.get("earliest_entry"),
+                                exit_price, avg_cost, peak):
+            reason = (f"Tax gate: {weakest['ticker']} profitable and within "
+                      f"long-term-gains window — liberation deferred to anniversary")
+            print(f"    Reallocation: {reason}")
+            _log_reallocation_event(new_ticker, weakest["ticker"], conviction_delta,
+                                    None, weakest["current_signals"], reason,
+                                    recommended=False)
+            return {"recommended": False, "reason": reason}
+    except Exception as tax_exc:
+        print(f"    WARNING: tax gate check failed: {tax_exc}")
+
     # Gate 4: after-tax exit cost
 
     from kairos_tax_efficiency import calculate_aftertax_npv
@@ -477,7 +512,7 @@ def evaluate_reallocation(
         print(f"    WARNING: Wash sale check failed: {ws_exc}")
 
     # All gates passed — recommend reallocation
-    reason = (f"Reallocating {weakest['ticker']} (freshness={weakest['score']}) "
+    reason = (f"Reallocating {weakest['ticker']} (decayed conviction={weakest['score']}) "
               f"to fund {new_ticker} (conviction={new_conviction}, "
               f"delta=+{conviction_delta}, tax cost=${tax_cost:,.0f})")
     print(f"    Reallocation: RECOMMENDED — {reason}")
