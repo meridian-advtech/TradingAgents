@@ -6,12 +6,14 @@ whether selling the weakest existing position to fund it would be
 NPV-positive after tax and transaction costs.
 
 Activation criteria (Exit Architecture v2 — condition 4, capital liberation):
-  - New opportunity has conviction >= 7
+  - New opportunity has conviction >= 5 (absolute floor; the delta gate below
+    does the real work of demanding a "much better" replacement)
   - The weakest existing position's DECAYED conviction has fallen below the
     liberation threshold (aging signals lower conviction — kairos_exits
     .conviction_decay_score). This replaces the old hold-window "runway" gate.
   - Conviction delta >= 4.5 between new opportunity and weakest position
-  - Position has been held >= 10 TRADING days (anti-churn guard)
+    (~half the 1-10 scale — this is the definition of "much better")
+  - Position has been held >= 5 TRADING days (anti-churn guard)
   - Tax gate: not within 30 days of the weakest position's 12-month anniversary
     while profitable (defers to long-term capital gains)
   - After-tax exit cost is not prohibitive (tax savings < $1,000)
@@ -49,16 +51,23 @@ CREATE TABLE IF NOT EXISTS reallocation_events (
 );
 """
 
-# Minimum conviction to even consider reallocation (high bar)
-MIN_CONVICTION = 7
-# Minimum gap between new conviction and weakest position score
-MIN_CONVICTION_DELTA = 4.5  # Increased by 50% from 3 to 4.5 to reduce churn
+# Absolute conviction floor to even consider reallocation. Lowered 7 -> 5: this
+# is a floor stacked in front of the RELATIVE delta gate, and a 7-floor blocked
+# the exact case we WANT — dumping a conviction 1-2.5 dog for a "merely good"
+# 5.5-6.9 replacement. 5 keeps the replacement above-average; the delta does the
+# real work. Overridable from kairos_config.json (see _load_reallocation_config).
+MIN_CONVICTION = 5
+# Minimum gap between new conviction and weakest position score. This IS the
+# definition of "much better" (~half the 1-10 scale) and the primary anti-churn
+# brake — kept at 4.5 deliberately.
+MIN_CONVICTION_DELTA = 4.5
 # Max tax savings from waiting before we refuse to exit (prohibitive threshold)
 MAX_TAX_SAVINGS_FOR_EXIT = 1000
 # Minimum hold time in TRADING days before a position can be reallocated
-# (anti-churn guard). Exit Architecture v2 raised this from 5 calendar to 10
-# trading days (~2 calendar weeks).
-MIN_HOLD_DAYS_FOR_REALLOCATION = 10
+# (anti-churn guard). 5 trading days (~1 week) is a brake against reflexive flips
+# without letting dogs rot; deep losers (> -15%) still route to the stop-loss
+# path via the unrealized-loss guard, so true dogs are not delayed by this.
+MIN_HOLD_DAYS_FOR_REALLOCATION = 5
 # Maximum unrealized loss percentage before blocking reallocation (-15% = block sells down >15%)
 MAX_REALLOCATION_LOSS_PCT = -15.0
 # Maximum age of thesis review in hours (default 24)
@@ -78,14 +87,22 @@ def _load_reallocation_config() -> dict:
         with open(config_file) as f:
             config = json.load(f)
         realloc_config = config.get("reallocation", {})
-        
-        # Use config values if available, otherwise use defaults
+
+        # Use config values if available, otherwise use defaults. NOTE: the three
+        # reallocation GATES (MIN_CONVICTION, MIN_CONVICTION_DELTA,
+        # MIN_HOLD_DAYS_FOR_REALLOCATION) were previously omitted from this global
+        # statement, so config values for them were dead/decorative and the module
+        # constants were the real source of truth. They are now config-authoritative.
         global MAX_REALLOCATION_LOSS_PCT, MAX_THESIS_REVIEW_AGE_HOURS, MIN_REMAINING_RUNWAY_DAYS, SIGNAL_HOLD_WINDOWS
+        global MIN_CONVICTION, MIN_CONVICTION_DELTA, MIN_HOLD_DAYS_FOR_REALLOCATION
         MAX_REALLOCATION_LOSS_PCT = realloc_config.get("MAX_REALLOCATION_LOSS_PCT", -15.0)
         MAX_THESIS_REVIEW_AGE_HOURS = realloc_config.get("MAX_THESIS_REVIEW_AGE_HOURS", 24)
         MIN_REMAINING_RUNWAY_DAYS = realloc_config.get("MIN_REMAINING_RUNWAY_DAYS", 0)
         SIGNAL_HOLD_WINDOWS = realloc_config.get("signal_hold_windows", {})
-        
+        MIN_CONVICTION = realloc_config.get("MIN_CONVICTION", 5)
+        MIN_CONVICTION_DELTA = realloc_config.get("MIN_CONVICTION_DELTA", 4.5)
+        MIN_HOLD_DAYS_FOR_REALLOCATION = realloc_config.get("MIN_HOLD_DAYS_FOR_REALLOCATION", 5)
+
         return realloc_config
     except Exception:
         # Config file missing or invalid - use hardcoded defaults
@@ -94,11 +111,17 @@ def _load_reallocation_config() -> dict:
             "MAX_THESIS_REVIEW_AGE_HOURS": 24,
             "MIN_REMAINING_RUNWAY_DAYS": 0,
             "signal_hold_windows": {},
-            "MIN_CONVICTION": 7,
+            "MIN_CONVICTION": 5,
             "MIN_CONVICTION_DELTA": 4.5,
             "MIN_HOLD_DAYS_FOR_REALLOCATION": 5,
             "MAX_TAX_SAVINGS_FOR_EXIT": 1000
         }
+
+
+# Apply config overrides at import so the module constants reflect
+# kairos_config.json from the very first call (evaluate_reallocation re-applies
+# them defensively, but this guarantees correct values even for direct readers).
+_load_reallocation_config()
 
 
 def _load_protected_tickers() -> set[str]:
@@ -288,6 +311,14 @@ def evaluate_reallocation(
     """
     init_reallocation_tables()
 
+    # Re-apply config overrides so a live edit to kairos_config.json takes effect
+    # without a process restart, then surface the effective gate values so the
+    # engine's configuration is visible in the scheduler log every cycle.
+    _load_reallocation_config()
+    print(f"    [REALLOC] engine init: MIN_CONVICTION={MIN_CONVICTION}, "
+          f"MIN_CONVICTION_DELTA={MIN_CONVICTION_DELTA}, "
+          f"MIN_HOLD_DAYS_FOR_REALLOCATION={MIN_HOLD_DAYS_FOR_REALLOCATION}")
+
     # Gate 1: conviction must be high
     if new_conviction < MIN_CONVICTION:
         reason = f"Conviction {new_conviction} < {MIN_CONVICTION} minimum for reallocation"
@@ -324,6 +355,20 @@ def evaluate_reallocation(
     from kairos_exits import conviction_decay_score, get_liberation_threshold
     lib_threshold = get_liberation_threshold()
 
+    # Warm the validity cache once per evaluation (cycle-scoped, not per ticker)
+    # so conviction decay can stretch/compress each position's decay window by
+    # its live thesis-validity score. Degrades gracefully: a None/empty cache
+    # leaves conviction_decay_score on its original time-based behavior.
+    validity_cache = {}
+    try:
+        from kairos_thesis_validity import warm_validity_cache
+        open_holdings = [dict(h) for h in holdings]
+        open_tickers = [oh.get("ticker") for oh in open_holdings]
+        validity_cache = warm_validity_cache(open_tickers, open_holdings)
+    except Exception as exc:
+        print(f"    Reallocation: validity cache warm-up failed ({exc}) — "
+              f"using time-based decay")
+
     protected = _load_protected_tickers()
     scored = []
     for h in holdings:
@@ -335,7 +380,8 @@ def evaluate_reallocation(
                   f"(capital liberation disabled)")
             continue
         freshness, current_sigs, entry_sigs = _compute_thesis_freshness(hticker)
-        conviction = conviction_decay_score(hticker, entry_sigs, h["earliest_entry"])
+        conviction = conviction_decay_score(hticker, entry_sigs, h["earliest_entry"],
+                                            validity_cache=validity_cache)
         scored.append({
             "ticker": hticker,
             "score": conviction,          # decayed conviction (ranking key)
@@ -372,7 +418,7 @@ def evaluate_reallocation(
                                 weakest["current_signals"], reason, recommended=False)
         return {"recommended": False, "reason": reason}
 
-    # Gate 2.4: minimum hold time — 10 TRADING days (anti-churn guard)
+    # Gate 2.4: minimum hold time — MIN_HOLD_DAYS_FOR_REALLOCATION trading days (anti-churn guard)
     entry_dt = None
     if weakest.get("earliest_entry"):
         try:
@@ -532,7 +578,58 @@ def evaluate_reallocation(
         "conviction_delta": conviction_delta,
         "tax_cost": tax_cost,
         "reason": reason,
+        # NLV at evaluation time — used by execute_reallocation to cap the buy
+        # leg at the single-position limit when sizing off freed capital.
+        "nlv": nlv,
     }
+
+
+def _size_reallocation_buy(freed_capital: float, ref_price: float,
+                           nlv: float | None) -> tuple[int, str]:
+    """Size a reallocation BUY off the freed capital, capped at the single-position limit.
+
+    The reallocation decision is made on conviction DELTA, so once we've chosen to
+    swap INTO the target we deploy the freed capital directly — independent of the
+    from-scratch confluence nlv_pct (which can be ~0 for a weak-but-higher-delta
+    target, and was exactly what collapsed the GD buy to 0). Quantity is
+    floor(freed_capital / ref_price), then capped at max_single_position_pct of NLV
+    as an upper bound. Returns (qty, human-readable detail). qty < 1 signals the
+    caller to ABORT the swap (never sell when the buy can't be sized).
+    """
+    if ref_price is None or ref_price <= 0 or freed_capital is None or freed_capital <= 0:
+        return 0, f"unsizable (freed=${freed_capital or 0:,.2f}, ref={ref_price})"
+    base_qty = int(freed_capital // ref_price)
+    detail = f"floor(${freed_capital:,.2f} / ${ref_price:,.2f}) = {base_qty} sh"
+    # Single-position cap (max % NLV) as an upper bound when NLV is known.
+    if nlv and nlv > 0:
+        try:
+            from kairos_confluence import load_guardrails
+            max_pct = float(load_guardrails().get("max_single_position_pct", 0.10))
+        except Exception as exc:
+            max_pct = 0.10
+            detail += f" [guardrail load failed: {exc}; default {max_pct:.0%}]"
+        cap_qty = int((nlv * max_pct) // ref_price)
+        if cap_qty >= 1 and base_qty > cap_qty:
+            return cap_qty, detail + f", capped to {cap_qty} sh ({max_pct:.0%} of ${nlv:,.0f} NLV)"
+    return base_qty, detail
+
+
+def _alert_realloc_abort(exit_ticker: str, new_ticker: str, exit_qty,
+                         exit_price, reason: str) -> None:
+    """Loudly flag a reallocation aborted BEFORE selling (atomic invariant held)."""
+    est = (exit_qty or 0) * (exit_price or 0)
+    print(f"    *** REALLOCATION ABORTED ({exit_ticker} → {new_ticker}): {reason} "
+          f"— NO SELL executed; position left intact.")
+    try:
+        from kairos_alerts import post_message
+        post_message("alerts",
+            f":rotating_light: *Reallocation ABORTED: {exit_ticker} → {new_ticker}*\n"
+            f"Buy leg could not be sized to a valid order — *NO SELL executed* "
+            f"(atomic swap invariant).\n"
+            f"Reason: {reason}.\n"
+            f"Would have freed ≈${est:,.0f} from {exit_ticker}; position left intact.")
+    except Exception as exc:
+        print(f"    reallocation abort alert failed: {exc}")
 
 
 def execute_reallocation(
@@ -542,20 +639,47 @@ def execute_reallocation(
     decision: dict,
     ib,
 ) -> tuple[dict | None, dict | None]:
-    """Execute both legs of a reallocation: SELL exit_ticker, BUY new_ticker.
+    """Execute both legs of a reallocation as an ATOMIC swap: SELL then BUY.
 
-    Returns (sell_execution, buy_execution) — either may be None on failure.
+    Atomic invariant: the BUY leg is sized and validated (>= 1 share, off the
+    capital the SELL would free) BEFORE any SELL is placed. If the buy cannot be
+    sized, the entire reallocation aborts and NO sell happens — so a swap can
+    never strand liberated cash (the 2026-06-18 ACET→GD failure mode).
+
+    Returns (sell_execution, buy_execution); (None, None) when aborted pre-sell.
     """
     from kairos_stoploss import _place_market_sell
-    from kairos_execute import execute_order, log_execution
+    from kairos_execute import execute_order, log_execution, get_reference_price
 
     exit_ticker = realloc["exit_ticker"]
     exit_qty = realloc["exit_qty"]
+    exit_price = realloc["exit_price"]
     new_ticker = new_trade["ticker"]
+    nlv = realloc.get("nlv")
 
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-    # ── Leg 1: SELL the weak position ─────────────────────────────
+    # ── Pre-flight: SIZE + VALIDATE the BUY leg BEFORE any SELL ────
+    # (atomic invariant — never sell unless the buy is a valid order)
+    print(f"\n    ── Reallocation pre-flight: sizing BUY {new_ticker} before any SELL ──")
+    new_ref_price = get_reference_price(ib, new_ticker)
+    if not new_ref_price:
+        _alert_realloc_abort(exit_ticker, new_ticker, exit_qty, exit_price,
+                             f"could not get reference price for {new_ticker}")
+        return None, None
+
+    est_freed = exit_qty * exit_price   # estimate; refined from the actual fill below
+    planned_qty, size_detail = _size_reallocation_buy(est_freed, new_ref_price, nlv)
+    print(f"    BUY sizing (pre-sell): {size_detail} → planned {planned_qty} sh "
+          f"(est. freed ${est_freed:,.2f} @ ${new_ref_price:,.2f})")
+    if planned_qty < 1:
+        _alert_realloc_abort(
+            exit_ticker, new_ticker, exit_qty, exit_price,
+            f"buy sizes to {planned_qty} sh (est. freed ${est_freed:,.2f}, "
+            f"{new_ticker} @ ${new_ref_price:,.2f} > freed capital)")
+        return None, None
+
+    # ── Leg 1: SELL the weak position (buy leg already validated) ──
     print(f"\n    ── Reallocation Leg 1: SELL {exit_qty} {exit_ticker} ──")
     sell_reason = (f"REALLOCATION: Reallocating to higher-conviction opportunity "
                    f"{new_ticker} (conviction delta: +{realloc['conviction_delta']})")
@@ -618,8 +742,8 @@ def execute_reallocation(
             pnl_pct=pnl_pct,
             buy_signals=["REALLOCATION"],
         )
-    except Exception:
-        pass
+    except Exception as ledger_exc:
+        print(f"    WARNING: reallocation ledger entry failed: {ledger_exc}")
 
     # Log to trade_outcomes for ML learning
     try:
@@ -649,7 +773,7 @@ def execute_reallocation(
             ticker=exit_ticker,
             action="SELL",
             quantity=exit_qty,
-            price_entry=avg_cost,
+            price_entry=exit_avg_cost,
             price_exit=sell_price,
             pnl_dollars=pnl_dollars,
             pnl_pct=pnl_pct,
@@ -661,45 +785,23 @@ def execute_reallocation(
     except Exception as ml_exc:
         print(f"    WARNING: ML Outcomes logging failed: {ml_exc}")
 
-    # ── Leg 2: BUY the new ticker ─────────────────────────────────
-    print(f"\n    ── Reallocation Leg 2: BUY {new_qty} {new_ticker} ──")
-    
-    # Debug: Show the new_qty calculation
-    print(f"    DEBUG: new_qty = {new_qty} (calculated from old NLV)")
-    print(f"    DEBUG: This should be calculated from freed_capital = ${freed_capital:,.2f}")
-    
-    # FIX: Recalculate buy quantity using actual freed capital from the sell
-    # The original new_qty was calculated from pre-sell NLV, which doesn't include
-    # the freed capital. We need to recalculate based on what we actually freed.
-    
-    from kairos_confluence import compute_confluence, compute_position_size
-    
-    # Get the reference price for the new ticker
-    from kairos_execute import get_reference_price
-    new_ref_price = get_reference_price(ib, new_ticker)
-    if not new_ref_price:
-        print(f"    ERROR: Cannot get reference price for {new_ticker}")
-        return sell_execution, None
-    
-    # Get signals for the new trade to compute confluence
-    signal_tags = new_trade.get("signals", [])
-    if not signal_tags and new_trade.get("conviction", 0) >= 7:
-        # This is a conviction trade - use the conviction-based sizing
-        # Use 1% of freed capital (matching Mode C logic)
-        conviction_spend = freed_capital * 0.01
-        recalculated_qty = max(1, int(conviction_spend / new_ref_price))
-        print(f"    RECALCULATED: Conviction trade → 1% of ${freed_capital:,.2f} = ${conviction_spend:,.2f} → {recalculated_qty} shares")
-    else:
-        # This is a confluence-based trade
-        confluence = compute_confluence(signal_tags)
-        # Use the freed capital as the effective NLV for sizing
-        recalculated_qty = compute_position_size(confluence, freed_capital, new_ref_price)
-        print(f"    RECALCULATED: Confluence {confluence.get('tier', '?')} → {recalculated_qty} shares")
-    
-    # Use the recalculated quantity (but don't let it be smaller than original if that was valid)
-    final_qty = max(new_qty, recalculated_qty) if recalculated_qty > 0 else new_qty
-    print(f"    FINAL BUY QTY: {final_qty} shares (was {new_qty}, recalculated {recalculated_qty})")
-    
+    # ── Leg 2: BUY the new ticker — re-size off ACTUAL freed capital ──
+    # The pre-flight already validated the buy off the estimated freed capital;
+    # here we re-size off what the SELL actually freed (sell_price may differ from
+    # the pre-sell estimate) and re-apply the single-position cap.
+    final_qty, final_detail = _size_reallocation_buy(freed_capital, new_ref_price, nlv)
+    print(f"\n    ── Reallocation Leg 2: BUY {new_ticker} ──")
+    print(f"    BUY sizing (post-sell): {final_detail} → final {final_qty} sh "
+          f"(actual freed ${freed_capital:,.2f} @ ${new_ref_price:,.2f})")
+    if final_qty < 1:
+        # Validated >=1 pre-sell; only an adverse price move between sizing and the
+        # fill could drop this below 1. The capital is ALREADY freed, so aborting now
+        # would strand it — fall back to the validated pre-sell qty and complete the buy.
+        print(f"    WARNING: post-sell qty {final_qty} < 1 (price moved after sizing); "
+              f"falling back to validated pre-sell qty {planned_qty}")
+        final_qty = planned_qty
+    print(f"    FINAL BUY QTY: {final_qty} shares")
+
     buy_execution = execute_order(ib, new_ticker, "BUY", final_qty)
 
     # Log the buy
@@ -708,40 +810,92 @@ def execute_reallocation(
         f"Funded by REALLOCATION from {exit_ticker} "
         f"(+{realloc['conviction_delta']} conviction delta)"
     )
+    # WRITE-BACK FIX: log_execution writes the holdings row from
+    # trade["quantity"], but new_trade still carries the ORIGINAL pre-reallocation
+    # size (often ~0 — the cash-breach round-down that triggered reallocation in
+    # the first place). The order we actually placed/filled was final_qty, so
+    # stamp the actual filled quantity here. Prefer the broker's reported filled
+    # position; fall back to final_qty. Without this the holding was written with
+    # quantity=0 despite a real fill (e.g. GL/T on 2026-06-17).
+    filled_qty = final_qty
+    new_pos = buy_execution.get("new_position") if buy_execution else None
+    if isinstance(new_pos, dict) and new_pos.get("quantity"):
+        try:
+            filled_qty = int(float(new_pos["quantity"]))
+        except (TypeError, ValueError):
+            filled_qty = final_qty
+    buy_trade["quantity"] = filled_qty
     log_execution(decision, buy_trade, buy_execution)
 
     print(f"    BUY {new_ticker}: {buy_execution.get('status', '?')} "
           f"@ ${buy_execution.get('fill_price', 0):,.2f}")
 
-    # Update reallocation_events with executed=True
+    # Update reallocation_events with executed=1. SQLite's UPDATE ... ORDER BY ...
+    # LIMIT is rejected unless compiled with SQLITE_ENABLE_UPDATE_DELETE_LIMIT (it is
+    # NOT, here) — the old form raised and was silently swallowed, so the flag never
+    # flipped. Target the row id via a subquery instead, and log both paths.
     try:
         conn = _get_connection()
-        conn.execute(
+        cur = conn.execute(
             "UPDATE reallocation_events SET executed = 1 "
-            "WHERE ticker_entered = ? AND ticker_exited = ? "
-            "AND recommended = 1 ORDER BY id DESC LIMIT 1",
+            "WHERE id = ("
+            "    SELECT id FROM reallocation_events "
+            "    WHERE ticker_entered = ? AND ticker_exited = ? AND recommended = 1 "
+            "    ORDER BY id DESC LIMIT 1"
+            ")",
             (new_ticker, exit_ticker),
         )
         conn.commit()
+        matched = cur.rowcount
         conn.close()
-    except Exception:
-        pass
+        if matched == 1:
+            print(f"    reallocation_events: executed=1 set for {exit_ticker}→{new_ticker}")
+        else:
+            print(f"    WARNING: reallocation_events executed-flag update matched "
+                  f"{matched} row(s) for {exit_ticker}→{new_ticker} (expected 1)")
+    except Exception as exc:
+        print(f"    WARNING: reallocation_events executed-flag update failed: {exc}")
 
-    # ── Slack alert for both legs ─────────────────────────────────
+    # ── Slack: ONE combined #trades message for both legs ─────────────
+    # A reallocation is a POSITION CHANGE, so it belongs in #trades (not
+    # #alerts). Report the ACTUAL order quantity (filled_qty / final_qty), NOT
+    # the stale pre-realloc new_qty — that is what produced the bogus
+    # "BUY 0 ... (Skipped)" line. If the BUY leg did NOT fill, the capital from
+    # the SELL leg has been liberated but not redeployed: flag it loudly here
+    # AND raise a #alerts attention item (stranded cash is attention-required).
     try:
         from kairos_alerts import post_message
-        sell_status = sell_execution.get("status", "?")
-        buy_status = buy_execution.get("status", "?")
-        buy_price = buy_execution.get("fill_price", 0)
-        post_message("alerts",
-            f":arrows_counterclockwise: *Capital Reallocation*\n"
+        sell_status = sell_execution.get("status", "?") if sell_execution else "?"
+        buy_status = buy_execution.get("status", "?") if buy_execution else "Skipped"
+        buy_price = (buy_execution.get("fill_price") or 0) if buy_execution else 0
+        freed = exit_qty * sell_price
+        buy_filled = bool(buy_execution) and buy_status == "Filled" and buy_price > 0
+
+        msg = (
+            f":arrows_counterclockwise: *Capital Reallocation — {exit_ticker} → {new_ticker}*\n"
             f"*Leg 1 — SELL:* {exit_qty} {exit_ticker} @ ${sell_price:,.2f} "
             f"({sell_status}) | P&L: ${pnl_dollars:+,.0f} ({pnl_pct:+.1f}%)\n"
-            f"*Leg 2 — BUY:* {new_qty} {new_ticker} @ ${buy_price:,.2f} "
+            f"*Leg 2 — BUY:* {filled_qty} {new_ticker} @ ${buy_price:,.2f} "
             f"({buy_status})\n"
             f"Conviction delta: +{realloc['conviction_delta']} | "
-            f"Tax cost: ${realloc['tax_cost']:,.0f}")
-    except Exception:
-        pass
+            f"Tax cost: ${realloc['tax_cost']:,.0f}"
+        )
+        if not buy_filled:
+            msg += (f"\n:rotating_light: *BUY leg did NOT fill* — ≈${freed:,.0f} freed "
+                    f"from {exit_ticker} is now sitting in cash, NOT redeployed into "
+                    f"{new_ticker} (buy returned {buy_status}, qty={filled_qty}). "
+                    f"Manual review required.")
+        post_message("trades", msg)
+
+        # Stranded capital is an attention-required condition → #alerts too.
+        if not buy_filled:
+            post_message("alerts",
+                f":rotating_light: *Reallocation BUY leg failed: {new_ticker}*\n"
+                f"SELL {exit_ticker} filled ({exit_qty} @ ${sell_price:,.2f}, "
+                f"≈${freed:,.0f} liberated) but the {new_ticker} BUY returned "
+                f"{buy_status} (qty={filled_qty}). Capital freed but NOT redeployed "
+                f"— review reallocation buy-leg sizing.")
+    except Exception as exc:
+        print(f"  reallocation: Slack post failed: {exc}")
 
     return sell_execution, buy_execution
