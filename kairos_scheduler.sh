@@ -1,4 +1,11 @@
 #!/bin/bash
+DAY=$(TZ=America/New_York date +%u)
+HOUR=$(TZ=America/New_York date +%H)
+MIN=$(TZ=America/New_York date +%M)
+TIME=$((10#$HOUR * 100 + 10#$MIN))
+[ "$DAY" -ge 6 ] && exit 0
+[ "$TIME" -lt 925 ] && exit 0
+[ "$TIME" -gt 1630 ] && exit 0
 # ─────────────────────────────────────────────────────────────────────────────
 # Kairos Multi-Asset Scheduler — Phase B (Crypto + Equities)
 #
@@ -44,7 +51,8 @@ rotate_log() {
 }
 
 # ── Trading window detection ──────────────────────────────────────────────────
-# Returns one of: "both" | "crypto" | "closed"
+# Returns one of: "equity" | "closed"
+# Crypto disabled — managed separately via Robinhood.
 # All times in Eastern Time (TZ=America/New_York handles DST automatically).
 
 get_trading_mode() {
@@ -52,23 +60,9 @@ get_trading_mode() {
     dow=$(TZ="America/New_York" date '+%u')    # 1=Mon … 5=Fri, 6=Sat, 7=Sun
     hhmm=$(TZ="America/New_York" date '+%H%M') # 24h, e.g. 0930 or 2145
 
-    # Crypto window: 24/7, with 5-minute grace period after midnight
-    # (00:00–00:05 ET closed to let IB Gateway complete nightly restart)
-    local crypto_open=1
-    if [ "$hhmm" -lt 5 ]; then
-        crypto_open=0
-    fi
-
     # Equity window: 09:30–16:00 ET, weekdays only
-    local equity_open=0
     if [ "$dow" -lt 6 ] && [ "$hhmm" -ge 930 ] && [ "$hhmm" -lt 1600 ]; then
-        equity_open=1
-    fi
-
-    if [ "$equity_open" -eq 1 ] && [ "$crypto_open" -eq 1 ]; then
-        echo "both"
-    elif [ "$crypto_open" -eq 1 ]; then
-        echo "crypto"
+        echo "equity"
     else
         echo "closed"
     fi
@@ -132,21 +126,7 @@ run_eod_summary_if_needed() {
         fi
     fi
 
-    # Crypto close: 22:05+ ET, daily
-    if [ "$et_hhmm" -ge 2205 ]; then
-        lock_file="${KAIROS_DIR}/.eod_crypto_last_run"
-        last_run=""
-        [ -f "$lock_file" ] && last_run=$(cat "$lock_file")
-        if [ "$last_run" != "$et_date" ]; then
-            log "EOD  — sending crypto close summary to #kairos-reports"
-            if python3 -c "from kairos_alerts import send_end_of_day_summary; send_end_of_day_summary('crypto')"; then
-                echo "$et_date" > "$lock_file"
-                log "EOD  — crypto summary sent"
-            else
-                log "EOD  — crypto summary failed (exit $?)"
-            fi
-        fi
-    fi
+    # Crypto EOD summary disabled — crypto managed separately via Robinhood
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -159,14 +139,11 @@ MODE=$(get_trading_mode)
 
 case "$MODE" in
     "closed")
-        log "SKIP — outside all trading windows (${DOW} ${ET_TIME})"
+        log "SKIP — outside equity trading window (${DOW} ${ET_TIME})"
         exit 0
         ;;
-    "both")
-        log "RUN  — equity+crypto window (${DOW} ${ET_TIME})"
-        ;;
-    "crypto")
-        log "RUN  — crypto-only window (${DOW} ${ET_TIME})"
+    "equity")
+        log "RUN  — equity window (${DOW} ${ET_TIME})"
         ;;
 esac
 
@@ -177,7 +154,7 @@ source "$VENV_ACTIVATE"
 # Load API keys from zshrc (handles keys not in launchd environment)
 if [ -f "$HOME/.zshrc" ]; then
     # Extract only export lines to avoid running interactive shell code
-    eval "$(grep -E '^export (ANTHROPIC|FINNHUB|FRED|KALSHI|CONGRESS)_API_KEY=' "$HOME/.zshrc" 2>/dev/null || true)"
+    eval "$(grep -E '^export (ANTHROPIC|FINNHUB|FRED|KALSHI|CONGRESS|RENAISSANCE_CAPITAL)_API_KEY=' "$HOME/.zshrc" 2>/dev/null || true)"
 fi
 
 cd "$KAIROS_DIR"
@@ -190,7 +167,7 @@ export OLLAMA_KEEP_ALIVE="5m"
 
 # Run full pipeline: orchestrate → screen → gather → reason → execute
 # Monitor wrapper logs timing, exit code, and errors to kairos_monitor.log
-if python3 kairos_run.py --cycle --mode "$MODE"; then
+if python3 kairos_run.py --cycle --mode equity; then
     log "PASS — full pipeline completed (mode: ${MODE})"
 else
     EXIT_CODE=$?

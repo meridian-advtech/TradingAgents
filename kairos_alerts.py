@@ -58,6 +58,11 @@ def _load_slack_config() -> dict:
                 defaults["channels"].update(slack["channels"])
         except (json.JSONDecodeError, IOError):
             pass
+    # Environment overrides config so the Slack bot token can stay out of the
+    # tracked kairos_config.json (provided via launchd plist / ~/.zshrc).
+    _env_token = os.environ.get("SLACK_BOT_TOKEN", "").strip()
+    if _env_token:
+        defaults["bot_token"] = _env_token
     return defaults
 
 
