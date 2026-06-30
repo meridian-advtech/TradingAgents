@@ -27,10 +27,118 @@ from kairos_tax_efficiency import format_tax_efficiency_section
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROMPT_FILE = os.path.join(SCRIPT_DIR, "kairos_prompt.txt")
+# Phase C: the {axis: weight} snapshot of active learned-calibration weights that
+# were in the reasoning prompt this cycle. Written beside kairos_prompt.txt so the
+# execution path can stamp it onto each decision's axis_weights_snapshot column.
+AXIS_SNAPSHOT_FILE = os.path.join(SCRIPT_DIR, "kairos_axis_snapshot.json")
 BIAS_HISTORY_FILE = os.path.join(SCRIPT_DIR, "kairos_bias_history.json")
 TICKER = "AAPL"
 W = 72
 BIAS_REPEAT_THRESHOLD = 2  # flag if same ticker chosen N+ cycles in a row
+
+# ── FIX #6: frozen-feed / stale-mark detection ──────────────────────
+# reqMarketDataType(4) makes IBKR silently serve `close` (prior close) when the
+# live feed is frozen. We track which attribute each price resolved from; if a
+# high fraction fall back to `close`, or no ticker yields a live `last` tick,
+# the snapshot is treated as STALE → alert + skip trading this cycle.
+STALE_MARKS_SENTINEL = os.path.join(SCRIPT_DIR, "kairos_marks_stale.json")
+STALE_MARKS_CLOSE_FRACTION = 0.60   # >=60% close-fallback ⇒ stale
+STALE_MARKS_TTL_SECONDS = 1800       # sentinel honored for 30 min (one cycle)
+
+
+def _detect_stale_marks(price_sources: dict[str, str]) -> tuple[bool, dict]:
+    """Decide whether a price snapshot is stale from its per-ticker sources.
+
+    STALE when either (a) >= STALE_MARKS_CLOSE_FRACTION of priced tickers
+    resolved via the `close` fallback, or (b) zero tickers produced a live
+    `last` tick. Returns (is_stale, detail).
+    """
+    n = len(price_sources)
+    detail = {
+        "priced": n,
+        "last_count": 0,
+        "close_count": 0,
+        "close_fraction": 0.0,
+        "affected": [],
+    }
+    if n == 0:
+        # No marks at all — nothing to trade on; don't raise a false stale flag.
+        return False, detail
+
+    last_count = sum(1 for s in price_sources.values() if s == "last")
+    close_count = sum(1 for s in price_sources.values() if s == "close")
+    close_frac = close_count / n
+    # Affected = tickers that did NOT get a live `last` tick (the suspect marks).
+    affected = sorted(t for t, s in price_sources.items() if s != "last")
+
+    detail.update({
+        "last_count": last_count,
+        "close_count": close_count,
+        "close_fraction": round(close_frac, 4),
+        "affected": affected,
+    })
+
+    is_stale = (close_frac >= STALE_MARKS_CLOSE_FRACTION) or (last_count == 0)
+    return is_stale, detail
+
+
+def _handle_stale_marks(detail: dict) -> None:
+    """On stale marks: write the skip-cycle sentinel and post a Slack alert."""
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    affected = detail.get("affected", [])
+    payload = {"timestamp": ts, **detail}
+    try:
+        with open(STALE_MARKS_SENTINEL, "w") as f:
+            json.dump(payload, f, indent=2)
+    except Exception as exc:
+        print(f"  WARNING: could not write stale-marks sentinel: {exc}")
+
+    print(f"  ⚠️  STALE MARKS DETECTED — {detail['close_count']}/{detail['priced']} "
+          f"prices via prior-close fallback, {detail['last_count']} live `last` ticks. "
+          f"Trading will be SKIPPED this cycle.")
+
+    msg = (
+        ":warning: *Kairos: stale/frozen market-data feed detected*\n"
+        f"reqMarketDataType(4) returned prior-close fallbacks for "
+        f"{detail['close_count']} of {detail['priced']} priced tickers "
+        f"({detail['close_fraction']:.0%}); live `last` ticks: {detail['last_count']}.\n"
+        f"Affected (no live tick): {', '.join(affected) if affected else 'n/a'}\n"
+        f"Marks treated as STALE — *trading SKIPPED this cycle* (no orders placed). "
+        f"Detected {ts}."
+    )
+    try:
+        from kairos_alerts import post_message
+        post_message("reports", msg)
+    except Exception as exc:
+        print(f"  WARNING: stale-marks Slack alert failed: {exc}")
+
+
+def _clear_stale_marks_sentinel() -> None:
+    """Remove a prior stale-marks sentinel once a healthy snapshot is seen."""
+    try:
+        if os.path.exists(STALE_MARKS_SENTINEL):
+            os.remove(STALE_MARKS_SENTINEL)
+    except Exception as exc:
+        print(f"  WARNING: could not clear stale-marks sentinel: {exc}")
+
+
+def marks_are_stale() -> tuple[bool, dict]:
+    """Read the sentinel; True only if present and written within the TTL.
+
+    Used by the execute phase (kairos_run.run_execute) to bail before placing
+    orders when the most recent gather flagged stale marks.
+    """
+    try:
+        if not os.path.exists(STALE_MARKS_SENTINEL):
+            return False, {}
+        age = datetime.now(timezone.utc).timestamp() - os.path.getmtime(STALE_MARKS_SENTINEL)
+        with open(STALE_MARKS_SENTINEL) as f:
+            detail = json.load(f)
+        if age > STALE_MARKS_TTL_SECONDS:
+            return False, detail  # stale sentinel from an old cycle — ignore
+        return True, detail
+    except Exception:
+        return False, {}
 
 
 def _get_position_rationale(ticker: str) -> str | None:
@@ -94,6 +202,7 @@ def gather_portfolio(shortlist: list[str] | None = None) -> dict:
 
     ib.reqMarketDataType(4)
     ticker_prices: dict[str, float] = {}
+    price_sources: dict[str, str] = {}  # FIX #6: which attr each price resolved from
     print(f"  Fetching prices for {len(tickers_to_price)} ticker(s)...")
 
     for sym in tickers_to_price:
@@ -103,26 +212,40 @@ def gather_portfolio(shortlist: list[str] | None = None) -> dict:
             mkt = ib.reqMktData(contract)
             ib.sleep(2)
             price = None
+            resolved_attr = None
             for attr in ("last", "close", "bid", "ask"):
                 val = getattr(mkt, attr, None)
                 if val is not None and val == val:
                     price = round(val, 2)
+                    resolved_attr = attr
                     break
             ib.cancelMktData(contract)
             if price:
                 ticker_prices[sym] = price
+                price_sources[sym] = resolved_attr
         except Exception:
             pass
 
     ib.disconnect()
 
+    # FIX #6: detect a frozen feed (prices silently served from prior `close`).
+    marks_stale, stale_detail = _detect_stale_marks(price_sources)
+
     portfolio = {
         "account": account,
         "positions": positions,
         "ticker_prices": ticker_prices,
+        "price_sources": price_sources,
+        "marks_stale": marks_stale,
+        "stale_detail": stale_detail,
         # Backwards compat
         "aapl_last_price": ticker_prices.get(TICKER),
     }
+
+    if marks_stale:
+        _handle_stale_marks(stale_detail)
+    else:
+        _clear_stale_marks_sentinel()
 
     print(f"  Net Liquidation: ${float(account.get('NetLiquidation', 0)):,.2f}")
     print(f"  Cash:            ${float(account.get('TotalCashValue', 0)):,.2f}")
@@ -260,6 +383,112 @@ def format_tax_section(tax_ctx: dict) -> str:
         lines.append(f"  The loss from the recent sale would be DISALLOWED and added")
         lines.append(f"  to the cost basis of newly purchased shares.")
 
+    return "\n".join(lines)
+
+
+# ── Step 3c: Learned axis-weight calibration (Phase C) ───────────────
+#
+# Approved axis weights live in axis_weights (kairos.db), tuned through the
+# Arbiter→approval loop. Phase C surfaces them to the Council as a PRIOR only:
+# the section is injected into the reasoning prompt (mirroring the tax sections)
+# and a {axis: weight} snapshot is persisted so each decision can be tagged with
+# the weights that were in context. NOTHING here changes sizing, the screener, or
+# any execution path — it is prompt text plus a recorded tag. While every weight
+# sits at 0.0 (|weight| <= the deadband) the section is omitted entirely, so the
+# wiring is fully behavior-neutral until a weight is actually approved away from 0.
+
+# Deadband: ignore weights this close to zero (un-tuned / noise) so the section
+# stays absent until a meaningful calibration has been approved.
+AXIS_WEIGHT_DEADBAND = 0.01
+
+# Lean phrasing per axis, derived from axis_weights.positive_means. Index 0 is the
+# correction positive_means prescribes (used when weight > 0); index 1 is its
+# opposite (weight < 0). Falls back to the raw positive_means text if an axis is
+# not mapped here, so a newly-added axis still renders something sensible.
+_AXIS_LEAN_PHRASES = {
+    "exit_timing": (
+        "lean toward earlier exits",
+        "lean toward holding positions longer before exiting",
+    ),
+    "reallocation_aggressiveness": (
+        "lean toward holding longer before rotating capital",
+        "lean toward rotating capital sooner",
+    ),
+    "conviction_calibration": (
+        "discount high-conviction scores (treat strong conviction more skeptically)",
+        "give high-conviction scores more weight",
+    ),
+}
+
+
+def _axis_lean_phrase(axis: str, weight: float, positive_means: str | None) -> str:
+    """Map (axis, sign) → the directional lean to surface to the Council.
+
+    weight > 0 → the correction described by positive_means; weight < 0 → its
+    opposite. Unmapped axes fall back to the positive_means sentence.
+    """
+    phrases = _AXIS_LEAN_PHRASES.get(axis)
+    if phrases is None:
+        base = (positive_means or "").strip()
+        if weight > 0:
+            return base or f"apply the {axis} correction"
+        return f"the opposite of: {base}" if base else f"reverse the {axis} correction"
+    return phrases[0] if weight > 0 else phrases[1]
+
+
+def load_active_axis_weights() -> list[dict]:
+    """Active axis weights past the deadband, read from kairos.db.
+
+    Returns [{axis, weight, positive_means}] for rows with status='active' AND
+    abs(weight) > AXIS_WEIGHT_DEADBAND, ordered by axis. Empty list when every
+    weight is still ~0 (the behavior-neutral default).
+    """
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT axis, weight, positive_means FROM axis_weights "
+            "WHERE status = 'active' AND ABS(weight) > ? ORDER BY axis",
+            (AXIS_WEIGHT_DEADBAND,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {"axis": r["axis"], "weight": float(r["weight"]),
+         "positive_means": r["positive_means"]}
+        for r in rows
+    ]
+
+
+def axis_weights_snapshot(weights: list[dict] | None = None) -> dict:
+    """{axis: weight} snapshot of the active weights in context (for tagging)."""
+    if weights is None:
+        weights = load_active_axis_weights()
+    return {w["axis"]: round(w["weight"], 6) for w in weights}
+
+
+def format_axis_weights_section(weights: list[dict] | None = None) -> str:
+    """Render the LEARNED CALIBRATION prompt block, or "" when none qualify.
+
+    Mirrors format_tax_efficiency_section: pure text, no side effects. Returns ""
+    (section omitted) whenever no active weight clears the deadband, keeping the
+    prompt — and therefore trading behavior — unchanged while all weights are 0.
+    Pass an explicit `weights` list to render a hypothetical (used for review).
+    """
+    if weights is None:
+        weights = load_active_axis_weights()
+    if not weights:
+        return ""
+
+    lines = [
+        "LEARNED CALIBRATION (from closed-trade outcomes; weigh as a prior, "
+        "not a rule):"
+    ]
+    for w in weights:
+        lean = _axis_lean_phrase(w["axis"], w["weight"], w.get("positive_means"))
+        lines.append(
+            f"  - {w['axis']}: {w['weight']:+.2f} -> {lean}. "
+            f"Specific theses may override."
+        )
     return "\n".join(lines)
 
 
@@ -660,6 +889,32 @@ SECTION 3b: TAX EFFICIENCY ANALYSIS
 {tax_efficiency_text}
 """
 
+    # Learned axis-weight calibration (Phase C). Prompt-only prior; omitted while
+    # all weights are 0 → behavior-neutral. The snapshot of weights in context is
+    # persisted beside the prompt so the execution path can tag each decision.
+    axis_section = ""
+    try:
+        active_weights = load_active_axis_weights()
+        calibration_text = format_axis_weights_section(active_weights)
+        snapshot = axis_weights_snapshot(active_weights)
+        with open(AXIS_SNAPSHOT_FILE, "w") as f:
+            json.dump(snapshot, f)
+        if calibration_text:
+            axis_section = f"""
+{'=' * W}
+SECTION 3c: LEARNED AXIS CALIBRATION
+{'=' * W}
+
+{calibration_text}
+"""
+            print(f"  Learned calibration injected: {len(snapshot)} axis weight(s) "
+                  f"in effect {snapshot}")
+        else:
+            print("  Learned calibration: no active weight past deadband "
+                  "(section omitted — behavior-neutral)")
+    except Exception as _axis_err:
+        print(f"  WARNING: axis calibration section failed: {_axis_err}")
+
     ledger_section = ""
     if ledger_text:
         ledger_section = f"""
@@ -1058,7 +1313,7 @@ SECTION 2b: CANDIDATE TICKERS FOR EVALUATION (evaluate ALL of these)
 
 {candidates_block}
 
-{tax_section}{tax_eff_section}{ledger_section}{screen_section}{ml_section}
+{tax_section}{tax_eff_section}{axis_section}{ledger_section}{screen_section}{ml_section}
 {'=' * W}
 REASONING FRAMEWORK
 {'=' * W}

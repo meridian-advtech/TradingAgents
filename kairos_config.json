@@ -53,6 +53,21 @@
     "opportunity_cost_rate": 0.08,
     "stop_loss_override_pct": 10.0
   },
+  "thesis_validity": {
+    "watch_backstop_days": 90,
+    "scrutiny_backstop_days": 180,
+    "backstop_days": {
+      "HOT-INSIDER": 90,
+      "HOT-CONGRESS": 90,
+      "HOT-REVERSION": 30,
+      "HOT-EARNINGS": 60,
+      "HOT-CATALYST": 60,
+      "HOT-CHAIN": 45,
+      "IPO_MOMENTUM": 60,
+      "DEFAULT": 90
+    },
+    "_comment": "Signal-validity engine (kairos_thesis_validity.py) backstops. Hold/sell is driven by live signal validity, NOT elapsed time \u2014 these days are LAST-RESORT review flags only and never trigger a sell on their own. watch_backstop_days: a position held longer with no validity sell signal is force-flagged WATCH. scrutiny_backstop_days: held longer \u2192 a HOLD is downgraded to WATCH (elevated scrutiny). backstop_days: per-signal review horizons (these replaced the old hold-window TRIGGERS the prompt referenced as hot_*_hold_days, which never existed as top-level fields in this codebase \u2014 the real time-windows live under reallocation.signal_hold_windows and exits.conviction_decay.decay_days, both still used by checkpoints/liberation/arbiter and intentionally left intact)."
+  },
   "ollama": {
     "screen_model": "phi4-mini",
     "reason_model": "qwen3:30b-a3b",
@@ -145,9 +160,9 @@
     "skip_tier0": true
   },
   "reallocation": {
-    "MIN_CONVICTION": 7,
+    "MIN_CONVICTION": 5,
     "MIN_CONVICTION_DELTA": 4.5,
-    "MIN_HOLD_DAYS_FOR_REALLOCATION": 10,
+    "MIN_HOLD_DAYS_FOR_REALLOCATION": 5,
     "MAX_REALLOCATION_LOSS_PCT": -15.0,
     "MAX_TAX_SAVINGS_FOR_EXIT": 1000,
     "MAX_THESIS_REVIEW_AGE_HOURS": 24,
@@ -162,18 +177,46 @@
       "HOT-CRYPTO-BASELINE": 3,
       "DEFAULT": 7
     },
-    "_comment": "Reallocation parameters: minimum conviction scores, hold time guard (now 10 TRADING days), max loss threshold (-15% = block sells down >15%), max tax cost threshold ($1000), max thesis review age in hours. signal_hold_windows is retained for arbiter / ml_thesis checkpoints / commander but NO LONGER gates liberation (Exit Architecture v2 replaced the runway gate with conviction decay)."
+    "_comment": "Reallocation parameters: minimum conviction scores, hold time guard (5 TRADING days), max loss threshold (-15% = block sells down >15%), max tax cost threshold ($1000), max thesis review age in hours. signal_hold_windows is retained for arbiter / ml_thesis checkpoints / commander but NO LONGER gates liberation (Exit Architecture v2 replaced the runway gate with conviction decay)."
   },
   "exits": {
     "stop_loss": {
-      "HOT-REVERSION": {"closing": -6, "intraday_mult": 1.5},
-      "HOT-INSIDER": {"closing": -8, "intraday_mult": 1.5},
-      "HOT-CONGRESS": {"closing": -8, "intraday_mult": 1.5},
-      "STANDARD": {"closing": -8, "intraday_mult": 1.5}
+      "HOT-REVERSION": {
+        "closing": -6,
+        "intraday_mult": 1.5
+      },
+      "HOT-INSIDER": {
+        "closing": -8,
+        "intraday_mult": 1.5
+      },
+      "HOT-CONGRESS": {
+        "closing": -8,
+        "intraday_mult": 1.5
+      },
+      "STANDARD": {
+        "closing": -8,
+        "intraday_mult": 1.5
+      }
     },
     "trailing_stop": {
       "enabled": true,
-      "tiers": [[15, 8], [30, 10], [50, 12]]
+      "tiers": [
+        [
+          15,
+          8
+        ],
+        [
+          30,
+          10
+        ],
+        [
+          50,
+          12
+        ]
+      ],
+      "ipo_multiplier": 2.0,
+      "ipo_window_days": 10,
+      "_ipo_note": "Young IPOs whip-saw on day-1/2 noise. For the first ipo_window_days HOLDING days, the trailing-stop trail (and thus the intraday backstop = trail x intraday_mult) is widened by ipo_multiplier so normal IPO volatility does not trigger a profit-capture exit. IPO identity is read from kairos_ipo_cache.json (detected set), NOT the signal tag, which is lost once a position is held."
     },
     "tax_gate": {
       "enabled": true,
@@ -191,15 +234,21 @@
         "HOT-KALSHI": 7,
         "DEFAULT": 7
       },
-      "liberation_threshold": 0.5
+      "liberation_threshold": 0.5,
+      "_decay_note": "decay_days are now MAXIMUM windows \u2014 the validity engine extends high-scoring positions and accelerates low-scoring ones. A HOT-EARNINGS position scoring 90/100 on validity decays 2.5x slower than the 10-day window (effective ~25d); one scoring <35 decays ~5x faster (effective ~2d). Validity tiers (kairos_exits.conviction_decay_score): >=75 -> dd x2.5, >=65 -> x1.5, 45-64 neutral, <45 -> x0.4, <35 -> x0.2. Modulation only applies when a validity_cache is warmed for the cycle (kairos_thesis_validity.warm_validity_cache); with no cache, decay stays purely time-based (unchanged legacy behavior)."
     },
     "reentry": {
       "no_higher_price_guard": true,
       "require_new_signal_above_exit": true
     },
-    "hot_reversion_time_gate": {"days": 7},
-    "close_window_et": {"start": "15:45", "end": "16:00"},
-    "_comment": "Exit Architecture v2 — five-condition exit engine (kairos_exits.py). stop_loss: signal-aware closing % + 1.5x intraday backstop; the regime threshold (kairos_stoploss.STOP_LOSS_THRESHOLDS) is applied as a tighter-of-the-two floor in RISK-OFF/EXTREME-FEAR. trailing_stop: peak-gain tiers [min_gain, trail%] (15/30/50 -> 8/10/12), closing eval + 1.5x intraday backstop. tax_gate: delay non-stop exits within 30d of the 12-mo anniversary while profitable; exempt if >20% retreat from peak. conviction_decay: per-signal linear decay of confluence base points over decay_days; below liberation_threshold a position is liberation-eligible (replaces the old hold-window runway gate). reentry: no-higher-price guard unless a genuinely new signal fired. hot_reversion_time_gate: the ONLY time-based exit (7d). close_window_et: the cycle landing in this ET window is treated as the 'close' for closing-price stops."
+    "hot_reversion_time_gate": {
+      "days": 7
+    },
+    "close_window_et": {
+      "start": "15:45",
+      "end": "16:00"
+    },
+    "_comment": "Exit Architecture v2 \u2014 five-condition exit engine (kairos_exits.py). stop_loss: signal-aware closing % + 1.5x intraday backstop; the regime threshold (kairos_stoploss.STOP_LOSS_THRESHOLDS) is applied as a tighter-of-the-two floor in RISK-OFF/EXTREME-FEAR. trailing_stop: peak-gain tiers [min_gain, trail%] (15/30/50 -> 8/10/12), closing eval + 1.5x intraday backstop. tax_gate: delay non-stop exits within 30d of the 12-mo anniversary while profitable; exempt if >20% retreat from peak. conviction_decay: per-signal linear decay of confluence base points over decay_days; below liberation_threshold a position is liberation-eligible (replaces the old hold-window runway gate). reentry: no-higher-price guard unless a genuinely new signal fired. hot_reversion_time_gate: the ONLY time-based exit (7d). close_window_et: the cycle landing in this ET window is treated as the 'close' for closing-price stops."
   },
   "hot_catalyst": {
     "dry_run": true,
@@ -254,7 +303,7 @@
     "_comment": "HOT-IPO pipeline (tracker, capital reservation, Day-1 executor, lock-up tracker). dry_run=true is the shared first lock for the whole IPO pipeline; real reservations/orders/arming also require each module's --no-dry-run (two-lock). lockup: 180-day lock-up expiration short tracker. Scores the post-IPO short thesis when within scoring_window_days of expiration (performance/valuation vs IPO price + insider concentration from S-1 + timing, 0-10). Arms theses scoring >= score_threshold whose stock is up >= min_perf_since_ipo_pct since IPO; armed rows route to HOT-CATALYST as long-PUT setups. Even when armed, hot_catalyst.dry_run still gates whether a real put is placed."
   },
   "renaissance_capital": {
-    "api_key": "***REDACTED***"
+    "api_key": ""
   },
   "event_calendar": [
     {
@@ -351,15 +400,15 @@
   "paused": false,
   "ipo_watchlist": [
     {
-      "name": "Starlink",
-      "expected_ticker": "SLNK",
+      "name": "SpaceX",
+      "expected_ticker": "SPCX",
       "alt_tickers": [
-        "STRK",
-        "STLK",
-        "SPACX"
+        "SLNK",
+        "SPACX",
+        "STRK"
       ],
       "sector": "Technology",
-      "notes": "SpaceX Starlink IPO expected 2026"
+      "notes": "LIVE - IPO June 12 2026 on Nasdaq. Priced at $135, opened at $150. Largest IPO in history at $1.77T valuation."
     },
     {
       "name": "Klarna",
@@ -374,20 +423,52 @@
     {
       "name": "Chime",
       "expected_ticker": "CHYM",
-      "alt_tickers": [
-        "CHIM"
-      ],
+      "alt_tickers": [],
       "sector": "Financials",
-      "notes": "Neobank"
+      "notes": "Neobank (alt 'CHIM' removed \u2014 collides with Global X MSCI China Materials ETF)"
     },
     {
       "name": "Cerebras",
       "expected_ticker": "CBRS",
-      "alt_tickers": [
-        "CBRX"
-      ],
+      "alt_tickers": [],
       "sector": "Technology",
-      "notes": "LIVE - IPO May 14 2026, ARK buying aggressively, wafer-scale AI chips"
+      "notes": "LIVE - IPO May 14 2026, ARK buying aggressively, wafer-scale AI chips (alt 'CBRX' removed \u2014 collides with Tradr 2X Long CBRS leveraged ETF)"
+    },
+    {
+      "name": "CopperTech Metals Inc.",
+      "expected_ticker": "PENDING",
+      "alt_tickers": [],
+      "sector": "Unknown",
+      "status": "watch",
+      "notes": "Auto-discovered S-1 (score 45/100, WATCH). Score 45/100: $18.2B rev; led by Merrill Lynch, Citigroup",
+      "discovered_at": "2026-06-24T13:35:37Z",
+      "cik": "2093018",
+      "accession": "0001575872-26-000437",
+      "ipo_score": 45
+    },
+    {
+      "name": "Tenon Medical, Inc.",
+      "expected_ticker": "PENDING",
+      "alt_tickers": [],
+      "sector": "Technology",
+      "status": "watch",
+      "notes": "Auto-discovered S-1 (score 50/100, WATCH). Score 50/100: $1.2B rev; led by UBS; high-signal sector",
+      "discovered_at": "2026-06-24T13:36:25Z",
+      "cik": "1560293",
+      "accession": "0001213900-26-070685",
+      "ipo_score": 50
+    },
+    {
+      "name": "ITG, Inc./DE/",
+      "expected_ticker": "PENDING",
+      "alt_tickers": [],
+      "sector": "Unknown",
+      "status": "pending_reservation",
+      "notes": "Auto-discovered S-1 (score 75/100, STRONG_BUY). Score 75/100: $1.2B rev; +9048% growth; led by Morgan Stanley, J.P. Morgan",
+      "discovered_at": "2026-06-24T13:37:13Z",
+      "cik": "2110117",
+      "accession": "0001193125-26-276672",
+      "ipo_score": 75
     }
   ],
   "ai_value_chain": [
@@ -621,10 +702,23 @@
       "role": "Regional power utility",
       "thesis": "Data center buildout in Entergy service territory drives load growth",
       "upstream_dependency": "EQIX,DLR"
+    },
+    {
+      "ticker": "TSM",
+      "chain_tier": 2,
+      "role": "Semiconductor foundry",
+      "thesis": "World largest chip fab \u2014 every NVDA GPU and Apple chip manufactured by TSMC",
+      "upstream_dependency": "NVDA,AMD,AAPL,MSFT"
     }
   ],
   "paused_signals": [
     "HOT-EARNINGS",
     "HOT-OPTIONS"
-  ]
+  ],
+  "axis_weights": {
+    "learning_rate": 0.3,
+    "per_run_cap": 0.15,
+    "min_sample": 20,
+    "weight_bound": 1.0
+  }
 }

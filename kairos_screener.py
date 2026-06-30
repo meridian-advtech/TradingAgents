@@ -116,6 +116,75 @@ def fetch_finnhub_quote(ticker: str, api_key: str) -> dict | None:
         return None
 
 
+def fetch_quotes_yfinance(tickers: list[str]) -> dict[str, dict]:
+    """Bulk-fetch quotes via a single yfinance.download() call.
+
+    Returns {ticker: {"c": price, "d": change, "dp": change_pct, "pc": prev_close}}
+    in the same format as fetch_quotes_batch. Tickers with missing/NaN data
+    are skipped.
+    """
+    import math
+    import yfinance as yf
+
+    t0 = time.time()
+    results: dict[str, dict] = {}
+    total = len(tickers)
+
+    df = yf.download(
+        tickers,
+        period="2d",
+        auto_adjust=True,
+        progress=False,
+        threads=True,
+    )
+
+    if df is None or df.empty:
+        elapsed = round(time.time() - t0, 1)
+        print(f"  yfinance bulk fetch: 0/{total} quotes in {elapsed}s")
+        return results
+
+    # yfinance returns MultiIndex columns (field, ticker) for multi-ticker
+    # downloads and flat columns for a single ticker.
+    multi = hasattr(df.columns, "levels") and "Close" in df.columns.get_level_values(0)
+
+    if multi:
+        closes = df["Close"]
+        for t in tickers:
+            if t not in closes.columns:
+                continue
+            series = closes[t].dropna()
+            if len(series) < 2:
+                continue
+            prev = float(series.iloc[-2])
+            cur = float(series.iloc[-1])
+            if math.isnan(prev) or math.isnan(cur) or prev == 0:
+                continue
+            change = cur - prev
+            results[t] = {
+                "c": cur,
+                "d": change,
+                "dp": change / prev * 100.0,
+                "pc": prev,
+            }
+    elif "Close" in df.columns and len(tickers) == 1:
+        series = df["Close"].dropna()
+        if len(series) >= 2:
+            prev = float(series.iloc[-2])
+            cur = float(series.iloc[-1])
+            if not (math.isnan(prev) or math.isnan(cur) or prev == 0):
+                change = cur - prev
+                results[tickers[0]] = {
+                    "c": cur,
+                    "d": change,
+                    "dp": change / prev * 100.0,
+                    "pc": prev,
+                }
+
+    elapsed = round(time.time() - t0, 1)
+    print(f"  yfinance bulk fetch: {len(results)}/{total} quotes in {elapsed}s")
+    return results
+
+
 def fetch_quotes_batch(tickers: list[str], api_key: str,
                        max_workers: int = 8) -> dict[str, dict]:
     """Fetch quotes for many tickers in parallel.
@@ -216,12 +285,15 @@ def score_batch_ollama(batch: list[dict]) -> dict[str, str]:
                 if not isinstance(item, dict):
                     continue
                 t = item.get("ticker", "").upper()
-                s = item.get("score", "COLD").upper()
+                raw_s = item.get("score", "COLD")
+                if isinstance(raw_s, list):
+                    raw_s = raw_s[0] if raw_s else "COLD"
+                s = str(raw_s).strip().upper()
                 if t and s in ("HOT", "HOT-REVERSION", "WARM", "COLD"):
                     scores[t] = s
             if scores:
                 return scores
-    except (json.JSONDecodeError, KeyError, TypeError):
+    except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
         pass
 
     return _score_batch_fallback(batch)
@@ -279,6 +351,19 @@ def score_all_batches_parallel(batches: list[list[dict]]) -> dict[str, str]:
 # ── Mean reversion detector ──────────────────────────────────────────
 
 REVERSION_THRESHOLD_PCT = -3.0  # drop > 3% triggers HOT-REVERSION
+# Entry runway gate: a >3% drop alone is not enough — the price must also sit
+# meaningfully BELOW its 30d SMA so there is real room to revert UP to the mean.
+# The exit (_validity_reversion) completes the trade at price >= 0.98 * 30d SMA,
+# so we require entry at <= 0.97 * 30d SMA (ratio <= 0.97), leaving >1% of runway
+# to that 0.98 sell trigger. Without this, uptrending names that dip >3% while
+# still ABOVE their mean were bought above the SMA and exited "reversion complete"
+# minutes later (e.g. EXPE entered +10.5% above its 30d SMA).
+REVERSION_MIN_BELOW_SMA_PCT = 3.0
+
+# Lazily bound to kairos_thesis_validity._close_series on first use. Kept at module
+# level (rather than a function-local import) so it can be monkeypatched in tests;
+# populated lazily to avoid a circular import at module load.
+_close_series = None
 
 
 def apply_reversion_signals(
@@ -289,11 +374,43 @@ def apply_reversion_signals(
 
     Applies to both equities and crypto. This runs AFTER Ollama scoring
     so the reversion signal takes priority regardless of Ollama's score.
+
+    A >3% drop is necessary but NOT sufficient: we additionally require the price
+    to sit at least REVERSION_MIN_BELOW_SMA_PCT below the 30d SMA (real runway to
+    revert), confirmed per drop-candidate via _close_series. Candidates whose 30d
+    SMA cannot be fetched are skipped conservatively (not flagged).
     """
+    global _close_series
+    if _close_series is None:
+        # Lazy import (avoid circular import at module load).
+        from kairos_thesis_validity import _close_series as _cs
+        _close_series = _cs
+
     for item in batch_items:
         pct = item.get("change_pct", 0.0)
-        if pct <= REVERSION_THRESHOLD_PCT:
-            all_scores[item["ticker"]] = "HOT-REVERSION"
+        if pct > REVERSION_THRESHOLD_PCT:
+            continue
+        ticker = item["ticker"]
+
+        # Runway gate (candidate-only — we never fetch SMA for the whole universe).
+        closes = _close_series(ticker, period="45d")
+        if not closes:
+            # Can't confirm runway → conservative skip (don't flag on the drop alone).
+            print(f"  {ticker} dropped {pct:.1f}% but 30d SMA unavailable "
+                  f"— no runway confirmable, skipped")
+            continue
+        window = closes[-30:] if len(closes) >= 30 else closes
+        sma = sum(window) / len(window)
+        price = closes[-1]
+
+        if sma > 0 and price <= sma * (1 - REVERSION_MIN_BELOW_SMA_PCT / 100):
+            all_scores[ticker] = "HOT-REVERSION"
+        elif sma > 0:
+            print(f"  {ticker} dropped {pct:.1f}% but only "
+                  f"{(price / sma - 1) * 100:+.1f}% vs 30d SMA — no runway, skipped")
+        else:
+            print(f"  {ticker} dropped {pct:.1f}% but 30d SMA non-positive "
+                  f"— no runway confirmable, skipped")
     return all_scores
 
 
@@ -410,8 +527,12 @@ def run_screen(dry_run: bool = False, max_tier2: int = MAX_TIER2_DEFAULT,
             reused = len(tickers) - len(missing)
             if missing:
                 print(f"  Pre-filter quote data covers {reused}/{len(tickers)} tickers")
-                print(f"  Fetching {len(missing)} missing tickers from Finnhub...")
-                quotes = fetch_quotes_batch(missing, api_key)
+                print(f"  Fetching {len(missing)} missing tickers via yfinance...")
+                try:
+                    quotes = fetch_quotes_yfinance(missing)
+                except Exception as exc:
+                    print(f"  yfinance failed ({exc}) — falling back to Finnhub")
+                    quotes = fetch_quotes_batch(missing, api_key)
                 print(f"  Received quotes for {len(quotes)}/{len(missing)} fallback tickers")
             else:
                 print(f"  Pre-filter quote data covers all {len(tickers)} tickers — "
@@ -522,6 +643,223 @@ def run_screen(dry_run: bool = False, max_tier2: int = MAX_TIER2_DEFAULT,
                 if remaining_slots <= 0:
                     break
 
+    # ── IPO momentum boost (kairos_signals_ipo) ────────────────────
+    # Effects:
+    #   1. Any shortlisted ticker that's a recent IPO gets the
+    #      IPO_MOMENTUM signal tag appended.
+    #   2. FORCE-INCLUDE (bypassing HOT/WARM/COLD classification entirely),
+    #      capped at IPO_FORCE_INCLUDE_CAP=5 per cycle:
+    #        a. Tier B recent-IPO tickers (first 3 screening cycles).
+    #        b. EDGAR scored_filings with total_score >= 70 AND live.
+    #        c. detected IPO tickers added within the last 5 days.
+    #      Counters persisted in kairos_ipo_cache.json under 'forced_screens'.
+    IPO_FORCE_INCLUDE_CAP = 5
+    ipo_forced_added: list[str] = []
+
+    def _force_include_ipo(tk, bump_fn, tag_const):
+        """Add an IPO ticker to the shortlist, bypassing classification.
+        Returns True if newly added (respects the per-cycle cap)."""
+        tk = (tk or "").upper()
+        if not tk or tk in shortlist:
+            return False
+        if len(ipo_forced_added) >= IPO_FORCE_INCLUDE_CAP:
+            return False
+        shortlist.append(tk)
+        seen.add(tk)
+        tags = signal_tags.setdefault(tk, [])
+        if tag_const not in tags:
+            tags.append(tag_const)
+        if bump_fn:
+            try:
+                bump_fn(tk)
+            except Exception:
+                pass
+        ipo_forced_added.append(tk)
+        return True
+
+    try:
+        from kairos_signals_ipo import (
+            is_recent_ipo, get_ipo_tickers, get_forced_screen_count,
+            bump_forced_screen, IPO_SIGNAL_TAG,
+        )
+        # Tag existing shortlist members
+        for t in shortlist:
+            if is_recent_ipo(t):
+                tags = signal_tags.setdefault(t, [])
+                if IPO_SIGNAL_TAG not in tags:
+                    tags.append(IPO_SIGNAL_TAG)
+
+        # (a) Tier B recent-IPO tickers — first 3 forced cycles each
+        tier_b_set = set(tier_b)
+        for ipo_ticker in get_ipo_tickers():
+            if ipo_ticker in shortlist:
+                bump_forced_screen(ipo_ticker)
+                continue
+            if ipo_ticker not in tier_b_set:
+                continue
+            if get_forced_screen_count(ipo_ticker) >= 3:
+                continue
+            _force_include_ipo(ipo_ticker, bump_forced_screen, IPO_SIGNAL_TAG)
+
+        # (b) + (c) EDGAR high-conviction scored filings + recent detections.
+        # These bypass Tier membership and HOT/WARM/COLD entirely.
+        try:
+            from kairos_ipo_intake import (
+                _load_cache as _ipo_load_cache, check_ticker_live,
+            )
+            _ipo_cache = _ipo_load_cache()
+
+            # (b) scored_filings with score >= 70 AND live
+            for _acc, sf in (_ipo_cache.get("scored_filings") or {}).items():
+                if len(ipo_forced_added) >= IPO_FORCE_INCLUDE_CAP:
+                    break
+                if int(sf.get("total_score") or 0) < 70:
+                    continue
+                tk = (sf.get("ticker") or "").upper()
+                if not tk or tk in shortlist:
+                    continue
+                try:
+                    if not check_ticker_live(tk):
+                        continue
+                except Exception:
+                    continue
+                _force_include_ipo(tk, bump_forced_screen, IPO_SIGNAL_TAG)
+
+            # (c) detected within the last 5 days
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            for tk, meta in (_ipo_cache.get("detected") or {}).items():
+                if len(ipo_forced_added) >= IPO_FORCE_INCLUDE_CAP:
+                    break
+                if not isinstance(meta, dict):
+                    continue
+                ts = meta.get("detected_at") or ""
+                added_recently = False
+                for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d"):
+                    try:
+                        dt = datetime.strptime(ts[:19] if "T" in ts else ts[:10], fmt)
+                        added_recently = (now - dt).days <= 5
+                        break
+                    except (ValueError, TypeError):
+                        continue
+                if added_recently:
+                    _force_include_ipo(tk, bump_forced_screen, IPO_SIGNAL_TAG)
+        except Exception as edgar_exc:
+            print(f"  WARNING: EDGAR IPO force-include failed: {edgar_exc}")
+    except Exception as ipo_exc:
+        print(f"  WARNING: IPO momentum hook failed: {ipo_exc}")
+
+    if ipo_forced_added:
+        print(f"  IPO force-include ({len(ipo_forced_added)}/{IPO_FORCE_INCLUDE_CAP}): "
+              f"{', '.join(ipo_forced_added)}")
+
+    # ── Event-driven seasonality boost (kairos_signals_events) ─────
+    # For each active event (AAPL/WWDC, NVDA/GTC, etc.) whose ticker is
+    # in the universe but not yet on the shortlist, force-include it.
+    # Capped at EVENT_FORCED_MAX_CYCLES per event, counter persisted in
+    # kairos_ipo_cache.json under 'event_forced_screens'.
+    event_forced_added: list[str] = []
+    try:
+        from kairos_signals_events import (
+            get_active_events, get_event_force_count, bump_event_force_count,
+            event_key, EVENT_FORCED_MAX_CYCLES,
+        )
+        active_events = get_active_events()
+        universe_set = set(tier_a) | set(tier_b)
+
+        for active in active_events:
+            ticker = (active.get("ticker") or "").upper()
+            if not ticker:
+                continue
+            key = event_key(active)
+
+            # Determine signal tag from pattern + phase
+            pattern = active.get("pattern", "dip_then_rip")
+            phase = active.get("phase", "pre")
+            if phase == "pre":
+                tag = ("PRE-EVENT-DIP" if pattern == "dip_then_rip"
+                       else "PRE-EVENT-BUILDUP")
+            else:
+                tag = "POST-EVENT-REBOUND"
+
+            # Always tag the ticker on the shortlist if it's already there
+            if ticker in shortlist:
+                tags = signal_tags.setdefault(ticker, [])
+                if tag not in tags:
+                    tags.append(tag)
+                continue
+
+            if ticker not in universe_set:
+                continue
+            if get_event_force_count(key) >= EVENT_FORCED_MAX_CYCLES:
+                continue
+
+            shortlist.append(ticker)
+            seen.add(ticker)
+            tags = signal_tags.setdefault(ticker, [])
+            if tag not in tags:
+                tags.append(tag)
+            bump_event_force_count(key)
+            event_forced_added.append(f"{ticker}({tag})")
+    except Exception as event_exc:
+        print(f"  WARNING: Event seasonality hook failed: {event_exc}")
+
+    if event_forced_added:
+        print(f"  Event force-include: {', '.join(event_forced_added)}")
+
+    # ── AI value-chain leading-indicator boost (kairos_signals_chain) ──
+    # When a Tier 1 linchpin (NVDA, MSFT, …) makes a large move, downstream
+    # Tier 2/3 suppliers that haven't repriced yet are flagged HOT-CHAIN.
+    #   1. Any shortlisted ticker that's HOT-CHAIN gets the tag appended.
+    #   2. Up to 3 HOT-CHAIN tickers that are in the universe but off the
+    #      shortlist are force-included this cycle.
+    chain_forced_added: list[str] = []
+    chain_conviction_boosts: dict[str, float] = {}
+    try:
+        from kairos_signals_chain import (
+            run_chain_signal_scan, get_chain_tier, CHAIN_SIGNAL_TAG,
+        )
+        chain_hot = set()
+        for sig in run_chain_signal_scan():
+            ct = (sig.get("ticker") or "").upper()
+            if ct:
+                chain_hot.add(ct)
+
+        # conviction_boost by chain tier (Tier 2 → 1.2x, Tier 3 → 1.3x)
+        def _set_chain_boost(tkr: str) -> None:
+            tier = get_chain_tier(tkr)
+            if tier == 2:
+                chain_conviction_boosts[tkr] = 1.2
+            elif tier == 3:
+                chain_conviction_boosts[tkr] = 1.3
+
+        # Tag existing shortlist members
+        for t in shortlist:
+            if t.upper() in chain_hot:
+                tags = signal_tags.setdefault(t, [])
+                if CHAIN_SIGNAL_TAG not in tags:
+                    tags.append(CHAIN_SIGNAL_TAG)
+                _set_chain_boost(t)
+
+        # Force-include up to 3 universe tickers not already shortlisted
+        chain_universe_set = set(tier_a) | set(tier_b)
+        for ct in sorted(chain_hot):
+            if len(chain_forced_added) >= 3:
+                break
+            if ct in shortlist or ct not in chain_universe_set:
+                continue
+            shortlist.append(ct)
+            seen.add(ct)
+            tags = signal_tags.setdefault(ct, [])
+            if CHAIN_SIGNAL_TAG not in tags:
+                tags.append(CHAIN_SIGNAL_TAG)
+            _set_chain_boost(ct)
+            chain_forced_added.append(ct)
+    except Exception as chain_exc:
+        print(f"  WARNING: Chain signal hook failed: {chain_exc}")
+
+    if chain_forced_added:
+        print(f"  Chain force-include: {', '.join(chain_forced_added)}")
+
     elapsed = round(time.time() - t0, 1)
 
     # Print summary
@@ -580,6 +918,7 @@ def run_screen(dry_run: bool = False, max_tier2: int = MAX_TIER2_DEFAULT,
         "scores": all_scores,
         "source_tiers": source_tiers,
         "signal_tags": signal_tags,
+        "conviction_boosts": chain_conviction_boosts,
         "hot": hot,
         "hot_reversion": hot_reversion,
         "hot_earnings": hot_earnings,

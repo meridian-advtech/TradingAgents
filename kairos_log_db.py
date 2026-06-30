@@ -195,6 +195,98 @@ CREATE TABLE IF NOT EXISTS ipo_lockup_tracker (
 );
 """
 
+# Daily time-series of account value, captured from IBKR (broker = source of
+# truth) once per ET trading day. Enables daily/weekly P&L, drawdown, and
+# rolling-return trend metrics that are otherwise impossible without history.
+# Keyed on the ET date so re-running the same day UPSERTs (overwrites, no dupes).
+SCHEMA_NLV_SNAPSHOTS = """
+CREATE TABLE IF NOT EXISTS nlv_snapshots (
+    snapshot_date    TEXT PRIMARY KEY,   -- 'YYYY-MM-DD' ET
+    nlv              REAL,               -- NetLiquidation from IBKR
+    total_cash       REAL,               -- TotalCashValue from IBKR
+    invested         REAL,               -- nlv - total_cash
+    num_positions    INTEGER,            -- count of open equity (STK) positions at broker
+    unrealized_pnl   REAL,               -- UnrealizedPnL from IBKR account summary
+    realized_pnl_cum REAL,               -- cumulative realized from kairos.db closed lots
+    created_at       TEXT
+);
+"""
+
+# ── Arbiter → council feedback loop (Phase A: capture findings only) ──
+# axis_weights holds the three learning axes the Arbiter scores each run. Phase A
+# only seeds them (weight 0.0, status 'active'); nothing reads the weights yet, so
+# trading decisions are unaffected. positive_means pins the sign convention so the
+# model's score signs are interpretable.
+SCHEMA_AXIS_WEIGHTS = """
+CREATE TABLE IF NOT EXISTS axis_weights (
+    axis            TEXT PRIMARY KEY,
+    weight          REAL NOT NULL DEFAULT 0.0,
+    status          TEXT NOT NULL DEFAULT 'active',
+    positive_means  TEXT,
+    updated_at      TEXT
+);
+"""
+
+# arbiter_findings is the structured capture of each Arbiter run: one row per axis
+# score plus one row per qualitative observation. run_id matches the report
+# filename stem (e.g. "2026-06-19_daily").
+SCHEMA_ARBITER_FINDINGS = """
+CREATE TABLE IF NOT EXISTS arbiter_findings (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id           TEXT NOT NULL,
+    mode             TEXT NOT NULL,
+    axis             TEXT,
+    score            REAL,
+    sample_size      INTEGER,
+    trade_ids        TEXT,
+    category         TEXT,
+    observation_text TEXT,
+    confidence       REAL,
+    created_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_arbiter_findings_run_id
+    ON arbiter_findings(run_id);
+"""
+
+# axis_weight_history is the audit trail + approval queue for Phase B weight
+# proposals: one row per proposed update to an axis weight, carrying the computed
+# statistic, the evidence, and the human decision. Nothing reads axis_weights.weight
+# into trading yet — an approved weight is observed only.
+SCHEMA_AXIS_WEIGHT_HISTORY = """
+CREATE TABLE IF NOT EXISTS axis_weight_history (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    axis            TEXT NOT NULL,
+    run_id          TEXT NOT NULL,
+    computed_score  REAL,
+    sample_size     INTEGER,
+    evidence        TEXT,
+    prior_weight    REAL,
+    proposed_delta  REAL,
+    new_weight      REAL,
+    status          TEXT NOT NULL DEFAULT 'proposed',
+    created_at      TEXT NOT NULL,
+    decided_at      TEXT,
+    decided_by      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_axis_weight_history_axis_status
+    ON axis_weight_history(axis, status);
+"""
+
+# The three axes seeded into axis_weights, with the exact sign convention the
+# Arbiter prompt is given verbatim so its score signs stay consistent.
+AXIS_POSITIVE_MEANS = {
+    "exit_timing":
+        "Positive = we have been exiting too LATE (giving back in-hold peaks); "
+        "correction is to exit earlier.",
+    "reallocation_aggressiveness":
+        "Positive = we have been reallocating too EAGERLY (rotating before theses "
+        "mature); correction is to hold longer before rotating.",
+    "conviction_calibration":
+        "Positive = conviction scores have been OVER-confident (high-conviction "
+        "trades underperformed); correction is to discount conviction.",
+}
+
+
 # holding_days is computed at query time, not stored, to avoid
 # SQLite's restriction on non-deterministic generated columns.
 HOLDINGS_SELECT = """
@@ -227,8 +319,20 @@ def init_db(reset: bool = False):
         + SCHEMA_POSITION_EXITS
         + SCHEMA_CRYPTO_DECISIONS + SCHEMA_CRYPTO_HOLDINGS
         + SCHEMA_OPTIONS_DECISIONS + SCHEMA_OPTIONS_POSITIONS
-        + SCHEMA_IPO_LOCKUP
+        + SCHEMA_IPO_LOCKUP + SCHEMA_NLV_SNAPSHOTS
+        + SCHEMA_AXIS_WEIGHTS + SCHEMA_ARBITER_FINDINGS
+        + SCHEMA_AXIS_WEIGHT_HISTORY
     )
+    # Seed the three learning axes (idempotent — INSERT OR IGNORE leaves any
+    # already-tuned weight/status untouched on re-run).
+    seeded_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    for axis, positive_means in AXIS_POSITIVE_MEANS.items():
+        conn.execute(
+            "INSERT OR IGNORE INTO axis_weights "
+            "(axis, weight, status, positive_means, updated_at) "
+            "VALUES (?, 0.0, 'active', ?, ?)",
+            (axis, positive_means, seeded_at),
+        )
     # Migrate: add conviction_trade column if missing (existing DBs)
     try:
         conn.execute("SELECT conviction_trade FROM decisions LIMIT 1")
@@ -258,6 +362,13 @@ def init_db(reset: bool = False):
         conn.execute("SELECT peak_gain_pct FROM holdings LIMIT 1")
     except sqlite3.OperationalError:
         conn.execute("ALTER TABLE holdings ADD COLUMN peak_gain_pct REAL NOT NULL DEFAULT 0")
+    # Migrate: add axis_weights_snapshot column to decisions if missing (Phase C —
+    # JSON {axis: weight} of the active learned-calibration weights in context when
+    # the decision's reasoning prompt was built; feeds Phase D efficacy analysis).
+    try:
+        conn.execute("SELECT axis_weights_snapshot FROM decisions LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE decisions ADD COLUMN axis_weights_snapshot TEXT")
     conn.commit()
     conn.close()
 

@@ -123,6 +123,32 @@ def _parse_entry_date(entry_date: str) -> datetime | None:
     return None
 
 
+_IPO_TICKERS_CACHE = None
+
+
+def _is_recent_ipo(ticker: str) -> bool:
+    """True if ticker is in the IPO detection cache (kairos_ipo_cache.json).
+
+    IPO identity is read from the cache, NOT the position's signal tag: the
+    entry signal (IPO_MOMENTUM) is frequently lost by the time a position is
+    held (conviction trades store empty confluence signals), so get_position_signal
+    returns STANDARD for held IPOs. The cache's 'detected' set is the reliable
+    source. Fails safe to False (no widening) if the cache is missing/unreadable.
+    The HOLDING-day window check is applied by the caller, not here.
+    """
+    global _IPO_TICKERS_CACHE
+    if _IPO_TICKERS_CACHE is None:
+        try:
+            import os
+            cache_path = os.path.join(SCRIPT_DIR, "kairos_ipo_cache.json")
+            with open(cache_path) as f:
+                data = json.load(f)
+            _IPO_TICKERS_CACHE = {t.upper() for t in (data.get("detected") or {})}
+        except Exception:
+            _IPO_TICKERS_CACHE = set()
+    return ticker.upper() in _IPO_TICKERS_CACHE
+
+
 def _get_entry_signals(ticker: str) -> list[str]:
     """Signals active at entry (most recent filled BUY) from kairos.db."""
     try:
@@ -220,6 +246,7 @@ def evaluate_position(
     regime: str,
     is_close_eval: bool,
     cfg: dict | None = None,
+    entry_signals: list[str] | None = None,
 ) -> str | None:
     """Apply conditions 1, 2 and 5. Return a SELL reason, or None to hold.
 
@@ -245,22 +272,58 @@ def evaluate_position(
     # ── Condition 2: Trailing stop (profit capture) ──────────────────
     trail = trailing_stop_threshold(peak_gain_pct, cfg)
     if trail is not None:
+        # IPO widening: a young IPO whip-saws on day-1/2 noise, and the standard
+        # trail fires a profit-capture exit on that noise. For the first
+        # ipo_window_days HOLDING days of a detected IPO, widen the trail by
+        # ipo_multiplier so the position can breathe. Identity comes from the IPO
+        # cache (not the signal tag, which is lost on held conviction trades).
+        ts_cfg = cfg.get("trailing_stop", {})
+        ipo_window = int(ts_cfg.get("ipo_window_days", 0))
+        ipo_mult = float(ts_cfg.get("ipo_multiplier", 1.0))
+        ipo_widened = False
+        if (ipo_mult > 1.0 and holding_days <= ipo_window
+                and _is_recent_ipo(ticker)):
+            trail = trail * ipo_mult
+            ipo_widened = True
         retreat = peak_gain_pct - gain_pct  # how far off the high-water mark
         intraday_mult = float(cfg["stop_loss"].get(signal, cfg["stop_loss"]["STANDARD"])
                               .get("intraday_mult", 1.5))
+        _tag = " [IPO-widened]" if ipo_widened else ""
         if retreat >= trail * intraday_mult:
             return (f"TRAILING-STOP: retreated {retreat:.1f}% from peak "
-                    f"{peak_gain_pct:.1f}% (intraday backstop {trail * intraday_mult:.1f}%)")
+                    f"{peak_gain_pct:.1f}% (intraday backstop {trail * intraday_mult:.1f}%{_tag})")
         if is_close_eval and retreat >= trail:
             return (f"TRAILING-STOP: retreated {retreat:.1f}% from peak "
-                    f"{peak_gain_pct:.1f}% (trail {trail:.1f}%, gain {gain_pct:+.1f}%)")
+                    f"{peak_gain_pct:.1f}% (trail {trail:.1f}%, gain {gain_pct:+.1f}%{_tag})")
 
-    # ── Condition 5: HOT-REVERSION time gate (only valid time exit) ──
-    if signal == "HOT-REVERSION":
-        gate_days = int(cfg.get("hot_reversion_time_gate", {}).get("days", 7))
-        if holding_days >= gate_days:
-            return (f"REVERSION-TIME-GATE: held {holding_days}d >= {gate_days}d, "
-                    f"reversion unresolved (gain {gain_pct:+.1f}%)")
+    # ── Condition 5: HOT-REVERSION validity check (replaced time gate) ──
+    # Sell when price reverts to 30d SMA (thesis complete), not on elapsed time.
+    # But only let REVERSION-COMPLETE govern when NO longer-horizon co-signal was
+    # part of the entry: get_position_signal resolves any confluence containing a
+    # reversion tag to HOT-REVERSION (reversion-first priority), so a position
+    # entered on HOT-INSIDER/HOT-CONGRESS + HOT-REVERSION would otherwise be
+    # force-sold at the 30d SMA, truncating the longer thesis.
+    LONGER_HORIZON = {"HOT-INSIDER", "HOT-CONGRESS"}
+    entry_set = {str(s).upper() for s in (entry_signals or [])}
+    reversion_governs = (signal == "HOT-REVERSION") and not (entry_set & LONGER_HORIZON)
+    if reversion_governs:
+        try:
+            from kairos_thesis_validity import check_signal_validity
+            _entry_date = (datetime.now(timezone.utc) - timedelta(days=holding_days)).strftime("%Y-%m-%d")
+            validity = check_signal_validity(
+                ticker=ticker, signal_type="HOT-REVERSION",
+                entry_date=_entry_date, entry_price=avg_cost,
+                current_price=current_price, signals_fired={}
+            )
+            if validity.get("action") == "SELL":
+                return (f"REVERSION-COMPLETE: {validity.get('reason', 'price reverted to mean')} "
+                        f"(gain {gain_pct:+.1f}%)")
+        except Exception:
+            # Fallback: if validity check fails, use 30-day backstop
+            backstop = int(cfg.get("thesis_validity", {}).get("backstop_days", {}).get("HOT-REVERSION", 30))
+            if holding_days >= backstop:
+                return (f"REVERSION-BACKSTOP: held {holding_days}d >= {backstop}d, "
+                        f"validity check unavailable (gain {gain_pct:+.1f}%)")
 
     return None
 
@@ -313,12 +376,13 @@ def tax_gate_blocks_exit(
     if alert:
         try:
             from kairos_alerts import post_message
+            # Exit-gating explanation (no trade occurred, not a health item) → #log.
             post_message(
-                "alerts",
+                "log",
                 f":hourglass_flowing_sand: *{ticker} exit delayed {days_to_anniv}d "
                 f"for long-term capital gains treatment* — current gain {gain_pct:+.1f}%")
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"  tax-gate delay Slack post failed: {exc}")
     return True
 
 
@@ -334,6 +398,7 @@ def conviction_decay_score(
     entry_signals: list[str] | None = None,
     entry_date: str | None = None,
     cfg: dict | None = None,
+    validity_cache: dict | None = None,
 ) -> float:
     """Decayed conviction for an open position.
 
@@ -342,6 +407,14 @@ def conviction_decay_score(
     still active today does NOT decay (conviction refreshed). Any NEW signal
     active now but not at entry adds full base points. Below the liberation
     threshold the position is eligible for capital redeployment.
+
+    Validity-based decay (Exit Architecture v2): when a cycle-scoped
+    validity_cache is supplied (see kairos_thesis_validity.warm_validity_cache),
+    decay_days become MAXIMUM windows that the thesis-validity score stretches
+    or compresses — a still-sound thesis (high validity) decays slower so a
+    fading signal doesn't prematurely liberate it, a failing thesis decays
+    faster so capital is released sooner. validity_cache=None (every existing
+    caller) preserves the original purely time-based decay unchanged.
     """
     cfg = cfg or _exits_config()
     decay_days = cfg.get("conviction_decay", {}).get("decay_days", {})
@@ -366,6 +439,26 @@ def conviction_decay_score(
             score += base  # refreshed — no decay
         else:
             dd = float(decay_days.get(sig, default_days)) or default_days
+            # Modulate the decay window by thesis validity. High validity →
+            # slower decay (thesis sound despite the signal fading); low
+            # validity → faster decay (thesis failing, release capital sooner).
+            # 45-64 is neutral and leaves dd unchanged. decay_days are MAXIMUM
+            # windows; validity stretches them up to 2.5x or compresses to 0.2x.
+            if validity_cache is not None:
+                try:
+                    from kairos_thesis_validity import get_cached_validity
+                    v_score = get_cached_validity(ticker, validity_cache).get("score", 60)
+                    if v_score >= 75:
+                        dd *= 2.5      # very strong thesis — decay ~40% of normal
+                    elif v_score >= 65:
+                        dd *= 1.5      # strong thesis — decay ~67% of normal
+                    elif v_score < 35:
+                        dd *= 0.2      # failing thesis — decay ~5x normal
+                    elif v_score < 45:
+                        dd *= 0.4      # weak thesis — decay ~2.5x normal
+                    # 45-64: neutral — default decay rate unchanged
+                except Exception:
+                    pass  # graceful: fall back to pure time-based decay
             score += base * max(0.0, 1.0 - age_days / dd)
 
     # Fresh signals fired after entry add full conviction.
@@ -561,7 +654,7 @@ def run_exit_engine(ib=None, regime: str | None = None, dry_run: bool = False) -
 
         reason = evaluate_position(
             ticker, avg_cost, current_price, peak_gain_pct, holding_days,
-            signal, regime, is_close, cfg)
+            signal, regime, is_close, cfg, entry_signals=entry_signals)
 
         row = {
             "ticker": ticker, "avg_cost": avg_cost, "price": round(current_price, 2),

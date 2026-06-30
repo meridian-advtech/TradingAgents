@@ -58,6 +58,93 @@ CREATE TABLE IF NOT EXISTS trade_outcomes (
 );
 """
 
+# Thesis validation tables — predictions captured at entry, then checkpointed
+# during the hold, finally scored at close.  decision_id links to
+# trade_outcomes.trade_id (UUID created in write_trade_open).
+SCHEMA_THESIS_PREDICTIONS = """
+CREATE TABLE IF NOT EXISTS thesis_predictions (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker                  TEXT NOT NULL,
+    decision_id             TEXT NOT NULL,
+    timestamp_entry         TEXT NOT NULL,
+    predicted_direction     TEXT,
+    predicted_timeframe_days INTEGER,
+    predicted_return_pct    REAL,
+    key_conditions          TEXT,
+    signal_type             TEXT,
+    conviction_score        REAL,
+    invalidation_conditions TEXT,
+    created_at              TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_thesis_pred_decision_id
+    ON thesis_predictions(decision_id);
+CREATE INDEX IF NOT EXISTS idx_thesis_pred_ticker
+    ON thesis_predictions(ticker);
+"""
+
+SCHEMA_THESIS_CHECKPOINTS = """
+CREATE TABLE IF NOT EXISTS thesis_checkpoints (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker                  TEXT NOT NULL,
+    decision_id             TEXT NOT NULL,
+    checkpoint_day          INTEGER NOT NULL,
+    timestamp_checked       TEXT NOT NULL,
+    price_at_entry          REAL,
+    price_at_checkpoint     REAL,
+    pct_move_actual         REAL,
+    direction_correct       INTEGER,
+    thesis_conditions_intact INTEGER,
+    notes                   TEXT,
+    checkpoint_score        REAL,
+    UNIQUE(decision_id, checkpoint_day)
+);
+CREATE INDEX IF NOT EXISTS idx_thesis_chk_decision_id
+    ON thesis_checkpoints(decision_id);
+"""
+
+# Per-signal aggregate view. signal_type comes from thesis_predictions; if a
+# trade has no prediction (legacy / non-BUY), it is grouped under 'UNKNOWN'.
+SCHEMA_SIGNAL_PERFORMANCE_VIEW = """
+DROP VIEW IF EXISTS signal_performance;
+CREATE VIEW signal_performance AS
+SELECT
+    COALESCE(tp.signal_type, 'UNKNOWN') AS signal_type,
+    COUNT(*) AS total_trades,
+    AVG(CASE WHEN trade_outcomes.pnl_pct > 0 THEN 1.0 ELSE 0.0 END) AS win_rate,
+    AVG(trade_outcomes.pnl_pct) AS avg_return_pct,
+    AVG(trade_outcomes.hold_duration_mins) / 1440.0 AS avg_hold_days,
+    AVG(trade_outcomes.prediction_accuracy) AS avg_prediction_accuracy
+FROM trade_outcomes
+LEFT JOIN thesis_predictions AS tp
+    ON tp.decision_id = trade_outcomes.trade_id
+WHERE trade_outcomes.outcome_label IS NOT NULL
+GROUP BY COALESCE(tp.signal_type, 'UNKNOWN');
+"""
+
+# Columns to ensure exist on trade_outcomes (idempotent ALTER TABLE).
+_TRADE_OUTCOMES_EXTRA_COLUMNS = [
+    ("prediction_accuracy", "REAL"),
+    ("thesis_score", "REAL"),
+    # Set to 1 when the row was opened before the real fill price was known
+    # (Filled BUY with no immediate fill_price). price_entry holds a best-effort
+    # estimate until the position reconciler trues it up against the broker.
+    ("entry_price_provisional", "INTEGER"),
+    # B2a: closed-trade outcome features, populated post-hoc by
+    # kairos_outcome_features.py (behaviour-neutral; not written by
+    # write_trade_close). features_filled_at stays NULL until computed.
+    ("mfe_pct", "REAL"),                 # max favorable excursion during hold
+    ("give_back_pct", "REAL"),           # mfe_pct - pnl_pct (peak surrendered)
+    ("post_exit_peak_pct", "REAL"),      # max favorable move AFTER exit (too-early signal)
+    ("post_exit_window_days", "INTEGER"),
+    ("exit_reason", "TEXT"),             # trigger, copied from kairos.db position_exits
+    ("features_filled_at", "TEXT"),      # NULL until features computed
+]
+
+# Columns to ensure exist on thesis_checkpoints (idempotent ALTER TABLE).
+_THESIS_CHECKPOINTS_EXTRA_COLUMNS = [
+    ("ipo_metrics", "TEXT"),   # JSON blob populated for IPO_MOMENTUM trades
+]
+
 
 # ── Database connection ──────────────────────────────────────────────
 
@@ -70,9 +157,34 @@ def get_connection() -> sqlite3.Connection:
 
 
 def init_db():
-    """Create the trade_outcomes table if it doesn't exist."""
+    """Create the trade_outcomes table + thesis tables/view if missing."""
     conn = get_connection()
     conn.executescript(SCHEMA_TRADE_OUTCOMES)
+    conn.executescript(SCHEMA_THESIS_PREDICTIONS)
+    conn.executescript(SCHEMA_THESIS_CHECKPOINTS)
+
+    # Add prediction_accuracy / thesis_score columns idempotently.
+    existing_cols = {row["name"] for row in conn.execute(
+        "PRAGMA table_info(trade_outcomes)"
+    ).fetchall()}
+    for col_name, col_type in _TRADE_OUTCOMES_EXTRA_COLUMNS:
+        if col_name not in existing_cols:
+            conn.execute(
+                f"ALTER TABLE trade_outcomes ADD COLUMN {col_name} {col_type}"
+            )
+
+    # Idempotent migration for thesis_checkpoints extra columns
+    existing_chk_cols = {row["name"] for row in conn.execute(
+        "PRAGMA table_info(thesis_checkpoints)"
+    ).fetchall()}
+    for col_name, col_type in _THESIS_CHECKPOINTS_EXTRA_COLUMNS:
+        if col_name not in existing_chk_cols:
+            conn.execute(
+                f"ALTER TABLE thesis_checkpoints ADD COLUMN {col_name} {col_type}"
+            )
+
+    # signal_performance view depends on the new columns — rebuild it.
+    conn.executescript(SCHEMA_SIGNAL_PERFORMANCE_VIEW)
     conn.commit()
     conn.close()
 
@@ -97,8 +209,14 @@ def write_trade_open(
     market_regime: Optional[str] = None,
     sector: Optional[str] = None,
     trade_id: Optional[str] = None,
+    entry_price_provisional: bool = False,
 ) -> str:
-    """Record a new trade at open. Returns the trade_id (UUID)."""
+    """Record a new trade at open. Returns the trade_id (UUID).
+
+    Set entry_price_provisional=True when price_entry is a best-effort estimate
+    (Filled BUY whose fill price was not yet known); the position reconciler
+    backfills the true price later via reconcile_provisional_entries().
+    """
     if trade_id is None:
         trade_id = str(uuid.uuid4())
     if timestamp_entry is None:
@@ -114,15 +232,15 @@ def write_trade_open(
             council_member_1_rec, council_member_1_confidence,
             council_member_2_rec, council_member_2_confidence,
             council_agreement, arbiter_invoked, arbiter_rec,
-            market_regime, sector)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            market_regime, sector, entry_price_provisional)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             trade_id, timestamp_entry, ticker, action, quantity, price_entry,
             signals_json, confluence_score,
             council_member_1_rec, council_member_1_confidence,
             council_member_2_rec, council_member_2_confidence,
             council_agreement, arbiter_invoked, arbiter_rec,
-            market_regime, sector,
+            market_regime, sector, 1 if entry_price_provisional else 0,
         ),
     )
     conn.commit()
@@ -191,6 +309,45 @@ def write_trade_close(
         (timestamp_exit, price_exit, round(pnl_dollar, 4),
          round(pnl_pct, 4), hold_duration_mins, outcome_label, trade_id),
     )
+
+    # Score the original thesis prediction (if any) against the actual close.
+    pred = conn.execute(
+        "SELECT predicted_direction, predicted_timeframe_days, "
+        "predicted_return_pct FROM thesis_predictions "
+        "WHERE decision_id = ? ORDER BY id DESC LIMIT 1",
+        (trade_id,),
+    ).fetchone()
+
+    prediction_accuracy: Optional[float] = None
+    thesis_score: Optional[float] = None
+
+    if pred is not None:
+        prediction_accuracy = _score_prediction_accuracy(
+            predicted_direction=pred["predicted_direction"],
+            predicted_timeframe_days=pred["predicted_timeframe_days"],
+            predicted_return_pct=pred["predicted_return_pct"],
+            actual_pnl_pct=pnl_pct,
+            hold_duration_mins=hold_duration_mins,
+        )
+
+        chk_rows = conn.execute(
+            "SELECT checkpoint_score FROM thesis_checkpoints "
+            "WHERE decision_id = ? AND checkpoint_score IS NOT NULL",
+            (trade_id,),
+        ).fetchall()
+        scores = [row["checkpoint_score"] for row in chk_rows
+                  if row["checkpoint_score"] is not None]
+        if scores:
+            thesis_score = round(sum(scores) / len(scores), 4)
+
+        conn.execute(
+            """UPDATE trade_outcomes
+               SET prediction_accuracy = ?,
+                   thesis_score = ?
+               WHERE trade_id = ?""",
+            (prediction_accuracy, thesis_score, trade_id),
+        )
+
     conn.commit()
     conn.close()
 
@@ -200,7 +357,56 @@ def write_trade_close(
         "pnl_pct": round(pnl_pct, 4),
         "hold_duration_mins": hold_duration_mins,
         "outcome_label": outcome_label,
+        "prediction_accuracy": prediction_accuracy,
+        "thesis_score": thesis_score,
     }
+
+
+def _score_prediction_accuracy(
+    predicted_direction: Optional[str],
+    predicted_timeframe_days: Optional[int],
+    predicted_return_pct: Optional[float],
+    actual_pnl_pct: float,
+    hold_duration_mins: int,
+) -> float:
+    """Compute prediction_accuracy in [0.0, 1.0].
+
+    Scoring (per spec):
+        +0.4 direction correct
+        +0.3 return within 50% of predicted (i.e. |actual - predicted| <= 0.5*|predicted|)
+        +0.3 closed within predicted timeframe
+    """
+    score = 0.0
+
+    direction_actual = (
+        "UP" if actual_pnl_pct > 0.0
+        else "DOWN" if actual_pnl_pct < 0.0
+        else "NEUTRAL"
+    )
+    if predicted_direction:
+        pred_dir = predicted_direction.strip().upper()
+        if pred_dir == direction_actual:
+            score += 0.4
+        # NEUTRAL prediction matches a flat/scratch outcome
+        elif pred_dir == "NEUTRAL" and abs(actual_pnl_pct) < 1.0:
+            score += 0.4
+
+    if predicted_return_pct is not None:
+        pred_ret = float(predicted_return_pct)
+        if pred_ret != 0.0:
+            if abs(actual_pnl_pct - pred_ret) <= 0.5 * abs(pred_ret):
+                score += 0.3
+        else:
+            # If predicted 0% (flat), be lenient: anything <1% absolute counts
+            if abs(actual_pnl_pct) < 1.0:
+                score += 0.3
+
+    if predicted_timeframe_days:
+        actual_days = max(0.0, hold_duration_mins / 1440.0)
+        if actual_days <= float(predicted_timeframe_days):
+            score += 0.3
+
+    return round(score, 4)
 
 
 def _compute_duration_mins(ts_entry: str, ts_exit: str) -> int:
@@ -279,6 +485,60 @@ def find_open_trade(ticker: str, action: str = "BUY") -> Optional[str]:
     ).fetchone()
     conn.close()
     return row["trade_id"] if row else None
+
+
+# ── Reconcile provisional entry prices ───────────────────────────────
+
+def list_provisional_entries() -> list[dict]:
+    """Return open trades whose entry price is still a provisional estimate.
+
+    Each dict: {trade_id, ticker, price_entry, quantity, timestamp_entry}.
+    """
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT trade_id, ticker, price_entry, quantity, timestamp_entry
+           FROM trade_outcomes
+           WHERE entry_price_provisional = 1 AND outcome_label IS NULL
+           ORDER BY timestamp_entry"""
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def reconcile_provisional_entries(prices: dict) -> int:
+    """Backfill the true entry price on rows opened before the fill price was known.
+
+    Args:
+        prices: {ticker: confirmed_entry_price} — typically the broker's average
+                cost for each currently-held position.
+
+    For every open, provisional row whose ticker has a confirmed price, set
+    price_entry to that price and clear the provisional flag. Returns the number
+    of rows reconciled.
+    """
+    if not prices:
+        return 0
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT trade_id, ticker FROM trade_outcomes
+           WHERE entry_price_provisional = 1 AND outcome_label IS NULL"""
+    ).fetchall()
+    reconciled = 0
+    for r in rows:
+        confirmed = prices.get(r["ticker"])
+        if confirmed is None or confirmed <= 0:
+            continue
+        conn.execute(
+            """UPDATE trade_outcomes
+               SET price_entry = ?, entry_price_provisional = 0
+               WHERE trade_id = ?""",
+            (round(float(confirmed), 4), r["trade_id"]),
+        )
+        reconciled += 1
+    if reconciled:
+        conn.commit()
+    conn.close()
+    return reconciled
 
 
 # ── main (standalone init) ───────────────────────────────────────────
