@@ -1,7 +1,7 @@
 {
   "metadata": {
     "description": "Kairos tiered screening universe \u2014 Tier A (S&P 500 + ETFs), Tier B (high-growth watchlist), crypto pairs",
-    "last_updated": "2026-05-11"
+    "last_updated": "2026-06-30"
   },
   "tier_a": {
     "added_date": "2026-03-01",
@@ -750,6 +750,204 @@
         "symbol": "SOUN",
         "name": "SoundHound AI Inc.",
         "sector": "Technology"
+      },
+      "CBRS",
+      {
+        "symbol": "MRVL",
+        "name": "Marvell Technology Inc.",
+        "sector": "Technology",
+        "source": "chain",
+        "added_date": "2026-05-31"
+      },
+      {
+        "symbol": "ENTG",
+        "name": "Entegris Inc.",
+        "sector": "Technology",
+        "source": "chain",
+        "added_date": "2026-05-31"
+      },
+      {
+        "symbol": "AZTA",
+        "name": "Azenta Inc.",
+        "sector": "Technology",
+        "source": "chain",
+        "added_date": "2026-05-31"
+      },
+      {
+        "symbol": "MP",
+        "name": "MP Materials Corp.",
+        "sector": "Materials",
+        "source": "chain",
+        "added_date": "2026-05-31"
+      },
+      {
+        "symbol": "TTM",
+        "name": "TTM Technologies Inc.",
+        "sector": "Technology",
+        "source": "chain",
+        "added_date": "2026-05-31"
+      },
+      {
+        "symbol": "ONTO",
+        "name": "Onto Innovation Inc.",
+        "sector": "Technology",
+        "source": "chain",
+        "added_date": "2026-05-31"
+      },
+      "TSM",
+      {
+        "symbol": "SMC",
+        "name": "Summit Midstream Corporation",
+        "sector": "Energy",
+        "added_date": "2026-06-15",
+        "promoted_from": "C",
+        "promotion_reason": "filled BUY on record"
+      },
+      {
+        "symbol": "BOT",
+        "name": "BOT",
+        "sector": "Unknown",
+        "added_date": "2026-06-15",
+        "promoted_from": "C",
+        "promotion_reason": "HOT-INSIDER in last 30d"
+      },
+      {
+        "symbol": "AB",
+        "name": "AllianceBernstein Holding L.P.",
+        "sector": "Financial Services",
+        "added_date": "2026-06-15",
+        "promoted_from": "C",
+        "promotion_reason": "HOT-INSIDER in last 30d"
+      },
+      {
+        "symbol": "NOMA",
+        "name": "Nomadar Corp.",
+        "sector": "Consumer Cyclical",
+        "added_date": "2026-06-15",
+        "promoted_from": "C",
+        "promotion_reason": "HOT-CONGRESS in last 30d"
+      },
+      {
+        "symbol": "GAME",
+        "name": "GameSquare Holdings, Inc.",
+        "sector": "Communication Services",
+        "added_date": "2026-06-15",
+        "promoted_from": "C",
+        "promotion_reason": "HOT-CONGRESS in last 30d"
+      },
+      {
+        "symbol": "TEN",
+        "name": "Tsakos Energy Navigation Limited",
+        "sector": "Energy",
+        "added_date": "2026-06-15",
+        "promoted_from": "C",
+        "promotion_reason": "HOT-CONGRESS in last 30d; HOT-INSIDER in last 30d"
+      },
+      {
+        "symbol": "PS",
+        "name": "Pershing Square Inc.",
+        "sector": "Financial Services",
+        "added_date": "2026-06-15",
+        "promoted_from": "C",
+        "promotion_reason": "HOT-INSIDER in last 30d"
+      },
+      {
+        "symbol": "L",
+        "name": "Loews Corporation",
+        "sector": "Financial Services",
+        "added_date": "2026-06-15",
+        "promoted_from": "C",
+        "promotion_reason": "filled BUY on record; HOT-CONGRESS in last 30d; HOT-INSIDER in last 30d"
+      },
+      {
+        "symbol": "TXO",
+        "name": "TXO Partners, L.P.",
+        "sector": "Energy",
+        "added_date": "2026-06-15",
+        "promoted_from": "C",
+        "promotion_reason": "HOT-INSIDER in last 30d"
+      },
+      {
+        "symbol": "ONON",
+        "name": "On Holding AG",
+        "sector": "Consumer Cyclical",
+        "added_date": "2026-06-15",
+        "promoted_from": "C",
+        "promotion_reason": "filled BUY on record"
+      },
+      {
+        "symbol": "NIQ",
+        "name": "NIQ Global Intelligence plc",
+        "sector": "Unknown",
+        "added_date": "2026-06-15",
+        "promoted_from": "C",
+        "promotion_reason": "filled BUY on record"
+      },
+      {
+        "symbol": "PAR",
+        "name": "PAR Technology Corporation",
+        "sector": "Technology",
+        "added_date": "2026-06-15",
+        "promoted_from": "C",
+        "promotion_reason": "HOT-CONGRESS in last 30d; HOT-INSIDER in last 30d"
+      },
+      {
+        "symbol": "MP",
+        "name": "MP Materials Corp.",
+        "sector": "Basic Materials",
+        "added_date": "2026-06-15",
+        "promoted_from": "C",
+        "promotion_reason": "in AI value chain; HOT-CONGRESS in last 30d; HOT-INSIDER in last 30d"
+      },
+      {
+        "symbol": "ENR",
+        "name": "Energizer Holdings, Inc.",
+        "sector": "Industrials",
+        "added_date": "2026-06-15",
+        "promoted_from": "C",
+        "promotion_reason": "HOT-INSIDER in last 30d"
+      },
+      {
+        "symbol": "TSM",
+        "name": "Taiwan Semiconductor Manufacturing",
+        "sector": "Technology",
+        "added_date": "2026-06-15",
+        "promoted_from": "C",
+        "promotion_reason": "in AI value chain"
+      },
+      {
+        "symbol": "LEE",
+        "name": "Lee Enterprises, Incorporated",
+        "sector": "Communication Services",
+        "added_date": "2026-06-15",
+        "promoted_from": "C",
+        "promotion_reason": "HOT-CONGRESS in last 30d; HOT-INSIDER in last 30d"
+      },
+      {
+        "symbol": "NEU",
+        "name": "Neutron Holdings, Inc.",
+        "sector": "Technology",
+        "added_date": "2026-06-24",
+        "source": "ipo_intake",
+        "signal_tag": "IPO_MOMENTUM",
+        "add_reason": "IPO STRONG_BUY (score 80)"
+      },
+      {
+        "symbol": "CARD",
+        "name": "Cardinal Infrastructure Group Inc.",
+        "sector": "Technology",
+        "added_date": "2026-06-24",
+        "source": "ipo_intake",
+        "signal_tag": "IPO_MOMENTUM",
+        "add_reason": "IPO STRONG_BUY (score 75)"
+      },
+      {
+        "symbol": "AVO",
+        "name": "Mission Produce, Inc.",
+        "sector": "Consumer Defensive",
+        "added_date": "2026-06-30",
+        "promoted_from": "C",
+        "promotion_reason": "HOT-CONGRESS in last 30d; HOT-INSIDER in last 30d"
       }
     ]
   },

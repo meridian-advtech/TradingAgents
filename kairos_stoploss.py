@@ -199,11 +199,13 @@ def _alert_stoploss(ticker: str, entry_price: float, sell_price: float,
     tax_class = "long-term" if holding_days >= 365 else "short-term"
     try:
         from kairos_alerts import post_message
+        _pnl_label = "Gain" if pnl >= 0 else "Loss"
+        _header = "Trailing-Stop" if "TRAILING-STOP" in reason else "Stop-Loss"
         post_message("trades",
-            f":octagonal_sign: *Stop-Loss Triggered: {ticker}*\n"
+            f":octagonal_sign: *{_header} Triggered: {ticker}*\n"
             f"Entry: ${entry_price:.2f} → Exit: ${sell_price:.2f} "
             f"({drawdown_pct:+.1f}%)\n"
-            f"Loss: ${pnl:+,.2f} | Held {holding_days}d ({tax_class})\n"
+            f"{_pnl_label}: ${pnl:+,.2f} | Held {holding_days}d ({tax_class})\n"
             f"Reason: {reason}"
         )
     except Exception as exc:
@@ -359,8 +361,8 @@ def run_stoploss(regime: str | None = None, ib=None) -> dict:
                             f"Loss of ${loss_amt:,.2f} is disallowed for tax purposes\n"
                             f"Recent repurchase on {ws['repurchase_date']}\n"
                             f"Sell still executed — loss cannot be claimed until {blocked_until}")
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        print(f"    wash-sale alert Slack post failed: {exc}")
             except Exception as ws_exc:
                 print(f"    WARNING: Wash sale check failed: {ws_exc}")
 

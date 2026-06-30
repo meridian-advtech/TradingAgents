@@ -61,7 +61,11 @@ def _install_ibkr_error_filter():
         handler.addFilter(suppress)
     debug_log = os.path.join(SCRIPT_DIR, "kairos_ibkr_debug.log")
     try:
-        fh = logging.FileHandler(debug_log, mode="a")
+        from logging.handlers import RotatingFileHandler
+        # Size-capped so 10091 diagnostics can't grow unbounded (was 1.7 GB).
+        # 50 MB/file × 3 backups = 200 MB ceiling.
+        fh = RotatingFileHandler(
+            debug_log, mode="a", maxBytes=50 * 1024 * 1024, backupCount=3)
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(logging.Formatter(
             "%(asctime)s [%(name)s] %(levelname)s: %(message)s"))

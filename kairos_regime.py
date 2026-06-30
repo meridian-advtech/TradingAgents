@@ -442,6 +442,21 @@ def _classify(data: dict) -> tuple:
     return "NORMAL", f"VIX {vix_str}; SPY above 50MA; spread {spread_str}"
 
 
+def _alert_regime_change(previous: str, current: str, reason: str) -> None:
+    """Post a regime change alert to #kairos-alerts."""
+    try:
+        from kairos_alerts import alert_pipeline_event
+        emoji_map = {"NORMAL": "green_circle", "CAUTION": "yellow_circle",
+                     "RISK-OFF": "orange_circle", "EXTREME-FEAR": "red_circle"}
+        icon = emoji_map.get(current, "white_circle")
+        msg = (":" + icon + ": *REGIME CHANGE: " + previous + " -> " + current + "*\n"
+               "Reason: " + reason + "\n"
+               "_Position sizing and conviction thresholds have been adjusted._")
+        alert_pipeline_event(msg, channel="alerts")
+    except Exception as e:
+        print(f"  WARNING: regime alert failed: {e}")
+
+
 def _load_previous_regime() -> str | None:
     """Load the last recorded regime from kairos.db."""
     import sqlite3

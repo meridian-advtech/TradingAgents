@@ -21,7 +21,8 @@ from datetime import datetime, timezone
 
 OLLAMA_BASE = "http://localhost:11434"
 DEFAULT_TIMEOUT = 60  # seconds
-KEEP_ALIVE = "5m"     # unload model from VRAM after 5 min idle
+KEEP_ALIVE = "0"      # default: unload immediately after use
+KEEP_ALIVE_SCREEN = "2m"   # screen model stays loaded across batches; explicitly unloaded after screening
 WARMUP_TIMEOUT = 90   # generous timeout for cold-start model reload (~30s)
 
 # Fallback model if config is missing
@@ -144,7 +145,7 @@ def warmup(model: str | None = None) -> bool:
                 "model": model,
                 "prompt": "Reply OK.",
                 "stream": False,
-                "keep_alive": KEEP_ALIVE,
+                "keep_alive": KEEP_ALIVE_SCREEN,
             },
             timeout=WARMUP_TIMEOUT,
         )
@@ -157,7 +158,7 @@ def warmup(model: str | None = None) -> bool:
         return False
 
 
-def ask(prompt: str, model: str | None = None, timeout: int = DEFAULT_TIMEOUT) -> str:
+def ask(prompt: str, model: str | None = None, timeout: int = DEFAULT_TIMEOUT, keep_alive_override: str | None = None) -> str:
     """Send a prompt to Ollama and return the response text.
 
     If model is None, uses the reason model (quality-optimized).
@@ -174,7 +175,7 @@ def ask(prompt: str, model: str | None = None, timeout: int = DEFAULT_TIMEOUT) -
                 "model": model,
                 "prompt": prompt,
                 "stream": False,
-                "keep_alive": KEEP_ALIVE,
+                "keep_alive": keep_alive_override if keep_alive_override is not None else KEEP_ALIVE,
                 "options": {"think": False},
             },
             timeout=timeout,
@@ -191,7 +192,7 @@ def ask_screen(prompt: str, timeout: int = DEFAULT_TIMEOUT) -> str:
 
     Use this for high-volume Tier 1 scoring where speed > quality.
     """
-    return ask(prompt, model=get_screen_model(), timeout=timeout)
+    return ask(prompt, model=get_screen_model(), timeout=timeout, keep_alive_override=KEEP_ALIVE_SCREEN)
 
 
 def ask_reason(prompt: str, timeout: int = DEFAULT_TIMEOUT) -> str:
@@ -562,3 +563,23 @@ if __name__ == "__main__":
     print(f"  Reason: {get_reason_model()} ({lat_r}s)")
     print("  All checks passed. Two-model Ollama layer is operational.")
     print("=" * 60)
+
+
+def unload_model(model: str | None = None) -> bool:
+    """Explicitly unload a model from VRAM immediately.
+
+    Call this after a screening or reasoning phase completes to free
+    memory before the next model loads. Uses keep_alive=0 to force eviction.
+    """
+    if model is None:
+        model = get_screen_model()
+    try:
+        requests.post(
+            f"{OLLAMA_BASE}/api/generate",
+            json={"model": model, "prompt": "", "keep_alive": 0},
+            timeout=10,
+        )
+        print(f"  [Ollama/{model}] Unloaded from VRAM")
+        return True
+    except requests.RequestException:
+        return False

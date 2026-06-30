@@ -1,0 +1,5814 @@
+{
+  "last_run": "2026-06-24T09:38:07 ET",
+  "pipeline": {
+    "CIK:0002118195": {
+      "company": "Applied Aerospace & Defense, Inc.",
+      "cik": "0002118195",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-237828",
+          "form": "S-1/A",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 32500000,
+          "observed_at": "2026-05-28T14:42:00Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002109150": {
+      "company": "INNIO Holding GmbH",
+      "cik": "0002109150",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-237848",
+          "form": "S-1/A",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-05-28T14:42:00Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002123613": {
+      "company": "Kardigan, Inc.",
+      "cik": "0002123613",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-239298",
+          "form": "S-1",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "J.P. Morgan",
+            "tier": 1
+          },
+          "price_range": {
+            "low": 2.15,
+            "high": 15.0
+          },
+          "shares_offered": 40393745,
+          "observed_at": "2026-05-28T14:42:01Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:J.P. Morgan",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002050338": {
+      "company": "Collab Z Inc.",
+      "cik": "0002050338",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-060720",
+          "form": "S-1/A",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 5000000,
+          "observed_at": "2026-05-28T14:42:02Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001892704": {
+      "company": "First Breach, Inc.",
+      "cik": "0001892704",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001493152-26-025360",
+          "form": "S-1/A",
+          "filing_date": "2026-05-27",
+          "underwriter": null,
+          "price_range": {
+            "low": 3.0,
+            "high": 8.0
+          },
+          "shares_offered": 70728866,
+          "observed_at": "2026-05-28T14:42:03Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002136449": {
+      "company": "Crestone Strategic Capital Acquisition Corp",
+      "cik": "0002136449",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001493152-26-025267",
+          "form": "S-1",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-05-28T14:42:04Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Morgan Stanley",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001307579": {
+      "company": "LIQTECH INTERNATIONAL INC",
+      "cik": "0001307579",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001437749-26-018425",
+          "form": "S-1",
+          "filing_date": "2026-05-27",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": 9947841,
+          "observed_at": "2026-05-28T14:42:05Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002123471": {
+      "company": "Columbus Circle Capital Corp III",
+      "cik": "0002123471",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001185185-26-002099",
+          "form": "S-1",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-05-28T14:42:06Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002110105": {
+      "company": "Quantinuum Inc.",
+      "cik": "0002110105",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001628280-26-032836",
+          "form": "S-1",
+          "filing_date": "2026-05-08",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-16T13:39:34Z"
+        },
+        {
+          "accession": "0001628280-26-037917",
+          "form": "S-1/A",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 21052632,
+          "observed_at": "2026-05-28T14:42:07Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Morgan Stanley",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002028464": {
+      "company": "ENTRATA, INC.",
+      "cik": "0002028464",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001628280-26-038608",
+          "form": "S-1",
+          "filing_date": "2026-05-28",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": {
+            "low": 8.29,
+            "high": 8.7
+          },
+          "shares_offered": 5476838,
+          "observed_at": "2026-05-28T14:42:08Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001838987": {
+      "company": "SunPower Inc.",
+      "cik": "0001838987",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-060695",
+          "form": "S-1",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "Credit Suisse",
+            "tier": 2
+          },
+          "price_range": null,
+          "shares_offered": 39534884,
+          "observed_at": "2026-05-28T14:42:08Z"
+        }
+      ],
+      "score": 6,
+      "prior_score": 6,
+      "score_components": {
+        "base": 4,
+        "underwriter": 2,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "tier2:Credit Suisse",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0000832370": {
+      "company": "Ealixir, Inc.",
+      "cik": "0000832370",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-061557",
+          "form": "S-1/A",
+          "filing_date": "2026-05-27",
+          "underwriter": {
+            "name": "Merrill Lynch",
+            "tier": 1
+          },
+          "price_range": {
+            "low": 1.65,
+            "high": 2.05
+          },
+          "shares_offered": 22602658,
+          "observed_at": "2026-05-28T14:42:09Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Merrill Lynch",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001921603": {
+      "company": "WhiteHawk Income Corp",
+      "cik": "0001921603",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-237902",
+          "form": "S-1/A",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "J.P. Morgan",
+            "tier": 1
+          },
+          "price_range": {
+            "low": 25.0,
+            "high": 27.0
+          },
+          "shares_offered": 100000000,
+          "observed_at": "2026-05-28T14:42:09Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:J.P. Morgan",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001657677": {
+      "company": "Parabilis Medicines, Inc.",
+      "cik": "0001657677",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-242067",
+          "form": "S-1/A",
+          "filing_date": "2026-05-27",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-05-28T14:42:10Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001604191": {
+      "company": "GridAI Technologies Corp.",
+      "cik": "0001604191",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001104659-26-067071",
+          "form": "S-1",
+          "filing_date": "2026-05-28",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": 6204920,
+          "observed_at": "2026-05-28T14:42:11Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002080126": {
+      "company": "Forgent Power Solutions, Inc.",
+      "cik": "0002080126",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-239485",
+          "form": "S-1",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 23741398,
+          "observed_at": "2026-05-28T14:42:11Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002107018": {
+      "company": "DPC Holdings Ltd",
+      "cik": "0002107018",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001104659-26-066058",
+          "form": "S-1",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-05-28T14:42:12Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Morgan Stanley",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002112634": {
+      "company": "Sensei Harbor Corp.",
+      "cik": "0002112634",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001683168-26-004336",
+          "form": "S-1/A",
+          "filing_date": "2026-05-28",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": 6000000,
+          "observed_at": "2026-05-28T14:42:12Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002109801": {
+      "company": "VARSAL TECH, INC.",
+      "cik": "0002109801",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001493152-26-025296",
+          "form": "S-1",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 3500000,
+          "observed_at": "2026-05-28T14:42:13Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Morgan Stanley",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001706524": {
+      "company": "urban-gro, Inc.",
+      "cik": "0001706524",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-061273",
+          "form": "S-1",
+          "filing_date": "2026-05-27",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": 6300000,
+          "observed_at": "2026-05-28T14:42:13Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002091017": {
+      "company": "Sunshine Silver Mining & Refining Co",
+      "cik": "0002091017",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001140361-26-020608",
+          "form": "S-1",
+          "filing_date": "2026-05-11",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:38:08Z"
+        },
+        {
+          "accession": "0001140361-26-022717",
+          "form": "S-1/A",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": {
+            "low": 13.5,
+            "high": 16.5
+          },
+          "shares_offered": 20000000,
+          "observed_at": "2026-05-28T14:42:14Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Morgan Stanley",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001807166": {
+      "company": "Amesite Inc.",
+      "cik": "0001807166",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-061026",
+          "form": "S-1/A",
+          "filing_date": "2026-05-26",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": 14083,
+          "observed_at": "2026-05-28T14:42:14Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001860160": {
+      "company": "Firefly Aerospace Inc.",
+      "cik": "0001860160",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-239249",
+          "form": "S-1",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 8000000,
+          "observed_at": "2026-05-28T14:42:14Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002116105": {
+      "company": "Futurewave Acquisition Corp",
+      "cik": "0002116105",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001829126-26-004585",
+          "form": "S-1",
+          "filing_date": "2026-05-06",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:38:03Z"
+        },
+        {
+          "accession": "0001829126-26-005680",
+          "form": "S-1/A",
+          "filing_date": "2026-05-27",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-05-28T14:42:15Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002105274": {
+      "company": "InterPrivate Investment Partners V, Inc.",
+      "cik": "0002105274",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-059138",
+          "form": "S-1/A",
+          "filing_date": "2026-05-19",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:38:00Z"
+        },
+        {
+          "accession": "0001213900-26-061612",
+          "form": "S-1/A",
+          "filing_date": "2026-05-27",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-05-28T14:42:16Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Morgan Stanley",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001653827": {
+      "company": "Safepoint Holdings, Inc.",
+      "cik": "0001653827",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-237987",
+          "form": "S-1/A",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 6242317,
+          "observed_at": "2026-05-28T14:42:16Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Morgan Stanley",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001487718": {
+      "company": "AMERICAN BATTERY MATERIALS, INC.",
+      "cik": "0001487718",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001493152-26-025276",
+          "form": "S-1/A",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 2727273,
+          "observed_at": "2026-05-28T14:42:17Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0000923601": {
+      "company": "Algorhythm Holdings, Inc.",
+      "cik": "0000923601",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001493152-26-025427",
+          "form": "S-1/A",
+          "filing_date": "2026-05-27",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": 10000000,
+          "observed_at": "2026-05-28T14:42:17Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002107730": {
+      "company": "Grayscale Hyperliquid Staking ETF",
+      "cik": "0002107730",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-117603",
+          "form": "S-1",
+          "filing_date": "2026-03-20",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:41Z"
+        },
+        {
+          "accession": "0001193125-26-243167",
+          "form": "S-1/A",
+          "filing_date": "2026-05-28",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-05-28T14:42:18Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0000832489": {
+      "company": "GeoVax Labs, Inc.",
+      "cik": "0000832489",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001437749-26-012440",
+          "form": "S-1",
+          "filing_date": "2026-04-16",
+          "underwriter": {
+            "name": "Roth Capital",
+            "tier": 3
+          },
+          "price_range": {
+            "low": 1.4103,
+            "high": 32.75
+          },
+          "shares_offered": 865804,
+          "observed_at": "2026-06-08T13:37:36Z"
+        },
+        {
+          "accession": "0001437749-26-018320",
+          "form": "S-1",
+          "filing_date": "2026-05-26",
+          "underwriter": {
+            "name": "Roth Capital",
+            "tier": 3
+          },
+          "price_range": {
+            "low": 1.4103,
+            "high": 32.75
+          },
+          "shares_offered": 7639967,
+          "observed_at": "2026-05-28T14:42:18Z"
+        }
+      ],
+      "score": 5,
+      "prior_score": 5,
+      "score_components": {
+        "base": 4,
+        "underwriter": 1,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:50Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "tier3:Roth Capital",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_change",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "WATCHLIST:starlink": {
+      "company": "Starlink",
+      "cik": "",
+      "ticker": "SLNK",
+      "sector": "Technology",
+      "expected_pricing_date": null,
+      "source": "watchlist",
+      "filings": [],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:51Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "WATCHLIST:klarna": {
+      "company": "Klarna",
+      "cik": "",
+      "ticker": "KLAR",
+      "sector": "Financials",
+      "expected_pricing_date": null,
+      "source": "watchlist",
+      "filings": [],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:52Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "WATCHLIST:chime": {
+      "company": "Chime",
+      "cik": "",
+      "ticker": "CHYM",
+      "sector": "Financials",
+      "expected_pricing_date": null,
+      "source": "watchlist",
+      "filings": [],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:53Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "WATCHLIST:cerebras": {
+      "company": "Cerebras",
+      "cik": "",
+      "ticker": "CBRS",
+      "sector": "Technology",
+      "expected_pricing_date": "2026-05-14",
+      "source": "watchlist",
+      "filings": [],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002115404": {
+      "company": "Collective Acquisition Corp. II",
+      "cik": "0002115404",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-048032",
+          "form": "S-1/A",
+          "filing_date": "2026-04-27",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:27Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001934114": {
+      "company": "SUJA LIFE, INC.",
+      "cik": "0001934114",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001104659-26-041905",
+          "form": "S-1",
+          "filing_date": "2026-04-10",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-23T13:37:47Z"
+        },
+        {
+          "accession": "0001104659-26-049001",
+          "form": "S-1/A",
+          "filing_date": "2026-04-27",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 200719,
+          "observed_at": "2026-06-08T13:37:27Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001638911": {
+      "company": "DUKE Robotics Corp.",
+      "cik": "0001638911",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-048102",
+          "form": "S-1/A",
+          "filing_date": "2026-04-27",
+          "underwriter": null,
+          "price_range": {
+            "low": 10.0,
+            "high": 16.25
+          },
+          "shares_offered": 170954,
+          "observed_at": "2026-06-08T13:37:28Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002095743": {
+      "company": "Rare Earths Americas, Inc.",
+      "cik": "0002095743",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-183141",
+          "form": "S-1/A",
+          "filing_date": "2026-04-28",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": {
+            "low": 2.29,
+            "high": 4.94
+          },
+          "shares_offered": 2777777,
+          "observed_at": "2026-06-08T13:37:28Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002090011": {
+      "company": "21Shares Hyperliquid ETF",
+      "cik": "0002090011",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-043631",
+          "form": "S-1/A",
+          "filing_date": "2026-04-14",
+          "underwriter": {
+            "name": "Jpmorgan",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:29Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Jpmorgan",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001416876": {
+      "company": "First Choice Healthcare Solutions, Inc.",
+      "cik": "0001416876",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001493152-26-016512",
+          "form": "S-1/A",
+          "filing_date": "2026-04-14",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 3000010,
+          "observed_at": "2026-06-08T13:37:29Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001787740": {
+      "company": "Tivic Health Systems, Inc.",
+      "cik": "0001787740",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001683168-26-002867",
+          "form": "S-1",
+          "filing_date": "2026-04-13",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": 956222,
+          "observed_at": "2026-06-08T13:37:30Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002101698": {
+      "company": "Elmet Group Co.",
+      "cik": "0002101698",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-035970",
+          "form": "S-1",
+          "filing_date": "2026-03-30",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-23T13:37:36Z"
+        },
+        {
+          "accession": "0001213900-26-043190",
+          "form": "S-1/A",
+          "filing_date": "2026-04-14",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 7692307,
+          "observed_at": "2026-06-08T13:37:30Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001489993": {
+      "company": "Mobia Medical, Inc.",
+      "cik": "0001489993",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001628280-26-025811",
+          "form": "S-1",
+          "filing_date": "2026-04-17",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": {
+            "low": 0.93,
+            "high": 1.18
+          },
+          "shares_offered": 584128,
+          "observed_at": "2026-06-08T13:37:31Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002112457": {
+      "company": "Amanat Acquisition Corp.",
+      "cik": "0002112457",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-045252",
+          "form": "S-1",
+          "filing_date": "2026-04-17",
+          "underwriter": {
+            "name": "Jefferies",
+            "tier": 3
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:31Z"
+        }
+      ],
+      "score": 5,
+      "prior_score": 5,
+      "score_components": {
+        "base": 4,
+        "underwriter": 1,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "tier3:Jefferies",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001881551": {
+      "company": "Solidion Technology Inc.",
+      "cik": "0001881551",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-045227",
+          "form": "S-1/A",
+          "filing_date": "2026-04-17",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": 2000000,
+          "observed_at": "2026-06-08T13:37:32Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001750704": {
+      "company": "HawkEye 360, Inc.",
+      "cik": "0001750704",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001628280-26-027299",
+          "form": "S-1/A",
+          "filing_date": "2026-04-27",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": {
+            "low": 1.2918,
+            "high": 3.2386
+          },
+          "shares_offered": 16000000,
+          "observed_at": "2026-06-08T13:37:33Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002081515": {
+      "company": "Berto Acquisition Corp. II",
+      "cik": "0002081515",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001829126-26-003952",
+          "form": "S-1",
+          "filing_date": "2026-04-27",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:33Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002066824": {
+      "company": "VanEck BNB ETF",
+      "cik": "0002066824",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001628280-26-027783",
+          "form": "S-1/A",
+          "filing_date": "2026-04-28",
+          "underwriter": {
+            "name": "Jpmorgan",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:34Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Jpmorgan",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002067674": {
+      "company": "SILVER BOW MINING CORP.",
+      "cik": "0002067674",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001539497-26-001162",
+          "form": "S-1/A",
+          "filing_date": "2026-04-21",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": {
+            "low": 10.0,
+            "high": 13.0
+          },
+          "shares_offered": null,
+          "observed_at": "2026-06-23T13:37:49Z"
+        },
+        {
+          "accession": "0001539497-26-001201",
+          "form": "S-1/A",
+          "filing_date": "2026-04-24",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:34Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Morgan Stanley",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001875655": {
+      "company": "AEI CapForce II Investment Corp",
+      "cik": "0001875655",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001493152-26-018272",
+          "form": "S-1/A",
+          "filing_date": "2026-04-21",
+          "underwriter": {
+            "name": "J.P. Morgan",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:35Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:54Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:J.P. Morgan",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002109082": {
+      "company": "AI STRATEGY INC.",
+      "cik": "0002109082",
+      "ticker": null,
+      "sector": "Technology",
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001829126-26-003522",
+          "form": "S-1",
+          "filing_date": "2026-04-15",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:35Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:56Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002088896": {
+      "company": "X-Energy, Inc.",
+      "cik": "0002088896",
+      "ticker": null,
+      "sector": "Energy",
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001104659-26-039550",
+          "form": "S-1/A",
+          "filing_date": "2026-04-03",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-23T13:37:49Z"
+        },
+        {
+          "accession": "0001104659-26-043799",
+          "form": "S-1/A",
+          "filing_date": "2026-04-15",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": {
+            "low": 16.0,
+            "high": 19.0
+          },
+          "shares_offered": 2142857,
+          "observed_at": "2026-06-08T13:37:36Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:57Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001882782": {
+      "company": "Odyssey Therapeutics, Inc.",
+      "cik": "0001882782",
+      "ticker": null,
+      "sector": "Healthcare",
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-161514",
+          "form": "S-1",
+          "filing_date": "2026-04-17",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": {
+            "low": 0.41,
+            "high": 3.3
+          },
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:36Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:58Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002100704": {
+      "company": "East West Ave Acquisition Corp.",
+      "cik": "0002100704",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001493152-26-018171",
+          "form": "S-1",
+          "filing_date": "2026-04-21",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 2875000,
+          "observed_at": "2026-06-08T13:37:37Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:58Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002098707": {
+      "company": "BurTech Acquisition Corp II",
+      "cik": "0002098707",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-046316",
+          "form": "S-1",
+          "filing_date": "2026-04-22",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:38Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:58Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Morgan Stanley",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002097986": {
+      "company": "Forefront Tech Holdings Acquisition Corp",
+      "cik": "0002097986",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-047156",
+          "form": "S-1/A",
+          "filing_date": "2026-04-23",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:38Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:58Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002089283": {
+      "company": "Eagle Nuclear Energy Corp.",
+      "cik": "0002089283",
+      "ticker": null,
+      "sector": "Energy",
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001104659-26-047040",
+          "form": "S-1/A",
+          "filing_date": "2026-04-23",
+          "underwriter": {
+            "name": "Stifel",
+            "tier": 3
+          },
+          "price_range": null,
+          "shares_offered": 23422133,
+          "observed_at": "2026-06-08T13:37:39Z"
+        }
+      ],
+      "score": 5,
+      "prior_score": 5,
+      "score_components": {
+        "base": 4,
+        "underwriter": 1,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:59Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "tier3:Stifel",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002103029": {
+      "company": "Sky Acquisition Group",
+      "cik": "0002103029",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001829126-26-003772",
+          "form": "S-1/A",
+          "filing_date": "2026-04-23",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:39Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:37:59Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002093507": {
+      "company": "Greenland Energy Co",
+      "cik": "0002093507",
+      "ticker": null,
+      "sector": "Energy",
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001829126-26-003806",
+          "form": "S-1/A",
+          "filing_date": "2026-04-23",
+          "underwriter": {
+            "name": "Jpmorgan",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 8101852,
+          "observed_at": "2026-06-08T13:37:40Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:00Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Jpmorgan",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002101393": {
+      "company": "AmperCap Acquisition Co",
+      "cik": "0002101393",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001185185-26-000884",
+          "form": "S-1",
+          "filing_date": "2026-03-17",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:40Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:00Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Morgan Stanley",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0000946155": {
+      "company": "TIAA REAL ESTATE ACCOUNT",
+      "cik": "0000946155",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0000946155-26-000021",
+          "form": "S-1",
+          "filing_date": "2026-03-12",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:41Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:00Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Morgan Stanley",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002081690": {
+      "company": "Vernal Capital Acquisition Corp.",
+      "cik": "0002081690",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-026246",
+          "form": "S-1/A",
+          "filing_date": "2026-03-11",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:42Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:00Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Morgan Stanley",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001169138": {
+      "company": "GIVBUX, INC.",
+      "cik": "0001169138",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001640334-26-000472",
+          "form": "S-1/A",
+          "filing_date": "2026-03-18",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": 34523278,
+          "observed_at": "2026-06-08T13:37:42Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:00Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002099767": {
+      "company": "NewHold Investment Corp IV",
+      "cik": "0002099767",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-027785",
+          "form": "S-1/A",
+          "filing_date": "2026-03-16",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:43Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:00Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002070577": {
+      "company": "Option Therapeutics Inc.",
+      "cik": "0002070577",
+      "ticker": null,
+      "sector": "Healthcare",
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001520138-26-000074",
+          "form": "S-1/A",
+          "filing_date": "2026-03-16",
+          "underwriter": null,
+          "price_range": {
+            "low": 10.0,
+            "high": 12.0
+          },
+          "shares_offered": 1818182,
+          "observed_at": "2026-06-08T13:37:43Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:01Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002099232": {
+      "company": "Future Money Acquisition Corp",
+      "cik": "0002099232",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001493152-26-010031",
+          "form": "S-1/A",
+          "filing_date": "2026-03-13",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:44Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:01Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002094919": {
+      "company": "Tribeca Strategic Acquisition Corp.",
+      "cik": "0002094919",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-049619",
+          "form": "S-1/A",
+          "filing_date": "2026-04-30",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:45Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:01Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002027982": {
+      "company": "C2 Capital Group, Inc.",
+      "cik": "0002027982",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001493152-26-019578",
+          "form": "S-1/A",
+          "filing_date": "2026-04-29",
+          "underwriter": null,
+          "price_range": {
+            "low": 0.27,
+            "high": 3.0
+          },
+          "shares_offered": 651214,
+          "observed_at": "2026-06-08T13:37:45Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:01Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002118032": {
+      "company": "Research Alliance Corp III",
+      "cik": "0002118032",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-120705",
+          "form": "S-1",
+          "filing_date": "2026-03-24",
+          "underwriter": {
+            "name": "Jp Morgan",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:46Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:01Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Jp Morgan",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002102123": {
+      "company": "Apogee Acquisition Corp",
+      "cik": "0002102123",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-038078",
+          "form": "S-1/A",
+          "filing_date": "2026-04-01",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:46Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:01Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001997389": {
+      "company": "Innovative Digital Investors Acquisition Corp.",
+      "cik": "0001997389",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001104659-26-038398",
+          "form": "S-1/A",
+          "filing_date": "2026-04-01",
+          "underwriter": {
+            "name": "J.P. Morgan",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 7475000,
+          "observed_at": "2026-06-08T13:37:47Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:01Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:J.P. Morgan",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002085177": {
+      "company": "QuasarEdge Acquisition Corp",
+      "cik": "0002085177",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001829126-26-003029",
+          "form": "S-1/A",
+          "filing_date": "2026-04-01",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:48Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:01Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002094076": {
+      "company": "Starlink AI Acquisition Corp",
+      "cik": "0002094076",
+      "ticker": null,
+      "sector": "Technology",
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001493152-26-015598",
+          "form": "S-1/A",
+          "filing_date": "2026-04-08",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:48Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:02Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002098430": {
+      "company": "Madison Air Solutions Corp",
+      "cik": "0002098430",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-142875",
+          "form": "S-1/A",
+          "filing_date": "2026-04-06",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 12403846,
+          "observed_at": "2026-06-08T13:37:49Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:02Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001691082": {
+      "company": "LB PHARMACEUTICALS INC",
+      "cik": "0001691082",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-143724",
+          "form": "S-1",
+          "filing_date": "2026-04-06",
+          "underwriter": {
+            "name": "Jpmorgan",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 4778491,
+          "observed_at": "2026-06-08T13:37:49Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:02Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Jpmorgan",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002093524": {
+      "company": "Aperture AC",
+      "cik": "0002093524",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-040086",
+          "form": "S-1/A",
+          "filing_date": "2026-04-06",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:50Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:02Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002084026": {
+      "company": "QumulusAI, Inc.",
+      "cik": "0002084026",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001437749-26-011598",
+          "form": "S-1/A",
+          "filing_date": "2026-04-07",
+          "underwriter": null,
+          "price_range": {
+            "low": 3.0,
+            "high": 10.8
+          },
+          "shares_offered": 31539629,
+          "observed_at": "2026-06-08T13:37:51Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:02Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001960355": {
+      "company": "Exyn Technologies, Inc.",
+      "cik": "0001960355",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001104659-26-032156",
+          "form": "S-1",
+          "filing_date": "2026-03-19",
+          "underwriter": {
+            "name": "Barclays",
+            "tier": 2
+          },
+          "price_range": null,
+          "shares_offered": 33062488,
+          "observed_at": "2026-06-08T13:37:51Z"
+        }
+      ],
+      "score": 6,
+      "prior_score": 6,
+      "score_components": {
+        "base": 4,
+        "underwriter": 2,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:02Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "tier2:Barclays",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002106436": {
+      "company": "Mercator Acquisition Corp.",
+      "cik": "0002106436",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-032483",
+          "form": "S-1/A",
+          "filing_date": "2026-03-23",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:52Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:02Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002114227": {
+      "company": "Churchill Capital Corp XII",
+      "cik": "0002114227",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-039320",
+          "form": "S-1",
+          "filing_date": "2026-04-02",
+          "underwriter": {
+            "name": "Merrill Lynch",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:52Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:02Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Merrill Lynch",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001540171": {
+      "company": "Avalyn Pharma Inc.",
+      "cik": "0001540171",
+      "ticker": null,
+      "sector": "Healthcare",
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-147573",
+          "form": "S-1",
+          "filing_date": "2026-04-08",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": {
+            "low": 0.24,
+            "high": 0.61
+          },
+          "shares_offered": 483842421,
+          "observed_at": "2026-06-08T13:37:53Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Morgan Stanley",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002109686": {
+      "company": "Canary PEPE ETF",
+      "cik": "0002109686",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001999371-26-007908",
+          "form": "S-1",
+          "filing_date": "2026-04-08",
+          "underwriter": {
+            "name": "Guggenheim",
+            "tier": 3
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:53Z"
+        }
+      ],
+      "score": 5,
+      "prior_score": 5,
+      "score_components": {
+        "base": 4,
+        "underwriter": 1,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "tier3:Guggenheim",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001786471": {
+      "company": "Aptera Motors Corp",
+      "cik": "0001786471",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001493152-26-015814",
+          "form": "S-1",
+          "filing_date": "2026-04-09",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": 4751250,
+          "observed_at": "2026-06-08T13:37:54Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001851491": {
+      "company": "AMASS BRANDS",
+      "cik": "0001851491",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001575872-26-000239",
+          "form": "S-1",
+          "filing_date": "2026-04-09",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:55Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002065661": {
+      "company": "Plutonian Acquisition Corp. II",
+      "cik": "0002065661",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001477932-26-001930",
+          "form": "S-1/A",
+          "filing_date": "2026-04-01",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:55Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Morgan Stanley",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002104204": {
+      "company": "Alamar Biosciences, Inc.",
+      "cik": "0002104204",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-151891",
+          "form": "S-1/A",
+          "filing_date": "2026-04-13",
+          "underwriter": {
+            "name": "J.P. Morgan",
+            "tier": 1
+          },
+          "price_range": {
+            "low": 2.32,
+            "high": 2.66
+          },
+          "shares_offered": 55515799,
+          "observed_at": "2026-06-08T13:37:56Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:J.P. Morgan",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002073505": {
+      "company": "Kraneshares Crypto Trust",
+      "cik": "0002073505",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001829126-26-004635",
+          "form": "S-1/A",
+          "filing_date": "2026-05-06",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:56Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001181412": {
+      "company": "SPACE EXPLORATION TECHNOLOGIES CORP",
+      "cik": "0001181412",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001628280-26-036936",
+          "form": "S-1",
+          "filing_date": "2026-05-20",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 324325,
+          "observed_at": "2026-06-08T13:37:57Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001900851": {
+      "company": "Ambitious Entertainment, Inc.",
+      "cik": "0001900851",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001493152-26-023581",
+          "form": "S-1",
+          "filing_date": "2026-05-15",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": 3555556,
+          "observed_at": "2026-06-08T13:37:57Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001283259": {
+      "company": "BIOVENTRIX, INC.",
+      "cik": "0001283259",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001493152-26-023752",
+          "form": "S-1/A",
+          "filing_date": "2026-05-15",
+          "underwriter": {
+            "name": "Rbc Capital",
+            "tier": 2
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:58Z"
+        }
+      ],
+      "score": 6,
+      "prior_score": 6,
+      "score_components": {
+        "base": 4,
+        "underwriter": 2,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "tier2:Rbc Capital",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002129659": {
+      "company": "Freedom Metals Acquisition Corp.",
+      "cik": "0002129659",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-057976",
+          "form": "S-1",
+          "filing_date": "2026-05-15",
+          "underwriter": {
+            "name": "Wells Fargo",
+            "tier": 2
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:59Z"
+        }
+      ],
+      "score": 6,
+      "prior_score": 6,
+      "score_components": {
+        "base": 4,
+        "underwriter": 2,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "tier2:Wells Fargo",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002090787": {
+      "company": "Oceanhawk Acquisition Corp.",
+      "cik": "0002090787",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-058915",
+          "form": "S-1/A",
+          "filing_date": "2026-05-19",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:37:59Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002133770": {
+      "company": "Arterior Solutions Corp",
+      "cik": "0002133770",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001477932-26-003315",
+          "form": "S-1",
+          "filing_date": "2026-05-19",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": 9000000,
+          "observed_at": "2026-06-08T13:38:00Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002131853": {
+      "company": "FutureCorp Space Acquisition 1",
+      "cik": "0002131853",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-059156",
+          "form": "S-1",
+          "filing_date": "2026-05-20",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:38:01Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002111038": {
+      "company": "DISCIPLINED GROWTH ACQUISITION Corp",
+      "cik": "0002111038",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001185185-26-001772",
+          "form": "S-1/A",
+          "filing_date": "2026-05-11",
+          "underwriter": {
+            "name": "Merrill Lynch",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:38:01Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Merrill Lynch",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001925283": {
+      "company": "Lincoln International, Inc.",
+      "cik": "0001925283",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001628280-26-033128",
+          "form": "S-1/A",
+          "filing_date": "2026-05-11",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 445942,
+          "observed_at": "2026-06-08T13:38:02Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002087989": {
+      "company": "Texas Precious Metals Trust",
+      "cik": "0002087989",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001437749-26-016759",
+          "form": "S-1/A",
+          "filing_date": "2026-05-13",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:38:02Z"
+        },
+        {
+          "accession": "0001437749-26-016791",
+          "form": "S-1/A",
+          "filing_date": "2026-05-13",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-23T13:38:19Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:03Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002085932": {
+      "company": "Energy Transition Special Opportunities",
+      "cik": "0002085932",
+      "ticker": null,
+      "sector": "Energy",
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-056174",
+          "form": "S-1/A",
+          "filing_date": "2026-05-14",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:38:03Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:04Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002095443": {
+      "company": "Breeze Acquisition Corp. II",
+      "cik": "0002095443",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-052460",
+          "form": "S-1/A",
+          "filing_date": "2026-05-06",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:38:04Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:04Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001699963": {
+      "company": "Neutron Holdings, Inc.",
+      "cik": "0001699963",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001628280-26-032523",
+          "form": "S-1",
+          "filing_date": "2026-05-08",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": {
+            "low": 0.0122,
+            "high": 0.0287
+          },
+          "shares_offered": 4325594672,
+          "observed_at": "2026-06-08T13:38:04Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:04Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0000777917": {
+      "company": "PRUCO LIFE INSURANCE CO",
+      "cik": "0000777917",
+      "ticker": null,
+      "sector": "Financials",
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0000777917-26-000076",
+          "form": "S-1/A",
+          "filing_date": "2026-05-11",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:38:05Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:05Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002129056": {
+      "company": "Jones Ventures INTL Acquisition1 Corp",
+      "cik": "0002129056",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-057072",
+          "form": "S-1",
+          "filing_date": "2026-05-15",
+          "underwriter": {
+            "name": "Jefferies",
+            "tier": 3
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:38:05Z"
+        }
+      ],
+      "score": 5,
+      "prior_score": 5,
+      "score_components": {
+        "base": 4,
+        "underwriter": 1,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:05Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "tier3:Jefferies",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001035354": {
+      "company": "Eloxx Pharmaceuticals, Inc.",
+      "cik": "0001035354",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-212324",
+          "form": "S-1",
+          "filing_date": "2026-05-07",
+          "underwriter": {
+            "name": "Oppenheimer",
+            "tier": 3
+          },
+          "price_range": {
+            "low": 0.0001,
+            "high": 0.24
+          },
+          "shares_offered": 9673698,
+          "observed_at": "2026-06-08T13:38:06Z"
+        }
+      ],
+      "score": 5,
+      "prior_score": 5,
+      "score_components": {
+        "base": 4,
+        "underwriter": 1,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:05Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "tier3:Oppenheimer",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001859807": {
+      "company": "Profusa, Inc.",
+      "cik": "0001859807",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-050904",
+          "form": "S-1/A",
+          "filing_date": "2026-05-01",
+          "underwriter": null,
+          "price_range": {
+            "low": 37.5,
+            "high": 300.0
+          },
+          "shares_offered": 179272293,
+          "observed_at": "2026-06-08T13:38:06Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:05Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001956439": {
+      "company": "Enhanced Group Inc.",
+      "cik": "0001956439",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001628280-26-033674",
+          "form": "S-1",
+          "filing_date": "2026-05-11",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": {
+            "low": 0.17,
+            "high": 8.89
+          },
+          "shares_offered": 58887030,
+          "observed_at": "2026-06-08T13:38:07Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:05Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Morgan Stanley",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0000061004": {
+      "company": "LGL GROUP INC",
+      "cik": "0000061004",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001437749-26-018259",
+          "form": "S-1/A",
+          "filing_date": "2026-05-22",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-08T13:38:09Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:05Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001506492": {
+      "company": "Nuwellis, Inc.",
+      "cik": "0001506492",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001140361-26-022629",
+          "form": "S-1",
+          "filing_date": "2026-05-22",
+          "underwriter": {
+            "name": "Roth Capital",
+            "tier": 3
+          },
+          "price_range": null,
+          "shares_offered": 4854369,
+          "observed_at": "2026-06-11T13:38:24Z"
+        },
+        {
+          "accession": "0001140361-26-023354",
+          "form": "S-1/A",
+          "filing_date": "2026-05-29",
+          "underwriter": {
+            "name": "Roth Capital",
+            "tier": 3
+          },
+          "price_range": null,
+          "shares_offered": 6578948,
+          "observed_at": "2026-06-17T13:36:25Z"
+        }
+      ],
+      "score": 5,
+      "prior_score": 5,
+      "score_components": {
+        "base": 4,
+        "underwriter": 1,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:05Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "tier3:Roth Capital",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "WATCHLIST:spacex": {
+      "company": "SpaceX",
+      "cik": "",
+      "ticker": "SPCX",
+      "sector": "Technology",
+      "expected_pricing_date": "2026-06-12",
+      "source": "watchlist",
+      "filings": [],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:06Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002087965": {
+      "company": "Cantor Equity Partners VII, Inc.",
+      "cik": "0002087965",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-060659",
+          "form": "S-1",
+          "filing_date": "2026-05-22",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-16T13:39:31Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:06Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001680139": {
+      "company": "HealthLynked Corp",
+      "cik": "0001680139",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-062879",
+          "form": "S-1/A",
+          "filing_date": "2026-05-29",
+          "underwriter": null,
+          "price_range": {
+            "low": 4.0,
+            "high": 6.0
+          },
+          "shares_offered": 1750000,
+          "observed_at": "2026-06-17T13:36:24Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:06Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001500435": {
+      "company": "GoPro, Inc.",
+      "cik": "0001500435",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001628280-26-039299",
+          "form": "S-1/A",
+          "filing_date": "2026-06-01",
+          "underwriter": {
+            "name": "Wells Fargo",
+            "tier": 2
+          },
+          "price_range": null,
+          "shares_offered": 120000000,
+          "observed_at": "2026-06-17T13:36:25Z"
+        }
+      ],
+      "score": 6,
+      "prior_score": 6,
+      "score_components": {
+        "base": 4,
+        "underwriter": 2,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:06Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "tier2:Wells Fargo",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001527613": {
+      "company": "CIMG Inc.",
+      "cik": "0001527613",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001493152-26-028336",
+          "form": "S-1/A",
+          "filing_date": "2026-06-12",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": 43000000,
+          "observed_at": "2026-06-17T13:36:26Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:06Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002138186": {
+      "company": "Narragansett Bancorp, Inc.",
+      "cik": "0002138186",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001193125-26-269038",
+          "form": "S-1",
+          "filing_date": "2026-06-12",
+          "underwriter": {
+            "name": "Piper Sandler",
+            "tier": 3
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-17T13:36:26Z"
+        }
+      ],
+      "score": 5,
+      "prior_score": 5,
+      "score_components": {
+        "base": 4,
+        "underwriter": 1,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:06Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "tier3:Piper Sandler",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002116230": {
+      "company": "Southern Cross Acquisition I Corp.",
+      "cik": "0002116230",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001929980-26-000257",
+          "form": "S-1",
+          "filing_date": "2026-06-12",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-17T13:36:27Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:06Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002128115": {
+      "company": "Ares Acquisition Corp III",
+      "cik": "0002128115",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001104659-26-073478",
+          "form": "S-1",
+          "filing_date": "2026-06-12",
+          "underwriter": {
+            "name": "J.P. Morgan",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-17T13:36:27Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:06Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:J.P. Morgan",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002111846": {
+      "company": "Game Your Game Inc.",
+      "cik": "0002111846",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-068371",
+          "form": "S-1",
+          "filing_date": "2026-06-12",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": 16072730,
+          "observed_at": "2026-06-17T13:36:28Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:06Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002113481": {
+      "company": "Osprey Acquisition Corp. III",
+      "cik": "0002113481",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-068811",
+          "form": "S-1",
+          "filing_date": "2026-06-15",
+          "underwriter": {
+            "name": "Morgan Stanley",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-17T13:36:29Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:06Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Morgan Stanley",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002070542": {
+      "company": "BlockchAIn Digital Infrastructure, Inc.",
+      "cik": "0002070542",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-064725",
+          "form": "S-1/A",
+          "filing_date": "2026-06-03",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-23T13:38:13Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:06Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0000038723": {
+      "company": "1st FRANKLIN FINANCIAL CORP",
+      "cik": "0000038723",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0000038723-26-000018",
+          "form": "S-1",
+          "filing_date": "2026-05-08",
+          "underwriter": {
+            "name": "Wells Fargo",
+            "tier": 2
+          },
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-23T13:38:15Z"
+        }
+      ],
+      "score": 6,
+      "prior_score": 6,
+      "score_components": {
+        "base": 4,
+        "underwriter": 2,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:06Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "tier2:Wells Fargo",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0001898718": {
+      "company": "GMR Solutions Inc.",
+      "cik": "0001898718",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001104659-26-059089",
+          "form": "S-1/A",
+          "filing_date": "2026-05-12",
+          "underwriter": {
+            "name": "Goldman Sachs",
+            "tier": 1
+          },
+          "price_range": null,
+          "shares_offered": 14785611,
+          "observed_at": "2026-06-23T13:38:24Z"
+        }
+      ],
+      "score": 7,
+      "prior_score": 7,
+      "score_components": {
+        "base": 4,
+        "underwriter": 3,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:06Z",
+      "notes": [
+        "skip_reserve:no_pricing_date_or_window",
+        "skip_reserve:no_pricing_date_or_window"
+      ],
+      "score_notes": {
+        "underwriter": "tier1:Goldman Sachs",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "CIK:0002102771": {
+      "company": "Keystone Acquisition Corp.",
+      "cik": "0002102771",
+      "ticker": null,
+      "sector": null,
+      "expected_pricing_date": null,
+      "source": "edgar",
+      "filings": [
+        {
+          "accession": "0001213900-26-062203",
+          "form": "S-1/A",
+          "filing_date": "2026-05-28",
+          "underwriter": null,
+          "price_range": null,
+          "shares_offered": null,
+          "observed_at": "2026-06-23T13:38:27Z"
+        }
+      ],
+      "score": 4,
+      "prior_score": 4,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:06Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown_sector",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "WATCHLIST:coppertech_metals_inc": {
+      "company": "CopperTech Metals Inc.",
+      "cik": "",
+      "ticker": "PENDING",
+      "sector": "Unknown",
+      "expected_pricing_date": null,
+      "source": "watchlist",
+      "filings": [],
+      "score": 4,
+      "prior_score": null,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:06Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "WATCHLIST:tenon_medical_inc": {
+      "company": "Tenon Medical, Inc.",
+      "cik": "",
+      "ticker": "PENDING",
+      "sector": "Technology",
+      "expected_pricing_date": null,
+      "source": "watchlist",
+      "filings": [],
+      "score": 4,
+      "prior_score": null,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:07Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    },
+    "WATCHLIST:itg_inc_de": {
+      "company": "ITG, Inc./DE/",
+      "cik": "",
+      "ticker": "PENDING",
+      "sector": "Unknown",
+      "expected_pricing_date": null,
+      "source": "watchlist",
+      "filings": [],
+      "score": 4,
+      "prior_score": null,
+      "score_components": {
+        "base": 4,
+        "underwriter": 0,
+        "sector": 0,
+        "pricing_revision": 0,
+        "business_quality": 0,
+        "valuation": 0
+      },
+      "reservation_id": null,
+      "last_scored_at": "2026-06-24T13:38:07Z",
+      "notes": [],
+      "score_notes": {
+        "underwriter": "unknown",
+        "sector": "unknown",
+        "pricing_revision": "no_revisions",
+        "business_quality": "v2_deferred",
+        "valuation": "v2_deferred"
+      }
+    }
+  }
+}

@@ -43,7 +43,7 @@ SCREEN_RESULT_FILE = os.path.join(SCRIPT_DIR, "kairos_screen_result.json")
 MIN_TRAINING_ROWS = 20
 
 # Feature names
-CATEGORICAL_FEATURES = ["news", "macro", "crypto", "legis_sentiment", "sector", "day_of_week", "hour_of_day"]
+CATEGORICAL_FEATURES = ["news", "macro", "legis_sentiment", "sector", "day_of_week", "hour_of_day"]
 NUMERICAL_FEATURES = ["hold_days"]
 ALL_FEATURES = CATEGORICAL_FEATURES + NUMERICAL_FEATURES
 
@@ -93,7 +93,6 @@ def _extract_signal_tags_to_features(signals_fired: list[str] | str | None) -> d
     features = {
         "news": "neutral",
         "macro": "stable", 
-        "crypto": "mixed",
         "legis_sentiment": "neutral"
     }
     
@@ -112,14 +111,6 @@ def _extract_signal_tags_to_features(signals_fired: list[str] | str | None) -> d
     elif any(t in tag_str for t in ["macro=tightening", "macro_environment=tightening", 
                "macro=hawkish", "macro=rising", "macro=hiking"]):
         features["macro"] = "tightening"
-    
-    # Crypto / risk sentiment
-    if any(t in tag_str for t in ["crypto=risk-on", "risk_appetite=risk-on", "crypto=positive",
-            "crypto=up", "crypto=green", "crypto=bullish", "hot-crypto"]):
-        features["crypto"] = "risk-on"
-    elif any(t in tag_str for t in ["crypto=risk-off", "risk_appetite=risk-off", 
-               "crypto=negative", "crypto=down", "crypto=red", "crypto=bearish"]):
-        features["crypto"] = "risk-off"
     
     # Legislative sentiment
     if any(t in tag_str for t in ["legislative=risky", "legislative=threat", "legislative=negative",
@@ -463,7 +454,6 @@ def _build_candidate_features(ticker: str, signals: dict | None) -> dict:
     features = {
         "news": "neutral",
         "macro": "stable",
-        "crypto": "mixed", 
         "legis_sentiment": "neutral",
         "sector": "Unknown",
         "hold_days": 0.0,
@@ -489,7 +479,7 @@ def _build_candidate_features(ticker: str, signals: dict | None) -> dict:
     if signals:
         if isinstance(signals, dict):
             # Direct mapping
-            for key in ["news", "macro", "crypto", "legis_sentiment", "sector"]:
+            for key in ["news", "macro", "legis_sentiment", "sector"]:
                 if key in signals:
                     features[key] = signals[key]
         elif isinstance(signals, list):

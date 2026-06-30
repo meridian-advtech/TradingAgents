@@ -1,98 +1,104 @@
 {
-  "timestamp": "2026-05-18 19:56:50 UTC",
+  "timestamp": "2026-06-30 19:31:35 UTC",
   "candidates": [
     {
-      "ticker": "ALMR",
-      "ml_confidence": 0.5,
-      "ml_signal": "NEUTRAL",
-      "ml_trained_on": 0
+      "ticker": "ALGN",
+      "ml_confidence": 0.3375,
+      "ml_signal": "WEAK",
+      "ml_trained_on": 47
     },
     {
-      "ticker": "AMAT",
-      "ml_confidence": 0.5,
-      "ml_signal": "NEUTRAL",
-      "ml_trained_on": 0
+      "ticker": "ARE",
+      "ml_confidence": 0.3375,
+      "ml_signal": "WEAK",
+      "ml_trained_on": 47
     },
     {
-      "ticker": "APH",
-      "ml_confidence": 0.5,
-      "ml_signal": "NEUTRAL",
-      "ml_trained_on": 0
+      "ticker": "CAVA",
+      "ml_confidence": 0.3375,
+      "ml_signal": "WEAK",
+      "ml_trained_on": 47
     },
     {
-      "ticker": "ARTV",
-      "ml_confidence": 0.5,
-      "ml_signal": "NEUTRAL",
-      "ml_trained_on": 0
+      "ticker": "CEG",
+      "ml_confidence": 0.3375,
+      "ml_signal": "WEAK",
+      "ml_trained_on": 47
     },
     {
-      "ticker": "AVLN",
-      "ml_confidence": 0.5,
-      "ml_signal": "NEUTRAL",
-      "ml_trained_on": 0
+      "ticker": "CHYM",
+      "ml_confidence": 0.3375,
+      "ml_signal": "WEAK",
+      "ml_trained_on": 47
     },
     {
-      "ticker": "BBAI",
-      "ml_confidence": 0.5,
-      "ml_signal": "NEUTRAL",
-      "ml_trained_on": 0
+      "ticker": "COIN",
+      "ml_confidence": 0.3003,
+      "ml_signal": "WEAK",
+      "ml_trained_on": 47
     },
     {
-      "ticker": "BETR",
-      "ml_confidence": 0.5,
-      "ml_signal": "NEUTRAL",
-      "ml_trained_on": 0
+      "ticker": "FDX",
+      "ml_confidence": 0.3375,
+      "ml_signal": "WEAK",
+      "ml_trained_on": 47
     },
     {
-      "ticker": "BILL",
-      "ml_confidence": 0.5,
-      "ml_signal": "NEUTRAL",
-      "ml_trained_on": 0
+      "ticker": "GIS",
+      "ml_confidence": 0.3375,
+      "ml_signal": "WEAK",
+      "ml_trained_on": 47
     },
     {
-      "ticker": "BOT",
-      "ml_confidence": 0.5,
-      "ml_signal": "NEUTRAL",
-      "ml_trained_on": 0
+      "ticker": "HRL",
+      "ml_confidence": 0.3375,
+      "ml_signal": "WEAK",
+      "ml_trained_on": 47
     },
     {
-      "ticker": "BURU",
-      "ml_confidence": 0.5,
-      "ml_signal": "NEUTRAL",
-      "ml_trained_on": 0
+      "ticker": "HST",
+      "ml_confidence": 0.3375,
+      "ml_signal": "WEAK",
+      "ml_trained_on": 47
     },
     {
-      "ticker": "CAT",
-      "ml_confidence": 0.5,
-      "ml_signal": "NEUTRAL",
-      "ml_trained_on": 0
+      "ticker": "HSY",
+      "ml_confidence": 0.3375,
+      "ml_signal": "WEAK",
+      "ml_trained_on": 47
     },
     {
-      "ticker": "CIEN",
-      "ml_confidence": 0.5,
-      "ml_signal": "NEUTRAL",
-      "ml_trained_on": 0
+      "ticker": "KARD",
+      "ml_confidence": 0.3375,
+      "ml_signal": "WEAK",
+      "ml_trained_on": 47
     },
     {
-      "ticker": "CMI",
-      "ml_confidence": 0.5,
-      "ml_signal": "NEUTRAL",
-      "ml_trained_on": 0
+      "ticker": "LEE",
+      "ml_confidence": 0.2054,
+      "ml_signal": "WEAK",
+      "ml_trained_on": 47
     },
     {
-      "ticker": "COAG",
-      "ml_confidence": 0.5,
-      "ml_signal": "NEUTRAL",
-      "ml_trained_on": 0
+      "ticker": "MDLZ",
+      "ml_confidence": 0.3375,
+      "ml_signal": "WEAK",
+      "ml_trained_on": 47
     },
     {
-      "ticker": "COE",
-      "ml_confidence": 0.5,
-      "ml_signal": "NEUTRAL",
-      "ml_trained_on": 0
+      "ticker": "MKC",
+      "ml_confidence": 0.3375,
+      "ml_signal": "WEAK",
+      "ml_trained_on": 47
+    },
+    {
+      "ticker": "SPCX",
+      "ml_confidence": 0.3375,
+      "ml_signal": "WEAK",
+      "ml_trained_on": 47
     }
   ],
   "model_info": {
-    "trained_on": 0
+    "trained_on": 47
   }
 }

@@ -35,6 +35,24 @@ def banner(title: str) -> str:
     return f"\n{'━' * W}\n  {title}\n{'━' * W}"
 
 
+def get_paused_signals() -> set:
+    """Return the set of signal names currently paused in kairos_config.json.
+
+    Read fresh on every call so a config edit (e.g. the Arbiter approval flow's
+    `paused_signals` write) takes effect on the next screening cycle without a
+    restart. Returns an empty set on any read/parse failure so signal flow is
+    never blocked by a bad config.
+    """
+    config_file = os.path.join(SCRIPT_DIR, "kairos_config.json")
+    try:
+        with open(config_file) as f:
+            cfg = json.load(f)
+        raw = cfg.get("paused_signals", []) or []
+        return {str(s).strip().upper() for s in raw if str(s).strip()}
+    except (json.JSONDecodeError, IOError):
+        return set()
+
+
 # ═════════════════════════════════════════════════════════════════════
 # 1. EARNINGS SURPRISE — Finnhub /calendar/earnings (one bulk call)
 # ═════════════════════════════════════════════════════════════════════
@@ -536,6 +554,27 @@ def run_all_signals(
         signal_tags.setdefault(t, []).append("HOT-CONGRESS")
         for f in filings[:2]:
             print(f"    {t}: {f.get('member', '?')} on {f.get('date', '?')}")
+
+    # ── Suppress paused signals (kairos_config.json → paused_signals) ──
+    # Single chokepoint: drop any HOT classification whose signal type is paused
+    # BEFORE scores are upgraded or the summary is persisted. Both the council
+    # (kairos_reason.py) and the executor (get_ticker_signals) read the resulting
+    # signal_tags / kairos_signal_summary.json, so a paused signal is treated
+    # exactly as if it never fired everywhere downstream. Generation (the five
+    # detectors above) is untouched — this only filters what they produced.
+    paused = get_paused_signals()
+    if paused:
+        for ticker in list(signal_tags.keys()):
+            kept = []
+            for tag in signal_tags[ticker]:
+                if tag.strip().upper() in paused:
+                    print(f"  [PAUSED] {tag} suppressed for {ticker} (paused_signals)")
+                else:
+                    kept.append(tag)
+            if kept:
+                signal_tags[ticker] = kept
+            else:
+                del signal_tags[ticker]
 
     # ── Upgrade scores for any ticker that fired a signal ────────────
     upgraded = 0

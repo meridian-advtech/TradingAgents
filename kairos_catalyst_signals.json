@@ -1,0 +1,644 @@
+{
+  "signals": [
+    {
+      "ticker": "AMZN",
+      "setup": "SETUP1",
+      "right": "C",
+      "direction": "bullish",
+      "delta_band": "default",
+      "iv": 0.3113,
+      "iv_rank": 0.2482,
+      "spot": 238.9600067138672,
+      "rationale": "AMZN is 15d before Prime Day (2026-07-15) with IV rank 25% <= 50% \u2014 underpriced vol into a bullish catalyst. Long calls (Setup 1).",
+      "signals_fired": [
+        "HOT-CATALYST",
+        "SETUP1-PRECATALYST"
+      ],
+      "context": {
+        "event": "Prime Day",
+        "event_date": "2026-07-15",
+        "days_until_event": 15,
+        "pattern": "buildup"
+      }
+    },
+    {
+      "ticker": "CEG",
+      "setup": "SETUP2",
+      "right": "P",
+      "direction": "bearish",
+      "delta_band": "reversion",
+      "iv": 0.4762,
+      "iv_rank": 0.5018,
+      "spot": 246.6649932861328,
+      "rationale": "CEG dropped 10.6% over ~3d (pre-crush 275.81 -> 246.66, gap low 245.88). Tape reads broken -> long puts (Setup 2).",
+      "signals_fired": [
+        "HOT-CATALYST",
+        "SETUP2-BROKEN"
+      ],
+      "context": {
+        "drop_pct": 10.57,
+        "pre_crush_high": 275.81,
+        "gap_low": 245.88,
+        "last_close": 246.66,
+        "thesis": "broken"
+      }
+    },
+    {
+      "ticker": "KARD",
+      "setup": "SETUP2",
+      "right": "C",
+      "direction": "bullish",
+      "delta_band": "reversion",
+      "iv": null,
+      "iv_rank": null,
+      "spot": 24.270000457763672,
+      "rationale": "KARD dropped 10.1% over ~3d (pre-crush 27.00 -> 24.27, gap low 21.88). Tape reads intact -> long calls (Setup 2).",
+      "signals_fired": [
+        "HOT-CATALYST",
+        "SETUP2-INTACT"
+      ],
+      "context": {
+        "drop_pct": 10.11,
+        "pre_crush_high": 27.0,
+        "gap_low": 21.88,
+        "last_close": 24.27,
+        "thesis": "intact"
+      }
+    },
+    {
+      "ticker": "KMB",
+      "setup": "SETUP3",
+      "right": "P",
+      "direction": "bearish",
+      "delta_band": "flow",
+      "iv": 0.2568,
+      "iv_rank": 0.26,
+      "spot": 109.76499938964844,
+      "rationale": "KMB shows unusual options flow (skew_bearish; C/P 0.03x, bearish) and no earnings within 5d \u2014 follow the flow with long puts (Setup 3).",
+      "signals_fired": [
+        "HOT-CATALYST",
+        "HOT-OPTIONS",
+        "SETUP3-FLOW"
+      ],
+      "context": {
+        "triggered_by": [
+          "skew_bearish"
+        ],
+        "call_put_ratio": 0.03,
+        "vol_oi_ratio": 0.51,
+        "front_expiry": "20260417"
+      }
+    },
+    {
+      "ticker": "LCID",
+      "setup": "SETUP3",
+      "right": "C",
+      "direction": "bullish",
+      "delta_band": "flow",
+      "iv": 1.0391,
+      "iv_rank": 0.95,
+      "spot": 6.800000190734863,
+      "rationale": "LCID shows unusual options flow (iv_rank; C/P 1.58x, leaning_bullish) and no earnings within 5d \u2014 follow the flow with long calls (Setup 3).",
+      "signals_fired": [
+        "HOT-CATALYST",
+        "HOT-OPTIONS",
+        "SETUP3-FLOW"
+      ],
+      "context": {
+        "triggered_by": [
+          "iv_rank"
+        ],
+        "call_put_ratio": 1.58,
+        "vol_oi_ratio": 1.71,
+        "front_expiry": "20260417"
+      }
+    },
+    {
+      "ticker": "RIVN",
+      "setup": "SETUP3",
+      "right": "C",
+      "direction": "bullish",
+      "delta_band": "flow",
+      "iv": 0.6914,
+      "iv_rank": 0.8,
+      "spot": 17.46500015258789,
+      "rationale": "RIVN shows unusual options flow (skew_bullish; C/P 6.61x, bullish) and no earnings within 5d \u2014 follow the flow with long calls (Setup 3).",
+      "signals_fired": [
+        "HOT-CATALYST",
+        "HOT-OPTIONS",
+        "SETUP3-FLOW"
+      ],
+      "context": {
+        "triggered_by": [
+          "skew_bullish"
+        ],
+        "call_put_ratio": 6.61,
+        "vol_oi_ratio": 0.71,
+        "front_expiry": "20260417"
+      }
+    },
+    {
+      "ticker": "TTD",
+      "setup": "SETUP3",
+      "right": "C",
+      "direction": "bullish",
+      "delta_band": "flow",
+      "iv": 0.584,
+      "iv_rank": 0.88,
+      "spot": 18.0,
+      "rationale": "TTD shows unusual options flow (iv_rank; C/P 1.02x, leaning_bullish) and no earnings within 5d \u2014 follow the flow with long calls (Setup 3).",
+      "signals_fired": [
+        "HOT-CATALYST",
+        "HOT-OPTIONS",
+        "SETUP3-FLOW"
+      ],
+      "context": {
+        "triggered_by": [
+          "iv_rank"
+        ],
+        "call_put_ratio": 1.02,
+        "vol_oi_ratio": 2.14,
+        "front_expiry": "20260417"
+      }
+    },
+    {
+      "ticker": "W",
+      "setup": "SETUP3",
+      "right": "C",
+      "direction": "bullish",
+      "delta_band": "flow",
+      "iv": 0.6658,
+      "iv_rank": 1.0,
+      "spot": 91.71499633789062,
+      "rationale": "W shows unusual options flow (iv_rank, skew_bullish; C/P 4.07x, bullish) and no earnings within 5d \u2014 follow the flow with long calls (Setup 3).",
+      "signals_fired": [
+        "HOT-CATALYST",
+        "HOT-OPTIONS",
+        "SETUP3-FLOW"
+      ],
+      "context": {
+        "triggered_by": [
+          "iv_rank",
+          "skew_bullish"
+        ],
+        "call_put_ratio": 4.07,
+        "vol_oi_ratio": 0.3,
+        "front_expiry": "20260417"
+      }
+    },
+    {
+      "ticker": "WMT",
+      "setup": "SETUP3",
+      "right": "P",
+      "direction": "bearish",
+      "delta_band": "flow",
+      "iv": 0.2188,
+      "iv_rank": 0.24,
+      "spot": 113.38999938964844,
+      "rationale": "WMT shows unusual options flow (skew_bearish; C/P 0.36x, bearish) and no earnings within 5d \u2014 follow the flow with long puts (Setup 3).",
+      "signals_fired": [
+        "HOT-CATALYST",
+        "HOT-OPTIONS",
+        "SETUP3-FLOW"
+      ],
+      "context": {
+        "triggered_by": [
+          "skew_bearish"
+        ],
+        "call_put_ratio": 0.36,
+        "vol_oi_ratio": 0.23,
+        "front_expiry": "20260417"
+      }
+    },
+    {
+      "ticker": "FDX",
+      "setup": "SETUP3",
+      "right": "P",
+      "direction": "bearish",
+      "delta_band": "flow",
+      "iv": 0.3337,
+      "iv_rank": 0.38,
+      "spot": 311.95001220703125,
+      "rationale": "FDX shows unusual options flow (skew_bearish; C/P 0.05x, bearish) and no earnings within 5d \u2014 follow the flow with long puts (Setup 3).",
+      "signals_fired": [
+        "HOT-CATALYST",
+        "HOT-OPTIONS",
+        "SETUP3-FLOW"
+      ],
+      "context": {
+        "triggered_by": [
+          "skew_bearish"
+        ],
+        "call_put_ratio": 0.05,
+        "vol_oi_ratio": 0.12,
+        "front_expiry": "20260417"
+      }
+    },
+    {
+      "ticker": "C",
+      "setup": "SETUP3",
+      "right": "P",
+      "direction": "bearish",
+      "delta_band": "flow",
+      "iv": 0.2977,
+      "iv_rank": 0.49,
+      "spot": 139.75999450683594,
+      "rationale": "C shows unusual options flow (skew_bearish; C/P 0.39x, bearish) and no earnings within 5d \u2014 follow the flow with long puts (Setup 3).",
+      "signals_fired": [
+        "HOT-CATALYST",
+        "HOT-OPTIONS",
+        "SETUP3-FLOW"
+      ],
+      "context": {
+        "triggered_by": [
+          "skew_bearish"
+        ],
+        "call_put_ratio": 0.39,
+        "vol_oi_ratio": 0.1,
+        "front_expiry": "20260417"
+      }
+    },
+    {
+      "ticker": "EW",
+      "setup": "SETUP3",
+      "right": "C",
+      "direction": "bullish",
+      "delta_band": "flow",
+      "iv": 0.3351,
+      "iv_rank": 0.22,
+      "spot": 90.18000030517578,
+      "rationale": "EW shows unusual options flow (skew_bullish; C/P 8.0x, bullish) and no earnings within 5d \u2014 follow the flow with long calls (Setup 3).",
+      "signals_fired": [
+        "HOT-CATALYST",
+        "HOT-OPTIONS",
+        "SETUP3-FLOW"
+      ],
+      "context": {
+        "triggered_by": [
+          "skew_bullish"
+        ],
+        "call_put_ratio": 8.0,
+        "vol_oi_ratio": 0.05,
+        "front_expiry": "20260417"
+      }
+    },
+    {
+      "ticker": "ANET",
+      "setup": "SETUP3",
+      "right": "C",
+      "direction": "bullish",
+      "delta_band": "flow",
+      "iv": 0.5579,
+      "iv_rank": 0.63,
+      "spot": 171.19500732421875,
+      "rationale": "ANET shows unusual options flow (skew_bullish; C/P 39.76x, bullish) and no earnings within 5d \u2014 follow the flow with long calls (Setup 3).",
+      "signals_fired": [
+        "HOT-CATALYST",
+        "HOT-OPTIONS",
+        "SETUP3-FLOW"
+      ],
+      "context": {
+        "triggered_by": [
+          "skew_bullish"
+        ],
+        "call_put_ratio": 39.76,
+        "vol_oi_ratio": 2.07,
+        "front_expiry": "20260417"
+      }
+    }
+  ],
+  "by_ticker": {
+    "AMZN": [
+      {
+        "ticker": "AMZN",
+        "setup": "SETUP1",
+        "right": "C",
+        "direction": "bullish",
+        "delta_band": "default",
+        "iv": 0.3113,
+        "iv_rank": 0.2482,
+        "spot": 238.9600067138672,
+        "rationale": "AMZN is 15d before Prime Day (2026-07-15) with IV rank 25% <= 50% \u2014 underpriced vol into a bullish catalyst. Long calls (Setup 1).",
+        "signals_fired": [
+          "HOT-CATALYST",
+          "SETUP1-PRECATALYST"
+        ],
+        "context": {
+          "event": "Prime Day",
+          "event_date": "2026-07-15",
+          "days_until_event": 15,
+          "pattern": "buildup"
+        }
+      }
+    ],
+    "CEG": [
+      {
+        "ticker": "CEG",
+        "setup": "SETUP2",
+        "right": "P",
+        "direction": "bearish",
+        "delta_band": "reversion",
+        "iv": 0.4762,
+        "iv_rank": 0.5018,
+        "spot": 246.6649932861328,
+        "rationale": "CEG dropped 10.6% over ~3d (pre-crush 275.81 -> 246.66, gap low 245.88). Tape reads broken -> long puts (Setup 2).",
+        "signals_fired": [
+          "HOT-CATALYST",
+          "SETUP2-BROKEN"
+        ],
+        "context": {
+          "drop_pct": 10.57,
+          "pre_crush_high": 275.81,
+          "gap_low": 245.88,
+          "last_close": 246.66,
+          "thesis": "broken"
+        }
+      }
+    ],
+    "KARD": [
+      {
+        "ticker": "KARD",
+        "setup": "SETUP2",
+        "right": "C",
+        "direction": "bullish",
+        "delta_band": "reversion",
+        "iv": null,
+        "iv_rank": null,
+        "spot": 24.270000457763672,
+        "rationale": "KARD dropped 10.1% over ~3d (pre-crush 27.00 -> 24.27, gap low 21.88). Tape reads intact -> long calls (Setup 2).",
+        "signals_fired": [
+          "HOT-CATALYST",
+          "SETUP2-INTACT"
+        ],
+        "context": {
+          "drop_pct": 10.11,
+          "pre_crush_high": 27.0,
+          "gap_low": 21.88,
+          "last_close": 24.27,
+          "thesis": "intact"
+        }
+      }
+    ],
+    "KMB": [
+      {
+        "ticker": "KMB",
+        "setup": "SETUP3",
+        "right": "P",
+        "direction": "bearish",
+        "delta_band": "flow",
+        "iv": 0.2568,
+        "iv_rank": 0.26,
+        "spot": 109.76499938964844,
+        "rationale": "KMB shows unusual options flow (skew_bearish; C/P 0.03x, bearish) and no earnings within 5d \u2014 follow the flow with long puts (Setup 3).",
+        "signals_fired": [
+          "HOT-CATALYST",
+          "HOT-OPTIONS",
+          "SETUP3-FLOW"
+        ],
+        "context": {
+          "triggered_by": [
+            "skew_bearish"
+          ],
+          "call_put_ratio": 0.03,
+          "vol_oi_ratio": 0.51,
+          "front_expiry": "20260417"
+        }
+      }
+    ],
+    "LCID": [
+      {
+        "ticker": "LCID",
+        "setup": "SETUP3",
+        "right": "C",
+        "direction": "bullish",
+        "delta_band": "flow",
+        "iv": 1.0391,
+        "iv_rank": 0.95,
+        "spot": 6.800000190734863,
+        "rationale": "LCID shows unusual options flow (iv_rank; C/P 1.58x, leaning_bullish) and no earnings within 5d \u2014 follow the flow with long calls (Setup 3).",
+        "signals_fired": [
+          "HOT-CATALYST",
+          "HOT-OPTIONS",
+          "SETUP3-FLOW"
+        ],
+        "context": {
+          "triggered_by": [
+            "iv_rank"
+          ],
+          "call_put_ratio": 1.58,
+          "vol_oi_ratio": 1.71,
+          "front_expiry": "20260417"
+        }
+      }
+    ],
+    "RIVN": [
+      {
+        "ticker": "RIVN",
+        "setup": "SETUP3",
+        "right": "C",
+        "direction": "bullish",
+        "delta_band": "flow",
+        "iv": 0.6914,
+        "iv_rank": 0.8,
+        "spot": 17.46500015258789,
+        "rationale": "RIVN shows unusual options flow (skew_bullish; C/P 6.61x, bullish) and no earnings within 5d \u2014 follow the flow with long calls (Setup 3).",
+        "signals_fired": [
+          "HOT-CATALYST",
+          "HOT-OPTIONS",
+          "SETUP3-FLOW"
+        ],
+        "context": {
+          "triggered_by": [
+            "skew_bullish"
+          ],
+          "call_put_ratio": 6.61,
+          "vol_oi_ratio": 0.71,
+          "front_expiry": "20260417"
+        }
+      }
+    ],
+    "TTD": [
+      {
+        "ticker": "TTD",
+        "setup": "SETUP3",
+        "right": "C",
+        "direction": "bullish",
+        "delta_band": "flow",
+        "iv": 0.584,
+        "iv_rank": 0.88,
+        "spot": 18.0,
+        "rationale": "TTD shows unusual options flow (iv_rank; C/P 1.02x, leaning_bullish) and no earnings within 5d \u2014 follow the flow with long calls (Setup 3).",
+        "signals_fired": [
+          "HOT-CATALYST",
+          "HOT-OPTIONS",
+          "SETUP3-FLOW"
+        ],
+        "context": {
+          "triggered_by": [
+            "iv_rank"
+          ],
+          "call_put_ratio": 1.02,
+          "vol_oi_ratio": 2.14,
+          "front_expiry": "20260417"
+        }
+      }
+    ],
+    "W": [
+      {
+        "ticker": "W",
+        "setup": "SETUP3",
+        "right": "C",
+        "direction": "bullish",
+        "delta_band": "flow",
+        "iv": 0.6658,
+        "iv_rank": 1.0,
+        "spot": 91.71499633789062,
+        "rationale": "W shows unusual options flow (iv_rank, skew_bullish; C/P 4.07x, bullish) and no earnings within 5d \u2014 follow the flow with long calls (Setup 3).",
+        "signals_fired": [
+          "HOT-CATALYST",
+          "HOT-OPTIONS",
+          "SETUP3-FLOW"
+        ],
+        "context": {
+          "triggered_by": [
+            "iv_rank",
+            "skew_bullish"
+          ],
+          "call_put_ratio": 4.07,
+          "vol_oi_ratio": 0.3,
+          "front_expiry": "20260417"
+        }
+      }
+    ],
+    "WMT": [
+      {
+        "ticker": "WMT",
+        "setup": "SETUP3",
+        "right": "P",
+        "direction": "bearish",
+        "delta_band": "flow",
+        "iv": 0.2188,
+        "iv_rank": 0.24,
+        "spot": 113.38999938964844,
+        "rationale": "WMT shows unusual options flow (skew_bearish; C/P 0.36x, bearish) and no earnings within 5d \u2014 follow the flow with long puts (Setup 3).",
+        "signals_fired": [
+          "HOT-CATALYST",
+          "HOT-OPTIONS",
+          "SETUP3-FLOW"
+        ],
+        "context": {
+          "triggered_by": [
+            "skew_bearish"
+          ],
+          "call_put_ratio": 0.36,
+          "vol_oi_ratio": 0.23,
+          "front_expiry": "20260417"
+        }
+      }
+    ],
+    "FDX": [
+      {
+        "ticker": "FDX",
+        "setup": "SETUP3",
+        "right": "P",
+        "direction": "bearish",
+        "delta_band": "flow",
+        "iv": 0.3337,
+        "iv_rank": 0.38,
+        "spot": 311.95001220703125,
+        "rationale": "FDX shows unusual options flow (skew_bearish; C/P 0.05x, bearish) and no earnings within 5d \u2014 follow the flow with long puts (Setup 3).",
+        "signals_fired": [
+          "HOT-CATALYST",
+          "HOT-OPTIONS",
+          "SETUP3-FLOW"
+        ],
+        "context": {
+          "triggered_by": [
+            "skew_bearish"
+          ],
+          "call_put_ratio": 0.05,
+          "vol_oi_ratio": 0.12,
+          "front_expiry": "20260417"
+        }
+      }
+    ],
+    "C": [
+      {
+        "ticker": "C",
+        "setup": "SETUP3",
+        "right": "P",
+        "direction": "bearish",
+        "delta_band": "flow",
+        "iv": 0.2977,
+        "iv_rank": 0.49,
+        "spot": 139.75999450683594,
+        "rationale": "C shows unusual options flow (skew_bearish; C/P 0.39x, bearish) and no earnings within 5d \u2014 follow the flow with long puts (Setup 3).",
+        "signals_fired": [
+          "HOT-CATALYST",
+          "HOT-OPTIONS",
+          "SETUP3-FLOW"
+        ],
+        "context": {
+          "triggered_by": [
+            "skew_bearish"
+          ],
+          "call_put_ratio": 0.39,
+          "vol_oi_ratio": 0.1,
+          "front_expiry": "20260417"
+        }
+      }
+    ],
+    "EW": [
+      {
+        "ticker": "EW",
+        "setup": "SETUP3",
+        "right": "C",
+        "direction": "bullish",
+        "delta_band": "flow",
+        "iv": 0.3351,
+        "iv_rank": 0.22,
+        "spot": 90.18000030517578,
+        "rationale": "EW shows unusual options flow (skew_bullish; C/P 8.0x, bullish) and no earnings within 5d \u2014 follow the flow with long calls (Setup 3).",
+        "signals_fired": [
+          "HOT-CATALYST",
+          "HOT-OPTIONS",
+          "SETUP3-FLOW"
+        ],
+        "context": {
+          "triggered_by": [
+            "skew_bullish"
+          ],
+          "call_put_ratio": 8.0,
+          "vol_oi_ratio": 0.05,
+          "front_expiry": "20260417"
+        }
+      }
+    ],
+    "ANET": [
+      {
+        "ticker": "ANET",
+        "setup": "SETUP3",
+        "right": "C",
+        "direction": "bullish",
+        "delta_band": "flow",
+        "iv": 0.5579,
+        "iv_rank": 0.63,
+        "spot": 171.19500732421875,
+        "rationale": "ANET shows unusual options flow (skew_bullish; C/P 39.76x, bullish) and no earnings within 5d \u2014 follow the flow with long calls (Setup 3).",
+        "signals_fired": [
+          "HOT-CATALYST",
+          "HOT-OPTIONS",
+          "SETUP3-FLOW"
+        ],
+        "context": {
+          "triggered_by": [
+            "skew_bullish"
+          ],
+          "call_put_ratio": 39.76,
+          "vol_oi_ratio": 2.07,
+          "front_expiry": "20260417"
+        }
+      }
+    ]
+  }
+}

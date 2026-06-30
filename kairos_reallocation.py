@@ -747,41 +747,15 @@ def execute_reallocation(
 
     # Log to trade_outcomes for ML learning
     try:
-        from kairos_ml_outcomes import init_db, write_trade_close
+        from kairos_ml_outcomes import init_db, write_trade_close, find_open_trade
         init_db()
-        
-        # Get the original buy timestamp from decisions table
-        import sqlite3
-        conn = sqlite3.connect("kairos.db")
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT timestamp FROM decisions 
-            WHERE ticker = ? AND action = 'BUY'
-            ORDER BY timestamp DESC LIMIT 1
-        """, (exit_ticker,))
-        buy_timestamp = cursor.fetchone()
-        conn.close()
-        
-        timestamp_entry = buy_timestamp[0] if buy_timestamp else sell_date
-        
-        # Write to trade_outcomes table
-        write_trade_close(
-            decision_id=None,  # No matching decision ID for reallocations
-            fill_price=sell_price,
-            timestamp_exit=sell_date,
-            timestamp_entry=timestamp_entry,
-            ticker=exit_ticker,
-            action="SELL",
-            quantity=exit_qty,
-            price_entry=exit_avg_cost,
-            price_exit=sell_price,
-            pnl_dollars=pnl_dollars,
-            pnl_pct=pnl_pct,
-            signals_fired=json.dumps(["REALLOCATION"]),
-            confluence_score=0,  # Reallocations don't have confluence scores
-            outcome_label="REALLOCATION"
-        )
-        print(f"    ML Outcomes: recorded {exit_ticker} reallocation exit")
+        open_tid = find_open_trade(exit_ticker, "BUY")
+        if open_tid:
+            result = write_trade_close(open_tid, sell_price, timestamp_exit=sell_date)
+            print(f"    ML Outcomes: recorded {exit_ticker} reallocation exit "
+                  f"→ {result['outcome_label']} ({result['pnl_pct']:+.2f}%)")
+        else:
+            print(f"    ML Outcomes: no open {exit_ticker} BUY trade to close")
     except Exception as ml_exc:
         print(f"    WARNING: ML Outcomes logging failed: {ml_exc}")
 

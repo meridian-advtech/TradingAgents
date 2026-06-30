@@ -97,7 +97,7 @@ def send_slack_alert_if_needed(status: HealthStatus) -> None:
             "\n".join(fail_checks)
         )
         
-        post_message("kairos-alerts", alert_message)
+        post_message("alerts", alert_message)
         status.add_check("Slack Alert", "PASS", "Failure notification sent to #kairos-alerts")
         
     except Exception as e:

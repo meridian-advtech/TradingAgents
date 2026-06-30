@@ -76,3 +76,8 @@ venv/
 
 # === DASHBOARD HTML (generated) ===
 kairos_dashboard.html
+
+# === GAP FIXES (timestamped backups, rotated logs, runtime sidecar) ===
+*.bak_*
+*.log.[0-9]*
+kairos_axis_snapshot.json

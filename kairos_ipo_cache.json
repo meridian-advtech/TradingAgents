@@ -1,0 +1,672 @@
+{
+  "detected": {
+    "SPCX": {
+      "detected_at": "2026-06-15T09:30:24Z",
+      "name": "SpaceX",
+      "added": false
+    },
+    "KLAR": {
+      "detected_at": "2026-06-15T09:30:25Z",
+      "name": "Klarna",
+      "added": true
+    },
+    "CHYM": {
+      "detected_at": "2026-06-15T09:30:26Z",
+      "name": "Chime",
+      "added": true
+    },
+    "CBRS": {
+      "detected_at": "2026-06-15T09:30:26Z",
+      "name": "Cerebras",
+      "added": false
+    },
+    "STRK": {
+      "detected_at": "2026-06-24T13:37:49Z",
+      "name": "SpaceX",
+      "added": true
+    }
+  },
+  "s1_seen": {},
+  "event_alerts_sent": {},
+  "chain_alerts_sent": [
+    "2026-06-15",
+    "2026-06-16",
+    "2026-06-25",
+    "2026-06-29"
+  ],
+  "chain_signals": {
+    "date": "2026-06-30",
+    "signals": [],
+    "tier1_movers": {
+      "NVDA": 1.12,
+      "META": -1.24,
+      "AAPL": 1.04,
+      "AMD": 1.94
+    }
+  },
+  "pre_ipo_news": {},
+  "last_full_scan": "2026-06-24T09:37:49 ET",
+  "s1_filings_seen": {
+    "0002123169-26-000006": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "Luvulis Corp",
+      "filing_date": "2026-06-23",
+      "recommendation": "SKIP",
+      "total_score": 13
+    },
+    "0001683168-26-005056": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "Spin AI Inc.",
+      "filing_date": "2026-06-23",
+      "recommendation": "SKIP",
+      "total_score": 25
+    },
+    "0001575872-26-000437": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "CopperTech Metals Inc.",
+      "filing_date": "2026-06-23",
+      "recommendation": "WATCH",
+      "total_score": 45
+    },
+    "0001493152-26-029720": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "TEN Holdings, Inc.",
+      "filing_date": "2026-06-23",
+      "recommendation": "SKIP",
+      "total_score": 20
+    },
+    "0001140361-26-026079": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "Sinda Ltd.",
+      "filing_date": "2026-06-23",
+      "recommendation": "SKIP",
+      "total_score": 26
+    },
+    "0001683168-26-005003": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "AETHLON MEDICAL INC",
+      "filing_date": "2026-06-22",
+      "recommendation": "SKIP",
+      "total_score": 16
+    },
+    "0001628280-26-044471": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "Neutron Holdings, Inc.",
+      "filing_date": "2026-06-22",
+      "recommendation": "STRONG_BUY",
+      "total_score": 80
+    },
+    "0001493152-26-029643": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "Ambitious Entertainment, Inc.",
+      "filing_date": "2026-06-22",
+      "recommendation": "SKIP",
+      "total_score": 10
+    },
+    "0001493152-26-029436": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "MOBIX LABS, INC",
+      "filing_date": "2026-06-22",
+      "recommendation": "SKIP",
+      "total_score": 20
+    },
+    "0001437749-26-021318": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "Catheter Precision, Inc.",
+      "filing_date": "2026-06-22",
+      "recommendation": "SKIP",
+      "total_score": 16
+    },
+    "0001213900-26-070716": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "VenHub Global, Inc.",
+      "filing_date": "2026-06-22",
+      "recommendation": "SKIP",
+      "total_score": 20
+    },
+    "0001213900-26-070704": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "Nauticus Robotics, Inc.",
+      "filing_date": "2026-06-22",
+      "recommendation": "SKIP",
+      "total_score": 16
+    },
+    "0001213900-26-070685": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "Tenon Medical, Inc.",
+      "filing_date": "2026-06-22",
+      "recommendation": "WATCH",
+      "total_score": 50
+    },
+    "0001213900-26-070633": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "Cardinal Infrastructure Group Inc.",
+      "filing_date": "2026-06-22",
+      "recommendation": "STRONG_BUY",
+      "total_score": 75
+    },
+    "0001213900-26-070464": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "Creatd, Inc.",
+      "filing_date": "2026-06-22",
+      "recommendation": "SKIP",
+      "total_score": 15
+    },
+    "0001193125-26-277637": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "Gloo Holdings, Inc.",
+      "filing_date": "2026-06-22",
+      "recommendation": "SKIP",
+      "total_score": 20
+    },
+    "0001193125-26-276706": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "Ambiq Micro, Inc.",
+      "filing_date": "2026-06-22",
+      "recommendation": "SKIP",
+      "total_score": 28
+    },
+    "0001193125-26-276672": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "ITG, Inc./DE/",
+      "filing_date": "2026-06-22",
+      "recommendation": "STRONG_BUY",
+      "total_score": 75
+    },
+    "0001140361-26-025837": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "Sinda Ltd.",
+      "filing_date": "2026-06-22",
+      "recommendation": "SKIP",
+      "total_score": 26
+    },
+    "0001104659-26-076488": {
+      "seen_at": "2026-06-24T13:34:57Z",
+      "company": "DPC Holdings Ltd",
+      "filing_date": "2026-06-22",
+      "recommendation": "STRONG_BUY",
+      "total_score": 70
+    }
+  },
+  "forced_screens": {
+    "CBRS": 4,
+    "SPCX": 83,
+    "NEU": 3,
+    "CARD": 17
+  },
+  "scored_filings": {
+    "SPCX-manual": {
+      "entity_name": "Space Exploration Technologies Corp.",
+      "ticker": "SPCX",
+      "filing_date": "2026-05-15",
+      "total_score": 95,
+      "revenue": 15500000000,
+      "revenue_growth_pct": 55,
+      "lead_underwriters": [
+        "Goldman Sachs",
+        "Morgan Stanley",
+        "JPMorgan"
+      ],
+      "target_raise_usd": 75000000000,
+      "offering_price": 135.0,
+      "recommendation": "STRONG_BUY",
+      "rationale": "Revenue $15.5B +55% YoY, GS/MS/JPM, $75B raise, xAI = direct AI play"
+    },
+    "0002123169-26-000006": {
+      "entity_name": "Luvulis Corp",
+      "cik": "2123169",
+      "accession_number": "0002123169-26-000006",
+      "filing_date": "2026-06-23",
+      "total_score": 13,
+      "revenue_score": 0,
+      "growth_score": 0,
+      "underwriter_score": 10,
+      "raise_score": 3,
+      "sector_score": 0,
+      "revenue": null,
+      "revenue_growth_pct": null,
+      "lead_underwriters": [
+        "UBS"
+      ],
+      "target_raise_usd": 1398.0,
+      "recommendation": "SKIP",
+      "rationale": "Score 13/100: unknown rev; led by UBS; $0M raise",
+      "extraction_quality": "full"
+    },
+    "0001683168-26-005056": {
+      "entity_name": "Spin AI Inc.",
+      "cik": "2139511",
+      "accession_number": "0001683168-26-005056",
+      "filing_date": "2026-06-23",
+      "total_score": 25,
+      "revenue_score": 0,
+      "growth_score": 0,
+      "underwriter_score": 15,
+      "raise_score": 0,
+      "sector_score": 10,
+      "revenue": null,
+      "revenue_growth_pct": null,
+      "lead_underwriters": [
+        "JPMorgan",
+        "UBS"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "SKIP",
+      "rationale": "Score 25/100: unknown rev; led by JPMorgan, UBS; high-signal sector",
+      "extraction_quality": "partial"
+    },
+    "0001575872-26-000437": {
+      "entity_name": "CopperTech Metals Inc.",
+      "cik": "2093018",
+      "accession_number": "0001575872-26-000437",
+      "filing_date": "2026-06-23",
+      "total_score": 45,
+      "revenue_score": 30,
+      "growth_score": 0,
+      "underwriter_score": 15,
+      "raise_score": 0,
+      "sector_score": 0,
+      "revenue": 18200000000.0,
+      "revenue_growth_pct": null,
+      "lead_underwriters": [
+        "Merrill Lynch",
+        "Citigroup",
+        "Credit Suisse",
+        "UBS"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "WATCH",
+      "rationale": "Score 45/100: $18.2B rev; led by Merrill Lynch, Citigroup",
+      "extraction_quality": "full"
+    },
+    "0001493152-26-029720": {
+      "entity_name": "TEN Holdings, Inc.",
+      "cik": "2030954",
+      "accession_number": "0001493152-26-029720",
+      "filing_date": "2026-06-23",
+      "total_score": 20,
+      "revenue_score": 0,
+      "growth_score": 0,
+      "underwriter_score": 10,
+      "raise_score": 0,
+      "sector_score": 10,
+      "revenue": null,
+      "revenue_growth_pct": null,
+      "lead_underwriters": [
+        "UBS"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "SKIP",
+      "rationale": "Score 20/100: unknown rev; led by UBS; high-signal sector",
+      "extraction_quality": "partial"
+    },
+    "0001140361-26-026079": {
+      "entity_name": "Sinda Ltd.",
+      "cik": "2096861",
+      "accession_number": "0001140361-26-026079",
+      "filing_date": "2026-06-23",
+      "total_score": 26,
+      "revenue_score": 0,
+      "growth_score": 0,
+      "underwriter_score": 20,
+      "raise_score": 0,
+      "sector_score": 6,
+      "revenue": null,
+      "revenue_growth_pct": null,
+      "lead_underwriters": [
+        "Morgan Stanley",
+        "J.P. Morgan",
+        "Merrill Lynch",
+        "Citigroup",
+        "UBS"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "SKIP",
+      "rationale": "Score 26/100: unknown rev; led by Morgan Stanley, J.P. Morgan",
+      "extraction_quality": "full"
+    },
+    "0001683168-26-005003": {
+      "entity_name": "AETHLON MEDICAL INC",
+      "cik": "882291",
+      "accession_number": "0001683168-26-005003",
+      "filing_date": "2026-06-22",
+      "total_score": 16,
+      "revenue_score": 0,
+      "growth_score": 0,
+      "underwriter_score": 10,
+      "raise_score": 0,
+      "sector_score": 6,
+      "revenue": null,
+      "revenue_growth_pct": null,
+      "lead_underwriters": [
+        "UBS"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "SKIP",
+      "rationale": "Score 16/100: unknown rev; led by UBS",
+      "extraction_quality": "partial"
+    },
+    "0001628280-26-044471": {
+      "entity_name": "Neutron Holdings, Inc.",
+      "cik": "1699963",
+      "accession_number": "0001628280-26-044471",
+      "filing_date": "2026-06-22",
+      "total_score": 80,
+      "revenue_score": 25,
+      "growth_score": 25,
+      "underwriter_score": 20,
+      "raise_score": 0,
+      "sector_score": 10,
+      "revenue": 522000000.0,
+      "revenue_growth_pct": 304.7,
+      "lead_underwriters": [
+        "Goldman Sachs",
+        "J.P. Morgan",
+        "JPMorgan",
+        "Citi",
+        "UBS",
+        "Jefferies",
+        "Evercore"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "STRONG_BUY",
+      "rationale": "Score 80/100: $522M rev; +305% growth; led by Goldman Sachs, J.P. Morgan; high-signal sector",
+      "extraction_quality": "full"
+    },
+    "0001493152-26-029643": {
+      "entity_name": "Ambitious Entertainment, Inc.",
+      "cik": "1900851",
+      "accession_number": "0001493152-26-029643",
+      "filing_date": "2026-06-22",
+      "total_score": 10,
+      "revenue_score": 0,
+      "growth_score": 0,
+      "underwriter_score": 10,
+      "raise_score": 0,
+      "sector_score": 0,
+      "revenue": 1225000.0,
+      "revenue_growth_pct": 2.1,
+      "lead_underwriters": [
+        "UBS"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "SKIP",
+      "rationale": "Score 10/100: $1M rev; +2% growth; led by UBS",
+      "extraction_quality": "full"
+    },
+    "0001493152-26-029436": {
+      "entity_name": "MOBIX LABS, INC",
+      "cik": "1855467",
+      "accession_number": "0001493152-26-029436",
+      "filing_date": "2026-06-22",
+      "total_score": 20,
+      "revenue_score": 0,
+      "growth_score": 0,
+      "underwriter_score": 10,
+      "raise_score": 0,
+      "sector_score": 10,
+      "revenue": null,
+      "revenue_growth_pct": null,
+      "lead_underwriters": [
+        "UBS"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "SKIP",
+      "rationale": "Score 20/100: unknown rev; led by UBS; high-signal sector",
+      "extraction_quality": "full"
+    },
+    "0001437749-26-021318": {
+      "entity_name": "Catheter Precision, Inc.",
+      "cik": "1716621",
+      "accession_number": "0001437749-26-021318",
+      "filing_date": "2026-06-22",
+      "total_score": 16,
+      "revenue_score": 0,
+      "growth_score": 0,
+      "underwriter_score": 10,
+      "raise_score": 0,
+      "sector_score": 6,
+      "revenue": 200000.0,
+      "revenue_growth_pct": null,
+      "lead_underwriters": [
+        "UBS"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "SKIP",
+      "rationale": "Score 16/100: $200,000 rev; led by UBS",
+      "extraction_quality": "full"
+    },
+    "0001213900-26-070716": {
+      "entity_name": "VenHub Global, Inc.",
+      "cik": "1972234",
+      "accession_number": "0001213900-26-070716",
+      "filing_date": "2026-06-22",
+      "total_score": 20,
+      "revenue_score": 0,
+      "growth_score": 0,
+      "underwriter_score": 10,
+      "raise_score": 0,
+      "sector_score": 10,
+      "revenue": null,
+      "revenue_growth_pct": null,
+      "lead_underwriters": [
+        "UBS"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "SKIP",
+      "rationale": "Score 20/100: unknown rev; led by UBS; high-signal sector",
+      "extraction_quality": "partial"
+    },
+    "0001213900-26-070704": {
+      "entity_name": "Nauticus Robotics, Inc.",
+      "cik": "1849820",
+      "accession_number": "0001213900-26-070704",
+      "filing_date": "2026-06-22",
+      "total_score": 16,
+      "revenue_score": 0,
+      "growth_score": 0,
+      "underwriter_score": 10,
+      "raise_score": 0,
+      "sector_score": 6,
+      "revenue": null,
+      "revenue_growth_pct": null,
+      "lead_underwriters": [
+        "UBS"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "SKIP",
+      "rationale": "Score 16/100: unknown rev; led by UBS",
+      "extraction_quality": "partial"
+    },
+    "0001213900-26-070685": {
+      "entity_name": "Tenon Medical, Inc.",
+      "cik": "1560293",
+      "accession_number": "0001213900-26-070685",
+      "filing_date": "2026-06-22",
+      "total_score": 50,
+      "revenue_score": 30,
+      "growth_score": 0,
+      "underwriter_score": 10,
+      "raise_score": 0,
+      "sector_score": 10,
+      "revenue": 1235000000.0,
+      "revenue_growth_pct": null,
+      "lead_underwriters": [
+        "UBS"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "WATCH",
+      "rationale": "Score 50/100: $1.2B rev; led by UBS; high-signal sector",
+      "extraction_quality": "full"
+    },
+    "0001213900-26-070633": {
+      "entity_name": "Cardinal Infrastructure Group Inc.",
+      "cik": "2079999",
+      "accession_number": "0001213900-26-070633",
+      "filing_date": "2026-06-22",
+      "total_score": 75,
+      "revenue_score": 30,
+      "growth_score": 25,
+      "underwriter_score": 10,
+      "raise_score": 0,
+      "sector_score": 10,
+      "revenue": 1235000000.0,
+      "revenue_growth_pct": 637.3,
+      "lead_underwriters": [
+        "UBS"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "STRONG_BUY",
+      "rationale": "Score 75/100: $1.2B rev; +637% growth; led by UBS; high-signal sector",
+      "extraction_quality": "full"
+    },
+    "0001213900-26-070464": {
+      "entity_name": "Creatd, Inc.",
+      "cik": "1357671",
+      "accession_number": "0001213900-26-070464",
+      "filing_date": "2026-06-22",
+      "total_score": 15,
+      "revenue_score": 0,
+      "growth_score": 0,
+      "underwriter_score": 15,
+      "raise_score": 0,
+      "sector_score": 0,
+      "revenue": 203727.0,
+      "revenue_growth_pct": -89.4,
+      "lead_underwriters": [
+        "Bank of America",
+        "Merrill Lynch",
+        "UBS"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "SKIP",
+      "rationale": "Score 15/100: $203,727 rev; -89% growth; led by Bank of America, Merrill Lynch",
+      "extraction_quality": "full"
+    },
+    "0001193125-26-277637": {
+      "entity_name": "Gloo Holdings, Inc.",
+      "cik": "2069785",
+      "accession_number": "0001193125-26-277637",
+      "filing_date": "2026-06-22",
+      "total_score": 20,
+      "revenue_score": 0,
+      "growth_score": 0,
+      "underwriter_score": 10,
+      "raise_score": 0,
+      "sector_score": 10,
+      "revenue": null,
+      "revenue_growth_pct": null,
+      "lead_underwriters": [
+        "UBS"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "SKIP",
+      "rationale": "Score 20/100: unknown rev; led by UBS; high-signal sector",
+      "extraction_quality": "partial"
+    },
+    "0001193125-26-276706": {
+      "entity_name": "Ambiq Micro, Inc.",
+      "cik": "1500412",
+      "accession_number": "0001193125-26-276706",
+      "filing_date": "2026-06-22",
+      "total_score": 28,
+      "revenue_score": 0,
+      "growth_score": 0,
+      "underwriter_score": 15,
+      "raise_score": 3,
+      "sector_score": 10,
+      "revenue": null,
+      "revenue_growth_pct": null,
+      "lead_underwriters": [
+        "BofA",
+        "UBS"
+      ],
+      "target_raise_usd": 10000000.0,
+      "recommendation": "SKIP",
+      "rationale": "Score 28/100: unknown rev; led by BofA, UBS; $10M raise; high-signal sector",
+      "extraction_quality": "full"
+    },
+    "0001193125-26-276672": {
+      "entity_name": "ITG, Inc./DE/",
+      "cik": "2110117",
+      "accession_number": "0001193125-26-276672",
+      "filing_date": "2026-06-22",
+      "total_score": 75,
+      "revenue_score": 30,
+      "growth_score": 25,
+      "underwriter_score": 20,
+      "raise_score": 0,
+      "sector_score": 0,
+      "revenue": 1235000000.0,
+      "revenue_growth_pct": 9048.1,
+      "lead_underwriters": [
+        "Morgan Stanley",
+        "J.P. Morgan",
+        "BofA",
+        "Merrill Lynch",
+        "Citigroup",
+        "Deutsche Bank",
+        "Wells Fargo",
+        "UBS"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "STRONG_BUY",
+      "rationale": "Score 75/100: $1.2B rev; +9048% growth; led by Morgan Stanley, J.P. Morgan",
+      "extraction_quality": "full"
+    },
+    "0001140361-26-025837": {
+      "entity_name": "Sinda Ltd.",
+      "cik": "2096861",
+      "accession_number": "0001140361-26-025837",
+      "filing_date": "2026-06-22",
+      "total_score": 26,
+      "revenue_score": 0,
+      "growth_score": 0,
+      "underwriter_score": 20,
+      "raise_score": 0,
+      "sector_score": 6,
+      "revenue": null,
+      "revenue_growth_pct": null,
+      "lead_underwriters": [
+        "Morgan Stanley",
+        "J.P. Morgan",
+        "Merrill Lynch",
+        "Citigroup",
+        "UBS"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "SKIP",
+      "rationale": "Score 26/100: unknown rev; led by Morgan Stanley, J.P. Morgan",
+      "extraction_quality": "full"
+    },
+    "0001104659-26-076488": {
+      "entity_name": "DPC Holdings Ltd",
+      "cik": "2107018",
+      "accession_number": "0001104659-26-076488",
+      "filing_date": "2026-06-22",
+      "total_score": 70,
+      "revenue_score": 25,
+      "growth_score": 25,
+      "underwriter_score": 20,
+      "raise_score": 0,
+      "sector_score": 0,
+      "revenue": 837000000.0,
+      "revenue_growth_pct": 253.2,
+      "lead_underwriters": [
+        "Morgan Stanley",
+        "J.P. Morgan",
+        "Barclays",
+        "Wells Fargo",
+        "UBS",
+        "Jefferies"
+      ],
+      "target_raise_usd": null,
+      "recommendation": "STRONG_BUY",
+      "rationale": "Score 70/100: $837M rev; +253% growth; led by Morgan Stanley, J.P. Morgan",
+      "extraction_quality": "full"
+    }
+  },
+  "event_forced_screens": {
+    "AMZN:Prime Day:2026-07-15": 3
+  }
+}

@@ -86,7 +86,11 @@ def _install_ibkr_error_filter():
     # Add a DEBUG-level file handler so 10091 is still captured for diagnostics
     debug_log = os.path.join(SCRIPT_DIR, "kairos_ibkr_debug.log")
     try:
-        fh = logging.FileHandler(debug_log, mode="a")
+        from logging.handlers import RotatingFileHandler
+        # Size-capped so 10091 diagnostics can't grow unbounded (was 1.7 GB).
+        # 50 MB/file × 3 backups = 200 MB ceiling.
+        fh = RotatingFileHandler(
+            debug_log, mode="a", maxBytes=50 * 1024 * 1024, backupCount=3)
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(logging.Formatter(
             "%(asctime)s [%(name)s] %(levelname)s: %(message)s"))
@@ -472,6 +476,59 @@ def _invoke_claude_reasoning(prompt_file: str, cfg: dict) -> dict | None:
                       f"shortlisted ticker(s)")
     except Exception as ipo_exc:
         print(f"  WARNING: IPO prompt injection failed: {ipo_exc}")
+
+    # Enhanced IPO DECISION ENGINE block for high-conviction EDGAR IPOs.
+    # For any shortlisted ticker with a scored_filing >= 70, inject the
+    # full entry-scoring breakdown and instruct Claude that standard HOT
+    # signal requirements do NOT apply — evaluate on IPO metrics instead.
+    try:
+        from kairos_ipo_intake import (
+            _load_cache as _ipo_load_cache,
+            _find_scored_filing, score_ipo_for_entry,
+        )
+        shortlist_for_edgar = get_screening_shortlist() or []
+        if shortlist_for_edgar:
+            _ipo_cache = _ipo_load_cache()
+            edgar_blocks: list[str] = []
+            for t in shortlist_for_edgar:
+                sf = _find_scored_filing(str(t).upper(), _ipo_cache)
+                if not sf or int(sf.get("total_score") or 0) < 70:
+                    continue
+                d = score_ipo_for_entry(str(t).upper())
+                op = d.get("offering_price")
+                cp = d.get("current_price")
+                d1 = d.get("day1_performance")
+                uw = ", ".join(d.get("lead_underwriters") or []) or "n/a"
+                rev = d.get("revenue")
+                rev_str = f"${rev:,.0f}" if rev else "n/a"
+                grw = d.get("revenue_growth_pct")
+                grw_str = f"{grw:.0f}" if grw is not None else "n/a"
+                edgar_blocks.append(
+                    f"IPO DECISION ENGINE — {t} ({d.get('entity_name') or t}):\n"
+                    f"  EDGAR Score: {d.get('edgar_score')}/100 "
+                    f"({d.get('recommendation')})\n"
+                    f"  Offering price: {('$%.2f' % op) if op else 'n/a'} | "
+                    f"Current: {('$%.2f' % cp) if cp else 'n/a'} "
+                    f"({('%+.1f%%' % d1) if d1 is not None else 'n/a'} from offering)\n"
+                    f"  Days since IPO: {d.get('days_since_ipo')}\n"
+                    f"  Revenue: {rev_str} | Growth: {grw_str}% | "
+                    f"Lead underwriters: {uw}\n"
+                    f"  Entry score: {d.get('entry_score')}/100 | "
+                    f"Suggested size: {d.get('position_size_pct')}% NLV\n"
+                    f"  Rationale: {d.get('rationale')}\n"
+                    f"  INSTRUCTION: This is a high-conviction IPO. Standard "
+                    f"signal requirements do not apply. Evaluate based on IPO "
+                    f"metrics above, not absence of HOT signals."
+                )
+            if edgar_blocks:
+                prompt_text = (
+                    "=== IPO DECISION ENGINE ===\n"
+                    + "\n\n".join(edgar_blocks) + "\n\n" + prompt_text
+                )
+                print(f"  IPO decision engine: injected for "
+                      f"{len(edgar_blocks)} high-conviction IPO(s)")
+    except Exception as edgar_exc:
+        print(f"  WARNING: IPO decision-engine injection failed: {edgar_exc}")
 
     # Prepend the event-driven seasonality block whenever a tracked
     # calendar event is in window. Block instructs Claude to raise
@@ -1781,6 +1838,33 @@ def run_reason():
 def run_execute():
     phase_banner(3, "EXECUTE — Order Placement + Confirmation")
 
+    # FIX #6: bail before placing any orders if the gather phase flagged stale
+    # (frozen-feed) marks this cycle. Reporting/logging already ran; only order
+    # placement is blocked.
+    try:
+        from kairos_reason import marks_are_stale
+        _stale, _stale_detail = marks_are_stale()
+    except Exception as _stale_exc:
+        _stale, _stale_detail = False, {}
+        print(f"  WARNING: stale-marks check failed ({_stale_exc}); proceeding.")
+
+    if _stale:
+        affected = _stale_detail.get("affected", [])
+        print("  WARNING: STALE MARKS — skipping order placement this cycle "
+              f"({_stale_detail.get('close_count', '?')}/{_stale_detail.get('priced', '?')} "
+              f"prices via prior-close fallback). No orders will be placed.")
+        try:
+            from kairos_alerts import post_message
+            post_message(
+                "reports",
+                ":no_entry: *Kairos execute SKIPPED — stale market-data marks.* "
+                f"No orders placed this cycle. Affected: "
+                f"{', '.join(affected) if affected else 'n/a'}.",
+            )
+        except Exception as _alert_exc:
+            print(f"  WARNING: stale-skip Slack note failed: {_alert_exc}")
+        return
+
     if not has_fresh_decision():
         print("  ERROR: No decision in kairos_decisions.log. Run reasoning first.")
         sys.exit(1)
@@ -2113,6 +2197,54 @@ def run_scheduled_cycle(args) -> None:
             print(f"  WARNING: Stale order cleanup failed: {exc}\n{tb}")
             _log_phase_crash("stale_order_cleanup", exc, tb)
 
+        # DB-side reconciliation: true up rows stuck at 'Submitted' whose DAY
+        # order already expired off IBKR (cancel_stale_orders can't see those —
+        # it only walks still-live open orders). Runs AFTER cancellation so any
+        # order just cancelled gets its row trued up on the next cycle's pass.
+        try:
+            from kairos_execute import reconcile_submitted_orders
+            r = reconcile_submitted_orders(grace_minutes=30)
+            print(f"  Submitted orders reconciled (Expired): {r}")
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"  WARNING: Submitted order reconciliation failed: {exc}\n{tb}")
+            _log_phase_crash("submitted_order_reconcile", exc, tb)
+
+        # Position reconciliation: IBKR is the source of truth for what we
+        # actually hold. Runs LAST in Phase 0 so it trues up anything the two
+        # order reconcilers above just touched — catching orphans (broker holds,
+        # no DB lot → unmanaged), qty/cost drift, lot fragmentation, and phantoms
+        # (DB open, broker flat → an unrecorded exit). Read-only at the broker;
+        # writes only to kairos.db holdings. dry_run=False = real write pass.
+        try:
+            from kairos_execute import reconcile_positions_against_broker
+            recon = reconcile_positions_against_broker(dry_run=False)
+            print(f"  Positions reconciled — created={len(recon['created'])} "
+                  f"updated={len(recon['updated'])} phantom={len(recon['phantom'])} "
+                  f"merged={len(recon['merged'])}")
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"  WARNING: Position reconciliation failed: {exc}\n{tb}")
+            _log_phase_crash("position_reconcile", exc, tb)
+
+    # Phase 0: IPO Day-1 engine — runs EVERY cycle (not gated by the daily
+    # full scan). Lightweight: probes pending-reservation discoveries and
+    # creates reservations the moment a STRONG_BUY IPO starts trading, so
+    # kairos_ipo_execute.py can act on it the same cycle.
+    if run_equity:
+        try:
+            from kairos_ipo_intake import run_ipo_day1_engine
+            day1 = run_ipo_day1_engine()
+            if day1.get("new_reservations"):
+                print(f"  IPO Day-1: {day1['new_reservations']} new reservation(s)")
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"  WARNING: IPO Day-1 engine failed: {exc}\n{tb}")
+            _log_phase_crash("ipo_day1_engine", exc, tb)
+
     # a. Intake
     if _should_run("intake", cycle, intervals):
         phase_banner("I", "TIER C INTAKE")
@@ -2317,7 +2449,9 @@ def run_scheduled_cycle(args) -> None:
             in_window = (et_now.hour == thesis_h
                          and thesis_m <= et_now.minute < thesis_m + 30)
             if is_weekday and in_window:
-                phase_banner("TR", "DAILY THESIS REVIEW — 9:35 ET")
+                phase_banner("TR", "DAILY THESIS REVIEW — signal-validity gate, 9:35 ET")
+                print("  Thesis validity engine active — time windows replaced "
+                      "with signal validity scoring.")
                 from kairos_thesis_review import run_thesis_review
                 run_thesis_review(dry_run=args.screen_dry_run)
         except Exception as exc:
@@ -2325,6 +2459,29 @@ def run_scheduled_cycle(args) -> None:
             tb = traceback.format_exc()
             print(f"  WARNING: Thesis review failed: {exc}\n{tb}")
             _log_phase_crash("thesis_review", exc, tb)
+
+    # b3. End-of-day NLV snapshot — capture account value once per ET day on the
+    # cycle that lands in the configured close window (reuses the Exit Engine's
+    # _in_close_window). Read-only on IBKR; the UPSERT is keyed on the ET date so
+    # a re-run overwrites (no dupes), and the existence guard means we connect at
+    # most once/day. Enables daily/weekly P&L, drawdown, and rolling-return trends.
+    if run_equity:
+        try:
+            from zoneinfo import ZoneInfo
+            from kairos_exits import _in_close_window
+            et_today = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+            if _in_close_window():
+                from kairos_execute import nlv_snapshot_exists, write_nlv_snapshot
+                if nlv_snapshot_exists(et_today):
+                    print(f"  NLV snapshot already recorded for {et_today} — skipping")
+                else:
+                    phase_banner("NLV", "END-OF-DAY NLV SNAPSHOT")
+                    write_nlv_snapshot()
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"  WARNING: NLV snapshot failed: {exc}\n{tb}")
+            _log_phase_crash("nlv_snapshot", exc, tb)
 
     # c. Screener (includes regime + stop-loss)
     shortlist = None

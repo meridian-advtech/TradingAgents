@@ -18,7 +18,7 @@ import os
 import sqlite3
 import statistics
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 SCRIPT_DIR    = os.path.dirname(os.path.abspath(__file__))
 DB_PATH       = os.path.join(SCRIPT_DIR, "kairos.db")
@@ -141,6 +141,105 @@ def _resolve_ticker_names(symbols: list[str]) -> dict[str, str]:
 
 # ── IBKR data ─────────────────────────────────────────────────────────
 
+def _ibkr_marks(ib, symbols: list[str]) -> dict:
+    """Pull per-symbol marks from IBKR, live-preferred with a delayed fallback.
+
+    Returns {sym: (price, mdtype)} where mdtype is 1=live, 3=delayed, 4=frozen,
+    or (None, None) if no price. Replaces the yfinance per-position lookup, which
+    gets rate-limited (429) and silently falls back to avg cost — freezing the
+    dashboard. Delayed data flows even when the live entitlement is impaired.
+    """
+    from ib_insync import Stock
+    import logging
+    # Silence the expected per-ticker 10089 "delayed available" / 300 notices so
+    # they don't flood the cron log (57 tickers x 2 passes).
+    _iblog = logging.getLogger("ib_insync")
+    _iblog_prev = _iblog.level
+    _iblog.setLevel(logging.CRITICAL)
+
+    def _pick(t):
+        for v in (t.last, t.close):
+            if v is not None and v == v and v > 0:   # not None, not NaN, positive
+                return round(float(v), 2)
+        return None
+
+    syms = sorted({s for s in symbols if s})
+    contracts = {}
+    for s in syms:
+        try:
+            c = Stock(s, "SMART", "USD")
+            ib.qualifyContracts(c)
+            contracts[s] = c
+        except Exception:
+            pass
+
+    out: dict = {}
+    # Pass 1 — live (type 1). Whatever doesn't tick gets retried as delayed.
+    ib.reqMarketDataType(1)
+    tickers = {s: ib.reqMktData(c, "", False, False) for s, c in contracts.items()}
+    ib.sleep(4)
+    missing = []
+    for s, t in tickers.items():
+        px = _pick(t)
+        if px is not None:
+            out[s] = (px, t.marketDataType)
+        else:
+            missing.append(s)
+        try:
+            ib.cancelMktData(contracts[s])
+        except Exception:
+            pass
+    # Pass 2 — delayed (type 3) for anything still missing.
+    if missing:
+        ib.reqMarketDataType(3)
+        t2 = {s: ib.reqMktData(contracts[s], "", False, False) for s in missing}
+        ib.sleep(4)
+        for s, t in t2.items():
+            px = _pick(t)
+            out[s] = (px, t.marketDataType) if px is not None else (None, None)
+            try:
+                ib.cancelMktData(contracts[s])
+            except Exception:
+                pass
+    _iblog.setLevel(_iblog_prev)
+    return out
+
+
+def _ibkr_live_available(ib) -> bool:
+    """True only if IBKR is serving LIVE (type-1) ticks right now.
+
+    Probes a liquid reference (SPY) so staleness detection never depends on how
+    many positions happened to price. Returns False on delayed-only / no-tick /
+    error (e.g. 10089 when the live entitlement is down).
+    """
+    from ib_insync import Stock
+    import logging
+    _lg = logging.getLogger("ib_insync")
+    _prev = _lg.level
+    _lg.setLevel(logging.CRITICAL)
+    try:
+        ib.reqMarketDataType(1)
+        c = Stock("SPY", "SMART", "USD")
+        ib.qualifyContracts(c)
+        t = ib.reqMktData(c, "", False, False)
+        live = False
+        for _ in range(3):
+            ib.sleep(2)
+            if (t.last is not None and t.last == t.last
+                    and t.marketDataType == 1):
+                live = True
+                break
+        try:
+            ib.cancelMktData(c)
+        except Exception:
+            pass
+        return live
+    except Exception:
+        return False
+    finally:
+        _lg.setLevel(_prev)
+
+
 def fetch_ibkr_data() -> dict:
     """Connect to IBKR TWS on port 7497, pull account summary and positions."""
     try:
@@ -161,8 +260,23 @@ def fetch_ibkr_data() -> dict:
         except ImportError:
             lookup_sector = lambda sym: "unknown"
 
+        # Resilient marks: one IBKR pull (live-preferred, delayed fallback),
+        # replacing the rate-limited yfinance per-position lookup.
+        _all_pos = ib.positions()
+        if not _all_pos and float(acct.get("GrossPositionValue", 0.0) or 0) > 0:
+            # Empty positions but the account holds value → a slow/just-restarted
+            # Gateway returned nothing; force a fresh request before trusting 0.
+            try:
+                ib.reqPositions()
+                ib.sleep(3)
+                _all_pos = ib.positions()
+            except Exception:
+                pass
+        _marks = _ibkr_marks(ib, [pp.contract.symbol for pp in _all_pos
+                                  if pp.contract.secType not in ("CRYPTO", "CFD")])
+        _mark_modes = []
         positions, crypto_val = [], 0.0
-        for p in ib.positions():
+        for p in _all_pos:
             sym = p.contract.symbol
             sec = p.contract.secType
             qty = float(p.position)
@@ -170,46 +284,20 @@ def fetch_ibkr_data() -> dict:
             is_crypto = sec in ("CRYPTO", "CFD") or sym in ("BTC", "ETH", "BTCUSD", "ETHUSD")
             raw_sector = "crypto" if is_crypto else lookup_sector(sym)
             
-            # Get current market price using yfinance for accurate P&L calculation
-            # Fall back to avg cost if yfinance fails or ticker not found
-            try:
-                import yfinance as yf
+            # Price source: IBKR mark (live/delayed) → yfinance → avg cost.
+            _mk = _marks.get(sym)
+            if _mk and _mk[0] is not None:
+                mkt_price = _mk[0]
+                if _mk[1] is not None:
+                    _mark_modes.append(_mk[1])
+            else:
                 try:
-                    ticker_obj = yf.Ticker(sym)
-                    # Get current price (regular market hours)
-                    hist = ticker_obj.history(period="1d", interval="1m")
-                    if not hist.empty:
-                        mkt_price = float(hist['Close'].iloc[-1])
-                    else:
-                        # Fallback to info price if no history
-                        info = ticker_obj.info
-                        mkt_price = float(info.get('regularMarketPrice', avg))
+                    import yfinance as yf
+                    hist = yf.Ticker(sym).history(period="1d", interval="1m")
+                    mkt_price = float(hist['Close'].iloc[-1]) if not hist.empty else avg
                 except Exception:
-                    # If yfinance fails, try IBKR's marketPrice
-                    mkt_price = float(p.marketPrice) if hasattr(p, 'marketPrice') else avg
-            except ImportError:
-                # yfinance not available, use IBKR's marketPrice
-                mkt_price = float(p.marketPrice) if hasattr(p, 'marketPrice') else avg
-            except Exception:
-                # Any other error, use avg cost and show dash for P&L
-                mkt_price = avg
-                mkt = round(qty * mkt_price, 2)
-                cost_basis = qty * avg
-                unrealized_pnl = None  # Will show as dash in frontend
-                positions.append({
-                    "symbol":        sym,
-                    "secType":       sec,
-                    "assetClass":    "crypto" if is_crypto else "equity",
-                    "sector":        _normalize_sector(raw_sector, sym) if not is_crypto else "Crypto",
-                    "quantity":      qty,
-                    "avg_cost":      round(avg, 2),
-                    "market_value":  mkt,
-                    "unrealized_pnl": None,  # Will display as dash
-                })
-                if is_crypto:
-                    crypto_val += mkt
-                continue
-            
+                    mkt_price = avg
+
             mkt = round(qty * mkt_price, 2)
             
             # Calculate unrealized P&L
@@ -229,14 +317,51 @@ def fetch_ibkr_data() -> dict:
             if is_crypto:
                 crypto_val += mkt
 
+        # Decide live-vs-stale from an ACTUAL live-data check, not from how many
+        # positions happened to price (a slow/empty positions fetch must never be
+        # read as "live"). If any position priced live we trust that; otherwise
+        # probe a liquid reference (SPY) directly while still connected.
+        if _mark_modes and all(m == 1 for m in _mark_modes):
+            _live_ok = True
+        elif _mark_modes and any(m in (3, 4) for m in _mark_modes):
+            _live_ok = False
+        else:
+            _live_ok = _ibkr_live_available(ib)
         ib.disconnect()
+
+        data_mode = "live" if _live_ok else "delayed"
+        marks_stale = not _live_ok
+
+        _equity_mv = sum(p["market_value"] for p in positions
+                         if p.get("assetClass") != "crypto")
+        cash_val = acct.get("TotalCashValue", 0.0)   # cash is feed-independent
+        computed_nlv = round(cash_val + _equity_mv + crypto_val, 2)
+        unreal = acct.get("UnrealizedPnL", 0.0)
+        nlv_source = "ibkr_account"
+        # Override with freshly-marked (delayed) figures ONLY when positions are
+        # actually loaded — never when the positions fetch came back empty (that
+        # would collapse NLV to just cash and badly understate the account).
+        if marks_stale and positions and _equity_mv > 0:
+            net_liq = computed_nlv
+            gross = round(_equity_mv + crypto_val, 2)
+            unreal = round(sum(p["unrealized_pnl"] for p in positions
+                               if p.get("unrealized_pnl") is not None), 2)
+            nlv_source = "computed_delayed"
+        elif marks_stale:
+            # Stale, but positions did not load — keep the account NLV (frozen) and
+            # still flag the data as stale so the dashboard warns rather than lies.
+            nlv_source = "ibkr_account_stale"
 
         return {
             "connected":       True,
+            "data_mode":       data_mode,
+            "marks_stale":     marks_stale,
+            "nlv_source":      nlv_source,
+            "computed_nlv":    computed_nlv,
             "net_liquidation": net_liq,
-            "cash":            acct.get("TotalCashValue", 0.0),
+            "cash":            cash_val,
             "gross_positions": gross,
-            "unrealized_pnl":  acct.get("UnrealizedPnL", 0.0),
+            "unrealized_pnl":  unreal,
             "realized_pnl":    acct.get("RealizedPnL", 0.0),
             "buying_power":    acct.get("BuyingPower", 0.0),
             "equity_value":    gross - crypto_val,
@@ -325,6 +450,96 @@ def _compute_sector_exposure(positions: list) -> dict[str, float]:
         exposure[sector] = exposure.get(sector, 0.0) + mkt_val
 
     return exposure
+
+
+# Donut buckets for the AI Value Chain Exposure chart. Order is fixed so the
+# chart slices and colors line up deterministically; colors match Kairos brand.
+_CHAIN_TIER_BUCKETS = [
+    ("tier1", "Tier 1 — Direct AI",        "#00D4FF"),  # bright cyan
+    ("tier2", "Tier 2 — Infrastructure",   "#7B61FF"),  # purple
+    ("tier3", "Tier 3 — Suppliers",        "#FF6B35"),  # orange
+    ("none",  "Non-Chain",                 "#4A5568"),  # muted grey
+]
+
+
+def compute_chain_tier_breakdown(price_map: dict[str, float] | None = None) -> dict:
+    """Build donut-chart data bucketing open holdings by AI value-chain tier.
+
+    Reads open holdings (sold_date IS NULL) from kairos.db and classifies each
+    ticker with kairos_signals_chain.get_chain_tier(). Market value per bucket is
+    quantity * current_price, where current_price comes from the live IBKR price
+    map (ticker -> price/share) when available, falling back to the holding's
+    entry_price (the holdings table has no current_price column).
+
+    Returns a dict with a 'title' and four ordered 'buckets' (label/value/color).
+    Falls back to four zero-value buckets if kairos_signals_chain can't be
+    imported or the holdings table is empty/unreadable, rather than raising.
+    """
+    title = "AI Value Chain Exposure"
+
+    def _empty() -> dict:
+        return {
+            "title": title,
+            "buckets": [
+                {"label": label, "value": 0.0, "color": color}
+                for _key, label, color in _CHAIN_TIER_BUCKETS
+            ],
+        }
+
+    try:
+        from kairos_signals_chain import get_chain_tier
+    except Exception as exc:  # ImportError or any load-time failure
+        print(f"  WARNING: chain-tier import failed: {exc}")
+        return _empty()
+
+    price_map = {str(k).upper(): v for k, v in (price_map or {}).items()}
+
+    if not os.path.exists(DB_PATH):
+        return _empty()
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT ticker, quantity, entry_price FROM holdings "
+            "WHERE sold_date IS NULL"
+        ).fetchall()
+        conn.close()
+    except Exception as exc:
+        print(f"  WARNING: chain-tier holdings query failed: {exc}")
+        return _empty()
+
+    if not rows:
+        return _empty()
+
+    totals = {key: 0.0 for key, _label, _color in _CHAIN_TIER_BUCKETS}
+    for r in rows:
+        ticker = (r["ticker"] or "").strip()
+        if not ticker:
+            continue
+        qty = float(r["quantity"] or 0)
+        price = price_map.get(ticker.upper())
+        if price is None:
+            price = float(r["entry_price"] or 0)  # fallback: cost basis
+        mkt_val = qty * float(price)
+
+        tier = get_chain_tier(ticker)
+        if tier == 1:
+            totals["tier1"] += mkt_val
+        elif tier == 2:
+            totals["tier2"] += mkt_val
+        elif tier == 3:
+            totals["tier3"] += mkt_val
+        else:
+            totals["none"] += mkt_val
+
+    return {
+        "title": title,
+        "buckets": [
+            {"label": label, "value": round(totals[key], 2), "color": color}
+            for key, label, color in _CHAIN_TIER_BUCKETS
+        ],
+    }
 
 
 def _merge_sim_positions(ibkr_positions: list) -> list:
@@ -730,6 +945,175 @@ def load_screen_log() -> dict | None:
 
 # ── Payload builder ────────────────────────────────────────────────────
 
+def load_nlv_snapshots() -> list[dict]:
+    """Daily NLV snapshots from kairos.db, oldest→newest. Empty list on any error."""
+    try:
+        from kairos_log_db import get_connection, init_db
+        init_db()
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT snapshot_date, nlv, total_cash, invested, num_positions, "
+                "unrealized_pnl, realized_pnl_cum FROM nlv_snapshots "
+                "ORDER BY snapshot_date ASC"
+            ).fetchall()
+        finally:
+            conn.close()
+        return [dict(r) for r in rows]
+    except Exception as exc:
+        print(f"  WARNING: nlv_snapshots load failed: {exc}")
+        return []
+
+
+def _snapshot_on_or_before(snaps: list[dict], target_date) -> dict | None:
+    """Latest snapshot whose date is on or before target_date (a date object)."""
+    chosen = None
+    for s in snaps:
+        try:
+            d = datetime.strptime(s["snapshot_date"], "%Y-%m-%d").date()
+        except (ValueError, TypeError, KeyError):
+            continue
+        if d <= target_date:
+            chosen = s
+        else:
+            break
+    return chosen
+
+
+def compute_portfolio_metrics(ibkr: dict, snaps: list[dict]) -> dict:
+    """Curated portfolio-metrics panel: Snapshot (now) + Trends (time-series).
+
+    "Now" metrics come from live IBKR when connected, else the latest snapshot.
+    Trend metrics need the nlv_snapshots history and stay None (rendered "—")
+    until >=2 days exist. No projections.
+    """
+    latest = snaps[-1] if snaps else None
+    connected = bool(ibkr.get("connected"))
+
+    # Equity positions (exclude crypto) for concentration + best/worst.
+    positions = [p for p in ibkr.get("positions", [])
+                 if p.get("assetClass", "equity") != "crypto"]
+
+    # ── NLV / cash: prefer live, fall back to latest snapshot ─────────
+    nlv = ibkr.get("net_liquidation") if connected else (latest or {}).get("nlv")
+    cash = ibkr.get("cash") if connected else (latest or {}).get("total_cash")
+    unrealized = ibkr.get("unrealized_pnl") if connected else (latest or {}).get("unrealized_pnl")
+
+    cash_pct = round(cash / nlv * 100.0, 2) if (nlv and cash is not None) else None
+    invested_pct = round((nlv - cash) / nlv * 100.0, 2) if (nlv and cash is not None) else None
+
+    # realized P&L (cumulative closed): authoritative from the closed-lot ledger.
+    realized_cum = None
+    try:
+        from kairos_log_db import get_connection
+        from kairos_execute import _realized_pnl_cumulative
+        conn = get_connection()
+        try:
+            realized_cum = _realized_pnl_cumulative(conn)
+        finally:
+            conn.close()
+    except Exception:
+        realized_cum = (latest or {}).get("realized_pnl_cum")
+
+    # ── Concentration + best/worst (live positions only) ──────────────
+    largest_pct = top5_pct = None
+    best = worst = None
+    if positions and nlv:
+        mvals = sorted((float(p.get("market_value") or 0.0) for p in positions), reverse=True)
+        if mvals:
+            largest_pct = round(mvals[0] / nlv * 100.0, 2)
+            top5_pct = round(sum(mvals[:5]) / nlv * 100.0, 2)
+
+    ranked = []
+    n_profit = n_loss = 0
+    open_cost_basis_sum = 0.0
+    open_upnl_sum = 0.0
+    for p in positions:
+        upnl = p.get("unrealized_pnl")
+        mv = float(p.get("market_value") or 0.0)
+        if upnl is None:
+            continue
+        # Book breadth: count winners vs losers across open positions.
+        if float(upnl) >= 0:
+            n_profit += 1
+        else:
+            n_loss += 1
+        cost_basis = mv - float(upnl)
+        if cost_basis <= 0:
+            continue
+        # Aggregate for blended open-book return %.
+        open_cost_basis_sum += cost_basis
+        open_upnl_sum += float(upnl)
+        pct = float(upnl) / cost_basis * 100.0
+        ranked.append({"ticker": p.get("symbol", "").split(" ")[0], "pct": round(pct, 2)})
+    if ranked:
+        best = max(ranked, key=lambda r: r["pct"])
+        worst = min(ranked, key=lambda r: r["pct"])
+    # Blended unrealized return on the open book (distinct from total return,
+    # which blends in realized P&L). None until we have positions with basis.
+    unrealized_return_pct = (round(open_upnl_sum / open_cost_basis_sum * 100.0, 2)
+                             if open_cost_basis_sum > 0 else None)
+
+    # ── Trend metrics (need history) ──────────────────────────────────
+    daily = weekly = drawdown = ret_30d = None
+    if latest and len(snaps) >= 2:
+        try:
+            latest_date = datetime.strptime(latest["snapshot_date"], "%Y-%m-%d").date()
+        except (ValueError, TypeError, KeyError):
+            latest_date = None
+        cur_nlv = latest.get("nlv")
+
+        # Daily: latest vs the immediately prior snapshot.
+        prior = snaps[-2]
+        if cur_nlv and prior.get("nlv"):
+            d_usd = round(cur_nlv - prior["nlv"], 2)
+            daily = {"usd": d_usd, "pct": round(d_usd / prior["nlv"] * 100.0, 2)}
+
+        # Weekly: latest vs the snapshot on/before 7 calendar days ago.
+        if latest_date and cur_nlv:
+            wk = _snapshot_on_or_before(snaps, latest_date - timedelta(days=7))
+            if wk and wk is not latest and wk.get("nlv"):
+                w_usd = round(cur_nlv - wk["nlv"], 2)
+                weekly = {"usd": w_usd, "pct": round(w_usd / wk["nlv"] * 100.0, 2)}
+
+            # 30-day return.
+            m = _snapshot_on_or_before(snaps, latest_date - timedelta(days=30))
+            if m and m is not latest and m.get("nlv"):
+                ret_30d = round((cur_nlv - m["nlv"]) / m["nlv"] * 100.0, 2)
+
+        # Drawdown from peak NLV across the whole series.
+        peak = max((s.get("nlv") or 0.0) for s in snaps)
+        if peak and cur_nlv:
+            drawdown = round((cur_nlv - peak) / peak * 100.0, 2)
+
+    return {
+        "have_live": connected,
+        "as_of": (latest or {}).get("snapshot_date"),
+        "snapshot_days": len(snaps),
+        # Snapshot (now)
+        "open_positions": len(positions) if (connected or not latest)
+                          else (latest or {}).get("num_positions"),
+        "positions_in_profit": n_profit,
+        "positions_in_loss": n_loss,
+        "unrealized_return_pct": unrealized_return_pct,
+        "nlv": round(nlv, 2) if nlv is not None else None,
+        "cash": round(cash, 2) if cash is not None else None,
+        "cash_pct": cash_pct,
+        "invested_pct": invested_pct,
+        "unrealized_pnl": round(unrealized, 2) if unrealized is not None else None,
+        "realized_pnl_cum": realized_cum,
+        "largest_pct": largest_pct,
+        "top5_pct": top5_pct,
+        "best": best,
+        "worst": worst,
+        # Trends (None until enough history)
+        "daily": daily,
+        "weekly": weekly,
+        "drawdown_pct": drawdown,
+        "return_30d_pct": ret_30d,
+    }
+
+
 def build_payload(perf: dict, db: dict, ibkr: dict) -> dict:
     decisions_display = []
     for d in db.get("decisions", [])[:20]:
@@ -758,16 +1142,31 @@ def build_payload(perf: dict, db: dict, ibkr: dict) -> dict:
     except Exception as _name_err:
         print(f"  WARNING: Name resolution failed: {_name_err}")
 
+    # Live price/share map (ticker -> current price) from IBKR positions, used to
+    # value open holdings at market for the AI value-chain donut. Strips (SIM).
+    price_map: dict[str, float] = {}
+    for p in positions:
+        raw_sym = p.get("symbol", "").split(" ")[0]
+        qty = float(p.get("quantity", 0) or 0)
+        mkt_val = float(p.get("market_value", 0) or 0)
+        if raw_sym and qty:
+            price_map[raw_sym.upper()] = mkt_val / qty
+
     # Build the payload dictionary
     return {
         "metrics":        compute_metrics(perf, db),
+        "portfolio_metrics": compute_portfolio_metrics(ibkr, load_nlv_snapshots()),
         "series":         make_series(perf),
         "weekly":         make_weekly(perf),
         "decisions":      decisions_display,
         "decisions_counts": db.get("decisions_counts", {"executed": 0, "skipped": 0}),
         "positions":      positions,
         "sector_breakdown": _compute_sector_exposure(positions),
+        "chain_tier_breakdown": compute_chain_tier_breakdown(price_map),
         "ibkr_connected": ibkr.get("connected", False),
+        "marks_stale":    ibkr.get("marks_stale", False),
+        "data_mode":      ibkr.get("data_mode", "unknown"),
+        "nlv_source":     ibkr.get("nlv_source", ""),
         "start_date":     perf.get("start_date", ""),
         "snapshot_count": len(perf.get("snapshots", [])),
         "ledger":         load_ledger(),
@@ -888,6 +1287,15 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     .mval.purple { color: var(--purple); }
     .mval.white  { color: var(--text); }
     .msub { font-size: 10px; color: var(--dim); }
+    /* ── Portfolio metrics panel ── */
+    .pm-subhdr { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin: 4px 0 12px; }
+    .pm-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 16px; }
+    .pm-tile { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 11px 13px; }
+    .pm-label { font-size: 8.5px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+    .pm-val { font-size: 17px; font-weight: 700; line-height: 1.05; color: var(--text); }
+    .pm-sub { font-size: 9.5px; color: var(--dim); margin-top: 3px; }
+    @media(max-width:1100px) { .pm-grid { grid-template-columns: repeat(3,1fr); } }
+    @media(max-width:600px)  { .pm-grid { grid-template-columns: repeat(2,1fr); } }
     /* ── Cards ── */
     .card {
       background: var(--surface);
@@ -981,6 +1389,15 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 <!-- ── Metric Cards ── -->
 <div class="metrics-grid" id="metrics-grid"></div>
 
+<!-- ── Portfolio Metrics (curated) ── -->
+<div class="card" id="portfolio-metrics-card">
+  <div class="section-hdr">Portfolio Metrics</div>
+  <div class="pm-subhdr">Snapshot</div>
+  <div class="pm-grid" id="pm-snapshot"></div>
+  <div class="pm-subhdr">Trends</div>
+  <div class="pm-grid" id="pm-trends"></div>
+</div>
+
 <!-- ── Portfolio Value Chart ── -->
 <div class="card">
   <div class="section-hdr">Portfolio Value Over Time</div>
@@ -994,8 +1411,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     <div class="chart-h280"><canvas id="weeklyChart"></canvas></div>
   </div>
   <div class="card">
-    <div class="section-hdr">Asset Class Composition</div>
-    <div class="chart-h280"><canvas id="assetChart"></canvas></div>
+    <div class="section-hdr">AI Value Chain Exposure</div>
+    <div id="chainKpi" style="padding:18px 8px;"></div>
   </div>
 </div>
 
@@ -1054,6 +1471,15 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     DATA.ibkr_connected ? "IBKR Connected" : "IBKR Offline \u2014 cached data";
   document.getElementById("status-dot").className =
     "dot " + (DATA.ibkr_connected ? "dot-green" : "dot-amber");
+  // Override with a visible DELAYED-DATA badge when marks are stale (no live
+  // IBKR entitlement) — the displayed NLV is computed from delayed marks.
+  if (DATA.ibkr_connected && DATA.marks_stale) {
+    // Connection is healthy even on delayed data → leave the dot GREEN (set
+    // above). Show only a small, muted 'delayed' note instead of a loud banner.
+    document.getElementById("status-txt").innerHTML =
+      "IBKR Connected <span style='color:#8a8f99;font-weight:400;font-size:0.8em;margin-left:5px;opacity:0.85;'>"
+      + "&middot; delayed marks</span>";
+  }
   document.getElementById("snap-count").textContent =
     DATA.snapshot_count + " day" + (DATA.snapshot_count !== 1 ? "s" : "") + " of data";
 
@@ -1178,6 +1604,65 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         <div class="rsub">${r.sub()}</div>
       </div>`;
   });
+
+  // ── Portfolio metrics panel ────────────────────────────────────────
+  (function renderPortfolioMetrics() {
+    const P = DATA.portfolio_metrics;
+    if (!P) return;
+
+    // Money with thousands separators + 2dp; signed money keeps the sign.
+    const money    = (n) => n == null ? "—" : "$" + fmtN(n, 2);
+    const moneySig = (n) => n == null ? "—" :
+      (n >= 0 ? "+$" : "-$") + fmtN(Math.abs(n), 2);
+    const pctSig   = (n) => n == null ? "—" : fmtSign(n, 2) + "%";
+    const cls      = (n) => n == null ? "" : (n >= 0 ? "pnl-pos" : "pnl-neg");
+    const tile = (label, valHtml, sub) =>
+      `<div class="pm-tile"><div class="pm-label">${label}</div>` +
+      `<div class="pm-val">${valHtml}</div>` +
+      `<div class="pm-sub">${sub || ""}</div></div>`;
+
+    // ── Snapshot (computable now) ──
+    const src = P.have_live ? "live IBKR" : (P.as_of ? "snapshot " + P.as_of : "—");
+    const best  = P.best  ? `${P.best.ticker} <span class="${cls(P.best.pct)}">${pctSig(P.best.pct)}</span>`   : "—";
+    const worst = P.worst ? `${P.worst.ticker} <span class="${cls(P.worst.pct)}">${pctSig(P.worst.pct)}</span>` : "—";
+    const snap = [
+      tile("Open Positions", P.open_positions != null ? String(P.open_positions) : "—", src),
+      tile("In Profit / Loss",
+           `<span class="pnl-pos">${P.positions_in_profit != null ? P.positions_in_profit : "—"} \u25B2</span>`
+           + ` / <span class="pnl-neg">${P.positions_in_loss != null ? P.positions_in_loss : "—"} \u25BC</span>`,
+           "Open book breadth"),
+      tile("Unrealized Return",
+           `<span class="${cls(P.unrealized_return_pct)}">${pctSig(P.unrealized_return_pct)}</span>`,
+           "Blended, open book"),
+      tile("Invested", P.invested_pct != null ? fmtN(P.invested_pct, 2) + "%" : "—", "of NLV"),
+      tile("Unrealized P&L", `<span class="${cls(P.unrealized_pnl)}">${moneySig(P.unrealized_pnl)}</span>`, "Open positions"),
+      tile("Realized P&L", `<span class="${cls(P.realized_pnl_cum)}">${moneySig(P.realized_pnl_cum)}</span>`, "Cumulative, closed"),
+      tile("Largest Position", P.largest_pct != null ? fmtN(P.largest_pct, 2) + "%" : "—", "of NLV"),
+      tile("Top-5 Concentration", P.top5_pct != null ? fmtN(P.top5_pct, 2) + "%" : "—", "of NLV"),
+      tile("Best Open", best, "Unrealized %"),
+      tile("Worst Open", worst, "Unrealized %"),
+    ];
+    document.getElementById("pm-snapshot").innerHTML = snap.join("");
+
+    // ── Trends (— until >=2 days of snapshots) ──
+    const dd  = P.daily, wk = P.weekly;
+    const trendTile = (label, t, sub) => t
+      ? tile(label, `<span class="${cls(t.usd)}">${moneySig(t.usd)}</span>`,
+             `<span class="${cls(t.pct)}">${pctSig(t.pct)}</span>` + (sub ? " · " + sub : ""))
+      : tile(label, "—", "Needs ≥2 days");
+    const trends = [
+      trendTile("Daily P&L", dd),
+      trendTile("Weekly P&L", wk),
+      tile("Drawdown from Peak",
+           P.drawdown_pct != null ? `<span class="${cls(P.drawdown_pct)}">${pctSig(P.drawdown_pct)}</span>` : "—",
+           P.drawdown_pct != null ? "Current vs peak NLV" : "Needs ≥2 days"),
+      tile("30-Day Return",
+           P.return_30d_pct != null ? `<span class="${cls(P.return_30d_pct)}">${pctSig(P.return_30d_pct)}</span>` : "—",
+           P.return_30d_pct != null ? "Trailing 30 days" : "Needs 30 days"),
+      tile("History", String(P.snapshot_days || 0), "day" + ((P.snapshot_days||0) !== 1 ? "s" : "") + " of snapshots"),
+    ];
+    document.getElementById("pm-trends").innerHTML = trends.join("");
+  })();
 
   // ── Chart defaults ─────────────────────────────────────────────────
   Chart.defaults.color = "#6a80a8";
@@ -1343,58 +1828,35 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       .innerHTML = \'<div class="no-data">No weekly data yet &mdash; check back after the first week</div>\';
   }
 
-  // ── Asset class chart ──────────────────────────────────────────────
-  const lastEquity = M.equity_value;
-  const hasSim = positions.some(p => p.symbol && p.symbol.includes("(SIM)"));
-  const simCryptoVal = positions.filter(p => p.symbol && p.symbol.includes("(SIM)"))
-    .reduce((s, p) => s + (p.market_value || 0), 0);
-  const lastCrypto = Math.max(M.crypto_value, simCryptoVal);
-  const cryptoLabel = lastCrypto > 0 ? (hasSim ? "Crypto (SIM)" : "Crypto")
-    : (hasSim ? "Crypto (SIM) — 0%" : "Crypto");
-  const lastCash   = M.cash_value || (M.current_value - M.equity_value - M.crypto_value);
+  // ── AI Value Chain Exposure KPI table ──────────────────────────────
+  (function() {
+    const chain   = DATA.chain_tier_breakdown || {};
+    const buckets = (chain.buckets || []).filter(b => b.label !== "Non-Chain");
+    const nlv     = DATA.metrics ? (DATA.metrics.nlv || 0) : 0;
+    const wrap    = document.getElementById("chainKpi");
+    if (!wrap) return;
 
-  if (M.current_value > 0) {
-    new Chart(document.getElementById("assetChart"), {
-      type: "doughnut",
-      data: {
-        labels: ["Equity", cryptoLabel, "Cash"],
-        datasets: [{
-          data: [
-            Math.max(0, lastEquity),
-            Math.max(0, lastCrypto),
-            Math.max(0, lastCash),
-          ],
-          backgroundColor: [
-            "rgba(0,204,255,0.75)",
-            "rgba(187,102,255,0.75)",
-            "rgba(106,128,168,0.4)",
-          ],
-          borderColor: ["#00ccff", "#bb66ff", "#3a4a68"],
-          borderWidth: 1.5,
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { position: "right", labels: { color: "#6a80a8", padding: 16, boxWidth: 14 } },
-          tooltip: {
-            backgroundColor: "#0d1426", borderColor: "#1a2845", borderWidth: 1,
-            titleColor: "#c8d8f0", bodyColor: "#6a80a8",
-            callbacks: {
-              label: ctx => {
-                const v = ctx.parsed;
-                const pct = M.current_value > 0 ? (v / M.current_value * 100).toFixed(1) : 0;
-                return " $" + v.toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:0})
-                  + " (" + pct + "%)";
-              },
-            },
-          },
-        },
-        cutout: "62%",
-      },
-    });
-  }
+    if (!buckets.length) {
+      wrap.innerHTML = '<div class="no-data">No chain positions yet</div>';
+      return;
+    }
+
+    let rows = buckets.map(b => {
+      const val  = b.value || 0;
+      const pct  = nlv > 0 ? (val / nlv * 100).toFixed(1) : "0.0";
+      const fmtVal = "$" + val.toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:0});
+      return `<tr>
+        <td style="padding:10px 8px;">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${b.color};margin-right:8px;"></span>
+          <span style="color:#c8d8f0;font-size:13px;">${b.label}</span>
+        </td>
+        <td style="padding:10px 8px;text-align:right;color:#c8d8f0;font-size:13px;font-weight:600;">${fmtVal}</td>
+        <td style="padding:10px 8px;text-align:right;color:#6a80a8;font-size:12px;">${pct}% of NLV</td>
+      </tr>`;
+    }).join("");
+
+    wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;">${rows}</table>`;
+  })();
 
   // ── Sector breakdown chart ─────────────────────────────────────────
   (function() {
@@ -1507,7 +1969,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       ? `<span class="${upnlPct >= 0 ? 'pnl-pos' : 'pnl-neg'}">${upnlPct >= 0 ? '+' : ''}${upnlPct.toFixed(2)}%</span>`
       : '<span style="color:var(--muted)">—</span>';
       const upnlStr = upnl != null
-        ? `<span class="${upnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${upnl >= 0 ? '+' : ''}$${Math.abs(upnl).toFixed(2)}</span>`
+        ? `<span class="${upnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${upnl >= 0 ? '+' : ''}$${Math.abs(upnl).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>`
         : \'<span style="color:var(--muted)">\u2014</span>\';
       html += `<tr>
         <td style="color:var(--${cls});font-weight:700">${p.symbol}</td>
@@ -1541,9 +2003,9 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     decs.forEach(d => {
       const pnl = d.pnl;
       const pnlStr = pnl != null
-        ? `<span class="${pnl >= 0 ? "pnl-pos" : "pnl-neg"}">${pnl >= 0 ? "+" : ""}$${Math.abs(pnl).toFixed(2)}</span>`
+        ? `<span class="${pnl >= 0 ? "pnl-pos" : "pnl-neg"}">${pnl >= 0 ? "+" : ""}$${Math.abs(pnl).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>`
         : \'<span style="color:var(--muted)">—</span>\';
-      const priceStr = d.price != null ? "$" + d.price.toFixed(2) : "—";
+      const priceStr = d.price != null ? "$" + d.price.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}) : "—";
       const convTag = d.conviction_trade ? \'<span style="color:#bb66ff;font-weight:700">[C]</span> \' : "";
       const tickerColor = d.asset_class === "crypto" ? "var(--purple, #bb66ff)" : "var(--text)";
       const cryptoTag = d.asset_class === "crypto" ? \'<span style="color:var(--purple, #bb66ff);font-size:9px;margin-left:3px">\u20BF</span>\' : "";
@@ -1792,7 +2254,13 @@ def main():
         print("  Connecting to IBKR (port 7497)...")
         ibkr = fetch_ibkr_data()
         if ibkr["connected"]:
-            print(f"  Net liquidation: ${ibkr['net_liquidation']:,.2f}")
+            _mode = ibkr.get("data_mode", "?")
+            _src = ibkr.get("nlv_source", "?")
+            print(f"  Net liquidation: ${ibkr['net_liquidation']:,.2f}  "
+                  f"(marks={_mode}, nlv_source={_src})")
+            if ibkr.get("marks_stale"):
+                print(f"  ⚠ marks STALE — using delayed/computed NLV "
+                      f"(acct-summary NLV is frozen; live data entitlement impaired)")
             print(f"  Equity: ${ibkr['equity_value']:,.2f}  Crypto: ${ibkr['crypto_value']:,.2f}")
             perf = upsert_snapshot(perf, ibkr)
             save_perf(perf)

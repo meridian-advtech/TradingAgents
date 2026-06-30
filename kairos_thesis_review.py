@@ -7,12 +7,31 @@ check after a timer. For each open position:
 
   1. PRICE-CONTRADICTION: If price has contradicted the thesis (position under
      PRICE_CONTRADICTION_PCT) for PRICE_CONTRADICTION_DAYS consecutive reviews
-     → THESIS-INVALID SELL.
-  2. THESIS-INVALID (Claude): Sends position context to Claude and asks whether
-     the original entry thesis has been invalidated (signal reversal,
-     fundamental breakdown). If YES → SELL.
+     → THESIS-INVALID SELL. (Deterministic, price-based — not a timer.)
+  2. SIGNAL-VALIDITY VERDICT (kairos_thesis_validity): The hold/sell decision is
+     driven by whether the ORIGINAL ENTRY SIGNAL is still supported by current
+     data — re-derived live per signal type (insider/congress sales, earnings
+     played-out, reversion to mean, chain catch-up, catalyst resolution, IPO vs.
+     offering price) and blended with sector health and macro regime into a
+     0-100 thesis score. SELL / WATCH / HOLD. This replaced the binary
+     time-window and Claude-only checks: time is now a backstop, never a primary
+     trigger.
+  3. CLAUDE TIE-BREAK (optional): On borderline WATCH verdicts (and unless
+     --no-claude), Claude is consulted as a secondary qualitative check and can
+     escalate WATCH → SELL.
 
-Time-based exits were REMOVED in v2: the old TAKE-PROFIT (now the trailing stop,
+The validity-engine review answers, per position:
+  - Is the original signal still supported by current data?
+  - Has the thesis catalyst materialized, is it still pending, or has it failed?
+  - Is the sector / macro environment still supportive?
+  - What would need to be true for this to be a sell right now?
+
+TIME BACKSTOPS (last resort, never a primary sell): a position held > 90 days
+with no sell signal is force-flagged WATCH; held > 180 days it is reviewed with
+elevated scrutiny (a HOLD is downgraded to WATCH). Nothing is ever sold on
+elapsed time alone — backstop_days live under config `thesis_validity`.
+
+Time-based EXITS were REMOVED in v2: the old TAKE-PROFIT (now the trailing stop,
 condition 2, in kairos_exits.py) and STALE-THESIS (30-day clock) no longer fire.
 Profit capture is owned by the trailing stop; aging conviction is owned by
 capital liberation (condition 4) via conviction decay.
@@ -46,6 +65,38 @@ W = 72
 # NOT a hold-window timer. (TAKE-PROFIT and STALE-THESIS were removed in v2.)
 PRICE_CONTRADICTION_PCT = -3.0   # return below this counts as a contradiction
 PRICE_CONTRADICTION_DAYS = 3     # consecutive contradicting reviews → exit
+
+# Time BACKSTOPS only — never a primary sell. A position held this long with no
+# validity sell signal is force-flagged for review (defaults; overridable under
+# config `thesis_validity`).
+WATCH_BACKSTOP_DAYS = 90         # > this with no sell → force WATCH
+SCRUTINY_BACKSTOP_DAYS = 180     # > this → elevated scrutiny (HOLD → WATCH)
+
+
+def _load_validity_backstops() -> dict:
+    """Read the thesis_validity backstop config (watch / scrutiny day caps)."""
+    try:
+        cfg_path = os.path.join(SCRIPT_DIR, "kairos_config.json")
+        with open(cfg_path) as f:
+            tv = json.load(f).get("thesis_validity", {}) or {}
+        return {
+            "watch": int(tv.get("watch_backstop_days", WATCH_BACKSTOP_DAYS)),
+            "scrutiny": int(tv.get("scrutiny_backstop_days", SCRUTINY_BACKSTOP_DAYS)),
+        }
+    except Exception:
+        return {"watch": WATCH_BACKSTOP_DAYS, "scrutiny": SCRUTINY_BACKSTOP_DAYS}
+
+
+def _primary_signal_for(ticker: str, current_signals: list[str]) -> str | None:
+    """Resolve the signal that led the trade: prefer the recorded entry signals,
+    fall back to current live signals. Uses kairos_ml_thesis priority ranking."""
+    try:
+        from kairos_ml_thesis import pick_primary_signal
+        return (pick_primary_signal(_get_entry_signals(ticker))
+                or pick_primary_signal(current_signals))
+    except Exception:
+        sigs = _get_entry_signals(ticker) or current_signals or []
+        return sigs[0] if sigs else None
 
 # Per-run audit log. Every reviewed (run_id, ticker) gets a row here,
 # regardless of whether a sell triggered, so the table is also a record
@@ -469,23 +520,76 @@ def run_thesis_review(dry_run: bool = False, no_claude: bool = False) -> dict:
                                f"(return {return_pct:.1f}% < {PRICE_CONTRADICTION_PCT}%)")
                 print(f"    → {sell_reason}")
 
-        # ── Check 2: Claude thesis invalidation ──────────────────
-        if sell_reason is None and not no_claude:
-            entry_signals = _get_entry_signals(ticker)
-            entry_rationale = _get_entry_rationale(ticker)
-            print(f"    Asking Claude: thesis still valid?")
+        # ── Check 2: SIGNAL-VALIDITY VERDICT (primary qualitative gate) ──
+        # Decision is driven by whether the original entry signal is still
+        # supported by current data, NOT by elapsed time. See
+        # kairos_thesis_validity.get_composite_verdict.
+        if sell_reason is None:
+            primary_signal = _primary_signal_for(ticker, current_signals)
+            try:
+                from kairos_thesis_validity import get_composite_verdict
+                verdict = get_composite_verdict(
+                    ticker=ticker,
+                    signal_type=primary_signal,
+                    entry_date=h["earliest_entry"],
+                    entry_price=avg_cost,
+                    current_price=current_price,
+                    signals_fired={"entry": _get_entry_signals(ticker),
+                                   "current": current_signals},
+                    sector="",  # resolved inside the engine via yfinance
+                )
+            except Exception as v_exc:
+                print(f"    WARNING: validity engine failed ({v_exc}) — HOLD")
+                verdict = {"action": "HOLD", "score": 50,
+                           "rationale": f"validity engine error: {v_exc}",
+                           "signal_type": primary_signal or "DEFAULT"}
 
-            invalidated, explanation = _ask_claude_thesis(
-                ticker, entry_rationale, entry_signals, current_signals,
-                current_price, avg_cost, holding_days)
+            action = verdict.get("action", "HOLD")
+            score = verdict.get("score", 50)
+            rationale = verdict.get("rationale", "")
+            sig = verdict.get("signal_type", primary_signal or "DEFAULT")
 
-            if invalidated:
-                sell_reason = f"THESIS-INVALID: {explanation}"
-                print(f"    → Claude: YES — {explanation}")
-            else:
-                print(f"    → Claude: NO — {explanation[:80]}")
-        elif sell_reason is None and no_claude:
-            print(f"    Skipping Claude check (--no-claude)")
+            # ── Time BACKSTOPS — last resort, never a primary sell ──
+            backstops = _load_validity_backstops()
+            if action == "HOLD" and holding_days > backstops["scrutiny"]:
+                action = "WATCH"
+                rationale = (f"[{holding_days}d > {backstops['scrutiny']}d backstop — "
+                             f"elevated scrutiny] {rationale}")
+            elif action == "HOLD" and holding_days > backstops["watch"]:
+                action = "WATCH"
+                rationale = (f"[{holding_days}d > {backstops['watch']}d backstop] "
+                             f"{rationale}")
+
+            if action == "SELL":
+                sell_reason = (f"THESIS-INVALID: {rationale} "
+                               f"(validity score: {score}/100, signal: {sig})")
+                print(f"    → SELL [{sig}] {rationale} (score {score}/100)")
+
+            elif action == "WATCH":
+                # Borderline: optionally let Claude break the tie and escalate.
+                escalated = False
+                if not no_claude:
+                    entry_rationale = _get_entry_rationale(ticker)
+                    invalidated, explanation = _ask_claude_thesis(
+                        ticker, entry_rationale, _get_entry_signals(ticker),
+                        current_signals, current_price, avg_cost, holding_days)
+                    if invalidated:
+                        sell_reason = (f"THESIS-INVALID: {explanation} "
+                                       f"(WATCH+Claude, score: {score}/100)")
+                        print(f"    → WATCH→SELL [{sig}] Claude confirmed: {explanation}")
+                        escalated = True
+                if not escalated:
+                    print(f"    WATCH: {ticker} — {rationale} (score: {score}/100)")
+                    try:
+                        from kairos_alerts import post_message
+                        post_message("log",
+                            f":eyes: *Thesis WATCH: {ticker}* [{sig}] "
+                            f"score {score}/100\n{rationale}")
+                    except Exception as exc:
+                        print(f"    thesis WATCH Slack post failed: {exc}")
+
+            else:  # HOLD
+                print(f"    HOLD: {ticker} — thesis valid [{sig}] (score: {score}/100)")
 
         # ── Tax gate: delay a profitable exit near the 12-month anniversary ──
         # Overlay on condition 3 (this gate) — hard/trailing stops never reach
@@ -563,8 +667,8 @@ def run_thesis_review(dry_run: bool = False, no_claude: bool = False) -> dict:
                                     f"Loss of ${loss_amt:,.2f} disallowed (thesis review sell)\n"
                                     f"Recent repurchase on {ws['repurchase_date']}\n"
                                     f"Sell executed — loss cannot be claimed until {blocked_until}")
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                print(f"    wash-sale alert Slack post failed: {exc}")
                     except Exception as ws_exc:
                         print(f"    WARNING: Wash sale check failed: {ws_exc}")
 
