@@ -805,68 +805,6 @@ def compute_metrics(perf: dict, db: dict) -> dict:
     }
 
 
-# ── Closed-positions summary (realized-trade aggregates) ───────────────
-
-def compute_closed_summary(holdings: list[dict]) -> dict:
-    """Aggregate realized-trade stats across all closed holdings.
-
-    A holding is closed when sold_date/sold_price are set. Per-trade P&L is
-    (sold_price - entry_price) * quantity; the % is measured against that
-    trade's own cost basis. Totals are summed from these rows (holdings-sum),
-    so total $ = winners$ + losers$ and reconciles with the win/loss split —
-    this may differ slightly from the ledger-based figure on the top KPI tile
-    (commissions, partial lots, DRIP), which the sub-label notes.
-
-    Winners are pnl > 0, losers pnl < 0, breakeven pnl == 0. Breakeven trades
-    count toward the total and the win-rate denominator (matching the existing
-    win_rate metric) but are excluded from the avg win/loss figures.
-    """
-    closed = [h for h in (holdings or [])
-              if h.get("sold_date") and h.get("sold_price") is not None]
-
-    n = len(closed)
-    if not n:
-        return {"closed_trades": 0, "total_pnl_usd": None, "total_pnl_pct": None,
-                "win_rate": None, "avg_win_pct": None, "avg_loss_pct": None,
-                "winners": 0, "losers": 0, "breakeven": 0, "win_loss_ratio": None}
-
-    win_pcts, loss_pcts = [], []
-    total_pnl = total_cost = 0.0
-    winners = losers = breakeven = 0
-
-    for h in closed:
-        entry = float(h["entry_price"])
-        qty   = float(h["quantity"])
-        sold  = float(h["sold_price"])
-        pnl   = (sold - entry) * qty
-        cost  = entry * qty
-        pct   = (sold - entry) / entry * 100.0 if entry else 0.0
-
-        total_pnl  += pnl
-        total_cost += cost
-        if pnl > 0:
-            winners += 1
-            win_pcts.append(pct)
-        elif pnl < 0:
-            losers += 1
-            loss_pcts.append(pct)
-        else:
-            breakeven += 1
-
-    return {
-        "closed_trades":  n,
-        "total_pnl_usd":  round(total_pnl, 2),
-        "total_pnl_pct":  round(total_pnl / total_cost * 100.0, 2) if total_cost else None,
-        "win_rate":       round(winners / n * 100.0, 1),
-        "avg_win_pct":    round(statistics.mean(win_pcts), 2) if win_pcts else None,
-        "avg_loss_pct":   round(statistics.mean(loss_pcts), 2) if loss_pcts else None,
-        "winners":        winners,
-        "losers":         losers,
-        "breakeven":      breakeven,
-        "win_loss_ratio": round(winners / losers, 2) if losers else None,
-    }
-
-
 # ── Closed-positions trade list (individual realized trades) ───────────
 
 # Prefix (the token before the first ':') of a stored exit_reason → the
@@ -926,6 +864,44 @@ def _load_exit_reasons() -> dict[tuple, dict]:
     return reasons
 
 
+def _load_entry_signals() -> dict[tuple, list]:
+    """Entry signals per BUY, keyed by (TICKER, timestamp) for a precise join.
+
+    A closed lot's entry_date matches its BUY decision's timestamp exactly (to
+    the second), so this keys off both — correctly attributing signals even for
+    repeat-traded tickers. Signals live in decisions.data_inputs →
+    confluence.signals; conviction/no-signal buys yield an empty list.
+    """
+    signals: dict[tuple, list] = {}
+    if not os.path.exists(DB_PATH):
+        return signals
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT ticker, timestamp, data_inputs FROM decisions WHERE action = 'BUY'"
+        ).fetchall()
+        conn.close()
+    except sqlite3.Error:
+        return signals
+
+    for r in rows:
+        tkr = (r["ticker"] or "").strip().upper()
+        ts = r["timestamp"] or ""
+        if not tkr or not ts:
+            continue
+        try:
+            di = json.loads(r["data_inputs"]) if r["data_inputs"] else {}
+            sigs = (di.get("confluence", {}) or {}).get("signals") or di.get("signals") or []
+            sigs = [str(s) for s in sigs if s]
+        except (json.JSONDecodeError, TypeError):
+            sigs = []
+        # Last BUY at a given (ticker, ts) wins — timestamps are second-precise
+        # so collisions are effectively the same decision.
+        signals[(tkr, ts)] = sigs
+    return signals
+
+
 def _parse_trade_date(raw) -> datetime | None:
     """Parse a holdings date string, tolerating ' UTC' and '[RECON-merged]'
     suffixes that break SQLite's julianday() (hence null holding_days)."""
@@ -961,6 +937,7 @@ def build_closed_trades(holdings: list[dict]) -> list[dict]:
     absent, exit_reason is None and exit_type "Not recorded" (never faked).
     """
     exit_reasons = _load_exit_reasons()
+    entry_signals = _load_entry_signals()
     trades = []
     for h in (holdings or []):
         if not (h.get("sold_date") and h.get("sold_price") is not None):
@@ -983,6 +960,7 @@ def build_closed_trades(holdings: list[dict]) -> list[dict]:
         sold_day = (h.get("sold_date") or "")[:10]
 
         ex = exit_reasons.get((tkr, sold_day))
+        sigs = entry_signals.get((tkr, h.get("entry_date") or ""), [])
         trades.append({
             "id":           h.get("id"),
             "ticker":       tkr,
@@ -998,6 +976,7 @@ def build_closed_trades(holdings: list[dict]) -> list[dict]:
             "exit_reason":  ex["exit_reason"] if ex else None,
             "exit_type":    ex["exit_type"] if ex else "Not recorded",
             "exit_color":   ex["exit_color"] if ex else "muted",
+            "entry_signals": sigs,
         })
 
     # Newest first. sold_date is an ISO-ish string (some carry a " UTC" or
@@ -1035,6 +1014,7 @@ def build_closed_details(closed_trades: list[dict], name_map: dict) -> dict:
             "proceeds":     round(sold * qty, 2),
             "realized_pnl": t["realized_pnl_usd"],
             "realized_pct": t["realized_pnl_pct"],
+            "entry_signals": t.get("entry_signals", []),
             "exit_reason":  t["exit_reason"],
             "exit_type":    t["exit_type"],
             "exit_color":   t["exit_color"],
@@ -1698,7 +1678,6 @@ def build_payload(perf: dict, db: dict, ibkr: dict) -> dict:
         "decisions_counts": db.get("decisions_counts", {"executed": 0, "skipped": 0}),
         "positions":      positions,
         "position_details": position_details,
-        "closed_summary": compute_closed_summary(db.get("holdings", [])),
         "closed_trades":  closed_trades,
         "sector_breakdown": _compute_sector_exposure(positions),
         "chain_tier_breakdown": compute_chain_tier_breakdown(price_map),
@@ -1914,6 +1893,42 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     #positions-wrap tbody tr:hover td:first-child::before {
       content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--cyan);
     }
+    /* ── Closed-positions filters ── */
+    .cl-filters {
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 12px; margin-bottom: 18px;
+    }
+    .cl-filter-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+    .cl-select {
+      background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 7px 30px 7px 11px; font-family: inherit; font-size: 11px;
+      letter-spacing: 0.5px; cursor: pointer; appearance: none;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%236a80a8' stroke-width='1.5' fill='none'/></svg>");
+      background-repeat: no-repeat; background-position: right 11px center;
+      transition: border-color 0.12s;
+    }
+    .cl-select:hover, .cl-select:focus { border-color: var(--cyan); outline: none; }
+    .cl-select.active { border-color: var(--cyan); color: var(--cyan); }
+    .cl-pills { display: inline-flex; gap: 4px; }
+    .cl-pill {
+      background: var(--bg); color: var(--dim);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 7px 12px; font-family: inherit; font-size: 11px;
+      letter-spacing: 0.5px; cursor: pointer; transition: color 0.12s, border-color 0.12s;
+    }
+    .cl-pill:hover { color: var(--text); border-color: var(--border2); }
+    .cl-pill.active { color: var(--cyan); border-color: var(--cyan); background: rgba(0,204,255,0.06); }
+    .cl-filter-state { display: flex; align-items: center; gap: 12px; }
+    .cl-count { font-size: 11px; color: var(--dim); letter-spacing: 0.5px; }
+    .cl-clear {
+      background: none; border: none; color: var(--muted);
+      font-family: inherit; font-size: 11px; letter-spacing: 0.5px;
+      cursor: pointer; padding: 4px 2px; transition: color 0.12s;
+    }
+    .cl-clear:hover { color: var(--red); }
+    .cl-filter-state.hidden { display: none; }
+    @media(max-width:600px) { .cl-filters { flex-direction: column; align-items: stretch; } }
     /* ── Closed-trade list ── */
     #closed-list { margin-top: 18px; }
     #closed-list tbody tr { cursor: pointer; transition: background 0.12s; }
@@ -2135,6 +2150,17 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 <!-- ── Closed Positions ── -->
 <div class="card">
   <div class="section-hdr">Closed Positions</div>
+  <div class="cl-filters" id="cl-filters">
+    <div class="cl-filter-controls">
+      <select class="cl-select" id="f-signal" aria-label="Filter by entry signal"></select>
+      <select class="cl-select" id="f-exit" aria-label="Filter by exit condition"></select>
+      <div class="cl-pills" id="f-period" role="group" aria-label="Filter by time period"></div>
+    </div>
+    <div class="cl-filter-state" id="cl-filter-state">
+      <span class="cl-count" id="cl-count"></span>
+      <button class="cl-clear" id="cl-clear">&times; Clear</button>
+    </div>
+  </div>
   <div class="closed-grid" id="closed-summary"></div>
   <div id="closed-list"></div>
 </div>
@@ -2380,75 +2406,88 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     document.getElementById("pm-trends").innerHTML = trends.join("");
   })();
 
-  // ── Closed positions summary band ──────────────────────────────────
-  (function renderClosedSummary() {
-    const C = DATA.closed_summary;
-    const el = document.getElementById("closed-summary");
-    if (!el) return;
-    if (!C || !C.closed_trades) {
-      el.className = "";
-      el.innerHTML = `<div class="closed-empty">No closed positions yet.</div>`;
+  // ── Closed positions: filters + live-recomputing summary + list ────
+  (function initClosedPositions() {
+    const ALL = DATA.closed_trades || [];
+    const summaryEl = document.getElementById("closed-summary");
+    const listEl = document.getElementById("closed-list");
+    const filtersEl = document.getElementById("cl-filters");
+    if (!summaryEl || !listEl) return;
+
+    // No closed trades at all → original single-line empty state, hide filters.
+    if (!ALL.length) {
+      if (filtersEl) filtersEl.style.display = "none";
+      summaryEl.className = "";
+      summaryEl.innerHTML = `<div class="closed-empty">No closed positions yet.</div>`;
+      listEl.innerHTML = "";
       return;
     }
 
+    const BATCH = 12;
+    const NO_SIGNAL = "__none__";
+    const filters = { signal: "", exit: "", period: "all" };
+
     const moneySig = (n) => n == null ? "—" : (n >= 0 ? "+$" : "-$") + fmtN(Math.abs(n), 2);
+    const money    = (n) => n == null ? "—" : (n >= 0 ? "+$" : "−$") + Math.abs(n).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
     const pctSig   = (n) => n == null ? "—" : fmtSign(n, 2) + "%";
     const signCls  = (n) => n == null ? "white" : (n >= 0 ? "green" : "red");
-    const card = (accent, label, valHtml, valCls, sub) =>
-      `<div class="mcard c-${accent}">` +
-      `<div class="mlabel">${label}</div>` +
-      `<div class="mval ${valCls || "white"}">${valHtml}</div>` +
-      `<div class="msub">${sub}</div></div>`;
+    const day      = (s) => s ? String(s).slice(0, 10) : "—";
+    const esc      = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
-    const cards = [
-      card(signCls(C.total_pnl_usd), "Realized P&L",
-           moneySig(C.total_pnl_usd), signCls(C.total_pnl_usd),
-           `<span class="${C.total_pnl_pct >= 0 ? "pnl-pos" : "pnl-neg"}">${pctSig(C.total_pnl_pct)}</span> · holdings-sum, may differ from top`),
-      card("cyan", "Win Rate",
-           C.win_rate != null ? fmtN(C.win_rate, 1) + "%" : "—", "cyan",
-           `${C.winners} of ${C.closed_trades} up`),
-      card("green", "Avg Win",
-           pctSig(C.avg_win_pct), "green", "Winners, avg return"),
-      card("red", "Avg Loss",
-           pctSig(C.avg_loss_pct), "red", "Losers, avg return"),
-      card("white", "Win / Loss",
-           `${C.winners} / ${C.losers}`, "white",
-           C.win_loss_ratio != null ? `ratio ${fmtN(C.win_loss_ratio, 2)}`
-             : (C.breakeven ? `${C.breakeven} breakeven` : "no losers")),
-      card("cyan", "Closed Trades",
-           String(C.closed_trades), "cyan",
-           C.breakeven ? `${C.breakeven} breakeven · all-time` : "all-time"),
-    ];
-    el.className = "closed-grid";
-    el.innerHTML = cards.join("");
-  })();
+    // ── Summary aggregation (realized-trade stats over the filtered set) ──
+    function computeSummary(trades) {
+      let winners = 0, losers = 0, breakeven = 0;
+      let totalPnl = 0, totalCost = 0;
+      const winPcts = [], lossPcts = [];
+      trades.forEach(t => {
+        const pnl = t.realized_pnl_usd, cost = (t.entry_price || 0) * (t.quantity || 0);
+        const pct = t.realized_pnl_pct;
+        if (pnl == null) return;
+        totalPnl += pnl; totalCost += cost;
+        if (pnl > 0) { winners++; if (pct != null) winPcts.push(pct); }
+        else if (pnl < 0) { losers++; if (pct != null) lossPcts.push(pct); }
+        else breakeven++;
+      });
+      const n = trades.length;
+      const mean = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : null;
+      return {
+        n, winners, losers, breakeven,
+        total_pnl_usd: n ? totalPnl : null,
+        total_pnl_pct: totalCost ? totalPnl / totalCost * 100 : null,
+        win_rate: n ? winners / n * 100 : null,
+        avg_win_pct: mean(winPcts),
+        avg_loss_pct: mean(lossPcts),
+        win_loss_ratio: losers ? winners / losers : null,
+      };
+    }
 
-  // ── Closed positions trade list (default recent + load more) ───────
-  (function renderClosedList() {
-    const trades = DATA.closed_trades || [];
-    const wrap = document.getElementById("closed-list");
-    if (!wrap) return;
-    if (!trades.length) { wrap.innerHTML = ""; return; }
+    function renderSummary(C, filtered) {
+      const card = (accent, label, valHtml, valCls, sub) =>
+        `<div class="mcard c-${accent}">` +
+        `<div class="mlabel">${label}</div>` +
+        `<div class="mval ${valCls || "white"}">${valHtml}</div>` +
+        `<div class="msub">${sub}</div></div>`;
+      const scope = filtered ? "filtered" : "all-time";
+      const cards = [
+        card(signCls(C.total_pnl_usd), "Realized P&L",
+             moneySig(C.total_pnl_usd), signCls(C.total_pnl_usd),
+             `<span class="${C.total_pnl_pct >= 0 ? "pnl-pos" : "pnl-neg"}">${pctSig(C.total_pnl_pct)}</span> · holdings-sum, may differ from top`),
+        card("cyan", "Win Rate",
+             C.win_rate != null ? fmtN(C.win_rate, 1) + "%" : "—", "cyan",
+             `${C.winners} of ${C.n} up`),
+        card("green", "Avg Win", pctSig(C.avg_win_pct), "green", "Winners, avg return"),
+        card("red", "Avg Loss", pctSig(C.avg_loss_pct), "red", "Losers, avg return"),
+        card("white", "Win / Loss", `${C.winners} / ${C.losers}`, "white",
+             C.win_loss_ratio != null ? `ratio ${fmtN(C.win_loss_ratio, 2)}`
+               : (C.breakeven ? `${C.breakeven} breakeven` : "no losers")),
+        card("cyan", "Closed Trades", String(C.n), "cyan",
+             C.breakeven ? `${C.breakeven} breakeven · ${scope}` : scope),
+      ];
+      summaryEl.className = "closed-grid";
+      summaryEl.innerHTML = cards.join("");
+    }
 
-    const BATCH = 12;
-    let shown = 0;
-
-    const money = (n) => n == null ? "—"
-      : (n >= 0 ? "+$" : "−$") + Math.abs(n).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
-    const pctSig = (n) => n == null ? "—" : (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
-    const day = (s) => s ? String(s).slice(0, 10) : "—";
-    const esc = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-
-    wrap.innerHTML =
-      '<div class="tbl-wrap"><table><thead><tr>' +
-      '<th>Ticker</th><th>Entry</th><th>Exit</th><th>Days</th>' +
-      '<th>Realized P&amp;L</th><th>P&L %</th><th>Exit Reason</th>' +
-      '</tr></thead><tbody id="cl-body"></tbody></table></div>' +
-      '<div class="cl-more-wrap" id="cl-more-wrap"></div>';
-
-    const body = document.getElementById("cl-body");
-    const moreWrap = document.getElementById("cl-more-wrap");
-
+    // ── Trade list with load-more pagination ────────────────────────
     function rowHtml(t) {
       const pnlCls = t.realized_pnl_usd == null ? "" : (t.realized_pnl_usd >= 0 ? "pnl-pos" : "pnl-neg");
       const pctCls = t.realized_pnl_pct == null ? "" : (t.realized_pnl_pct >= 0 ? "pnl-pos" : "pnl-neg");
@@ -2465,19 +2504,139 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       </tr>`;
     }
 
-    function renderMore() {
-      const next = trades.slice(shown, shown + BATCH);
-      body.insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
-      shown += next.length;
-      const remaining = trades.length - shown;
-      moreWrap.innerHTML = remaining > 0
-        ? `<button class="cl-more-btn" id="cl-more-btn">Load more (${remaining} remaining)</button>`
-        : "";
-      const btn = document.getElementById("cl-more-btn");
-      if (btn) btn.addEventListener("click", renderMore);
+    function renderList(trades) {
+      if (!trades.length) {
+        listEl.innerHTML = `<div class="no-data">No closed trades match these filters</div>`;
+        return;
+      }
+      listEl.innerHTML =
+        '<div class="tbl-wrap"><table><thead><tr>' +
+        '<th>Ticker</th><th>Entry</th><th>Exit</th><th>Days</th>' +
+        '<th>Realized P&amp;L</th><th>P&L %</th><th>Exit Reason</th>' +
+        '</tr></thead><tbody id="cl-body"></tbody></table></div>' +
+        '<div class="cl-more-wrap" id="cl-more-wrap"></div>';
+      const body = document.getElementById("cl-body");
+      const moreWrap = document.getElementById("cl-more-wrap");
+      let shown = 0;
+      function renderMore() {
+        const next = trades.slice(shown, shown + BATCH);
+        body.insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
+        shown += next.length;
+        const remaining = trades.length - shown;
+        moreWrap.innerHTML = remaining > 0
+          ? `<button class="cl-more-btn" id="cl-more-btn">Load more (${remaining} remaining)</button>`
+          : "";
+        const btn = document.getElementById("cl-more-btn");
+        if (btn) btn.addEventListener("click", renderMore);
+      }
+      renderMore();
     }
 
-    renderMore();
+    // ── Filter matching ─────────────────────────────────────────────
+    function inPeriod(soldDate, period) {
+      if (period === "all") return true;
+      const s = String(soldDate || "").slice(0, 10).split("-");
+      if (s.length !== 3) return false;
+      const d = new Date(+s[0], +s[1] - 1, +s[2]);
+      if (isNaN(d)) return false;
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      if (period === "month")
+        return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+      if (period === "week") {
+        const dow = (now.getDay() + 6) % 7; // Mon=0 … Sun=6
+        const weekStart = new Date(today); weekStart.setDate(today.getDate() - dow);
+        return d >= weekStart;
+      }
+      if (period === "30d") {
+        const cutoff = new Date(today); cutoff.setDate(today.getDate() - 30);
+        return d >= cutoff;
+      }
+      return true;
+    }
+
+    function matches(t) {
+      if (filters.signal) {
+        const sigs = t.entry_signals || [];
+        if (filters.signal === NO_SIGNAL) { if (sigs.length) return false; }
+        else if (!sigs.includes(filters.signal)) return false;
+      }
+      if (filters.exit && t.exit_type !== filters.exit) return false;
+      if (!inPeriod(t.sold_date, filters.period)) return false;
+      return true;
+    }
+
+    // ── Build filter controls from the data actually present ────────
+    const signalSel = document.getElementById("f-signal");
+    const exitSel   = document.getElementById("f-exit");
+    const periodEl  = document.getElementById("f-period");
+    const clearBtn  = document.getElementById("cl-clear");
+    const countEl   = document.getElementById("cl-count");
+    const stateEl   = document.getElementById("cl-filter-state");
+
+    (function populate() {
+      const sigSet = new Set(), exitSet = new Set();
+      let hasNoSignal = false;
+      ALL.forEach(t => {
+        (t.entry_signals || []).forEach(s => sigSet.add(s));
+        if (!(t.entry_signals || []).length) hasNoSignal = true;
+        exitSet.add(t.exit_type || "Not recorded");
+      });
+      const sigs = [...sigSet].sort();
+      // Exit types sorted, but keep "Not recorded" last.
+      const exits = [...exitSet].filter(e => e !== "Not recorded").sort();
+      if (exitSet.has("Not recorded")) exits.push("Not recorded");
+
+      let sHtml = `<option value="">All signals</option>`;
+      sigs.forEach(s => sHtml += `<option value="${esc(s)}">${esc(s)}</option>`);
+      if (hasNoSignal) sHtml += `<option value="${NO_SIGNAL}">No signal</option>`;
+      signalSel.innerHTML = sHtml;
+
+      let eHtml = `<option value="">All exits</option>`;
+      exits.forEach(e => eHtml += `<option value="${esc(e)}">${esc(e)}</option>`);
+      exitSel.innerHTML = eHtml;
+
+      const periods = [["all","All time"],["week","This week"],["month","This month"],["30d","Last 30 days"]];
+      periodEl.innerHTML = periods.map(([v,l]) =>
+        `<button class="cl-pill${v==="all"?" active":""}" data-period="${v}">${l}</button>`).join("");
+    })();
+
+    // ── Apply + wire ────────────────────────────────────────────────
+    function apply() {
+      const filtered = ALL.filter(matches);
+      const isFiltered = !!(filters.signal || filters.exit || filters.period !== "all");
+      renderSummary(computeSummary(filtered), isFiltered);
+      renderList(filtered);
+
+      signalSel.classList.toggle("active", !!filters.signal);
+      exitSel.classList.toggle("active", !!filters.exit);
+      periodEl.querySelectorAll(".cl-pill").forEach(p =>
+        p.classList.toggle("active", p.dataset.period === filters.period));
+
+      if (isFiltered) {
+        countEl.textContent = `Showing ${filtered.length} of ${ALL.length}`;
+        stateEl.classList.remove("hidden");
+      } else {
+        stateEl.classList.add("hidden");
+      }
+    }
+
+    signalSel.addEventListener("change", () => { filters.signal = signalSel.value; apply(); });
+    exitSel.addEventListener("change", () => { filters.exit = exitSel.value; apply(); });
+    periodEl.addEventListener("click", (e) => {
+      const btn = e.target.closest(".cl-pill");
+      if (!btn) return;
+      filters.period = btn.dataset.period;
+      apply();
+    });
+    clearBtn.addEventListener("click", () => {
+      filters.signal = ""; filters.exit = ""; filters.period = "all";
+      signalSel.value = ""; exitSel.value = "";
+      apply();
+    });
+
+    stateEl.classList.add("hidden");
+    apply();
   })();
 
   // ── Chart defaults ─────────────────────────────────────────────────
@@ -3060,6 +3219,21 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       h += `<div><div class="so-kv-label">Net P&L</div><div class="so-kv-val ${pnlCls}">${signMoney(d.realized_pnl)}</div></div>`;
       h += `<div><div class="so-kv-label">Return</div><div class="so-kv-val ${pctCls}">${pct(d.realized_pct)}</div></div>`;
       h += `</div></div>`;
+
+      // Entry Signals
+      h += `<div class="so-sec"><div class="so-sec-hdr">Entry Signals</div>`;
+      const sigs = d.entry_signals || [];
+      if (sigs.length) {
+        h += `<div class="so-pills">`;
+        sigs.forEach(s => {
+          const rev = String(s).toUpperCase().indexOf("REVERSION") >= 0 ? " rev" : "";
+          h += `<span class="so-pill${rev}">${esc(s)}</span>`;
+        });
+        h += `</div>`;
+      } else {
+        h += `<div class="so-empty">No entry signals recorded</div>`;
+      }
+      h += `</div>`;
 
       // Exit
       h += `<div class="so-sec"><div class="so-sec-hdr">Exit</div>`;
