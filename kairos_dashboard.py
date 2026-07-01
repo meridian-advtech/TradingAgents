@@ -1114,6 +1114,291 @@ def compute_portfolio_metrics(ibkr: dict, snaps: list[dict]) -> dict:
     }
 
 
+# ── Per-ticker detail (slide-over panel) ───────────────────────────────
+
+def _parse_signal_list(raw) -> list:
+    """Coerce a stored signals field ('[]', JSON list, or CSV) to a list."""
+    if not raw:
+        return []
+    try:
+        v = json.loads(raw)
+        if isinstance(v, list):
+            return [str(s) for s in v]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return [s.strip() for s in str(raw).split(",") if s.strip()]
+
+
+def _exit_status_for(ticker, avg_cost, current_price, peak_gain_pct,
+                     days_held, entry_signals):
+    """Build the Exit Status block: peak gain, active trail, the single
+    closest-to-firing condition, and the full five-condition breakdown.
+
+    Mirrors kairos_exits' conditions 1/2/5 math. The exit engine is imported
+    lazily with a local fallback so dashboard generation never hard-depends
+    on that module importing cleanly (matches the defensive style elsewhere).
+    """
+    conv_status = "Fresh"
+    try:
+        from kairos_exits import (
+            _exits_config, _get_regime, get_position_signal,
+            hard_stop_threshold, trailing_stop_threshold,
+        )
+        cfg = _exits_config()
+        regime = _get_regime()
+        signal = get_position_signal(ticker, entry_signals)
+        closing_stop, _intraday = hard_stop_threshold(signal, regime, cfg)
+        trail = trailing_stop_threshold(peak_gain_pct, cfg)
+        decay_cfg = cfg.get("conviction_decay", {})
+    except Exception:
+        regime, signal = "NORMAL", "STANDARD"
+        closing_stop = -8.0
+        trail = None
+        for min_gain, t in ([15, 8], [30, 10], [50, 12]):
+            if peak_gain_pct >= min_gain:
+                trail = float(t)
+        decay_cfg = {"decay_days": {"HOT-EARNINGS": 10, "HOT-INSIDER": 365,
+                     "HOT-CONGRESS": 90, "HOT-OPTIONS": 7, "HOT-REVERSION": 5,
+                     "DEFAULT": 7}, "liberation_threshold": 0.5}
+
+    gain_pct = ((current_price - avg_cost) / avg_cost * 100.0) if avg_cost else 0.0
+
+    def _clamp(x):
+        return max(0.0, min(100.0, x))
+
+    conditions = []
+
+    # 1) Hard stop-loss — proximity within one stop-width above the trigger.
+    span = abs(closing_stop) or 8.0
+    hard_prox = _clamp(100.0 * (1 - (gain_pct - closing_stop) / span))
+    conditions.append({
+        "name": "Hard stop-loss",
+        "proximity": round(hard_prox, 1),
+        "measurable": True,
+        "detail": f"Now {gain_pct:+.1f}% · closing stop {closing_stop:.1f}% ({signal})",
+    })
+
+    # 2) Trailing stop — armed only once a peak-gain tier is reached.
+    if trail is not None:
+        retreat = peak_gain_pct - gain_pct
+        trail_prox = _clamp(100.0 * retreat / trail) if trail else 0.0
+        conditions.append({
+            "name": "Trailing stop",
+            "proximity": round(trail_prox, 1),
+            "measurable": True,
+            "detail": f"Retreated {retreat:.1f}% of {trail:.0f}% trail from peak {peak_gain_pct:.1f}%",
+        })
+    else:
+        conditions.append({
+            "name": "Trailing stop",
+            "proximity": None,
+            "measurable": False,
+            "detail": f"Arms at +15% peak (peak so far {peak_gain_pct:.1f}%)",
+        })
+
+    # 3) Reversion target reached (condition 5) — governs reversion-led entries.
+    entry_set = {str(s).upper() for s in (entry_signals or [])}
+    reversion_governs = ("HOT-REVERSION" in entry_set
+                         and not (entry_set & {"HOT-INSIDER", "HOT-CONGRESS"}))
+    conditions.append({
+        "name": "Reversion target reached",
+        "proximity": None,
+        "measurable": False,
+        "detail": ("Active — sells when price reverts to its 30-day mean"
+                   if reversion_governs
+                   else "Not governing (no reversion-led entry signal)"),
+    })
+
+    # 4) Conviction decay / liberation — derived from the longest-horizon
+    #    entry signal's decay window vs. days held.
+    decay_days = decay_cfg.get("decay_days", {})
+    lib_thresh = float(decay_cfg.get("liberation_threshold", 0.5))
+    windows = [int(decay_days.get(s, 0)) for s in entry_set if decay_days.get(s)]
+    decay_window = max(windows) if windows else int(decay_days.get("DEFAULT", 7))
+    remaining = (1.0 - min(1.0, days_held / decay_window)) if decay_window else 0.0
+    if days_held >= decay_window:
+        conv_status = "Liberated"
+    elif remaining <= lib_thresh:
+        conv_status = "Decaying"
+    else:
+        conv_status = "Fresh"
+    conditions.append({
+        "name": "Conviction decay",
+        "proximity": round(_clamp(100.0 * (1 - remaining)), 1),
+        "measurable": False,
+        "detail": f"{conv_status} — held {days_held}d of {decay_window}d window",
+    })
+
+    # 5) Tax-aware hold gate — delays (never triggers) a profitable exit.
+    days_to_anniv = 365 - days_held
+    near_anniv = 0 < days_to_anniv <= 30 and gain_pct > 0
+    conditions.append({
+        "name": "Tax-aware hold gate",
+        "proximity": None,
+        "measurable": False,
+        "detail": (f"Delaying profit-taking — {days_to_anniv}d to 1-yr mark"
+                   if near_anniv
+                   else f"Inactive — {days_to_anniv}d to 1-yr long-term mark"),
+    })
+
+    measurable = [c for c in conditions if c["measurable"] and c["proximity"] is not None]
+    closest = max(measurable, key=lambda c: c["proximity"]) if measurable else None
+
+    return {
+        "gain_pct": round(gain_pct, 2),
+        "peak_gain_pct": round(peak_gain_pct, 2),
+        "trail_pct": (round(trail, 1) if trail is not None else None),
+        "closing_stop_pct": round(closing_stop, 1),
+        "signal": signal,
+        "regime": regime,
+        "closest": closest,
+        "conditions": conditions,
+        "conviction": {
+            "status": conv_status,
+            "remaining_pct": round(_clamp(100.0 * remaining), 1),
+            "window_days": decay_window,
+            "days_held": days_held,
+        },
+    }
+
+
+def build_position_details(positions: list, holdings: list) -> dict:
+    """Assemble the full read-only detail record for each open position,
+    keyed by raw symbol (no '(SIM)' suffix), for the slide-over panel.
+
+    Read-only: pulls entry rationale/signals from `decisions`, peak gain and
+    entry date from `holdings`, and the latest `thesis_reviews` row. Degrades
+    gracefully (missing pieces become null) so crypto/sim or freshly-opened
+    positions still render a header and facts.
+    """
+    details: dict = {}
+
+    holding_by_tkr: dict = {}
+    for h in holdings or []:
+        if h.get("sold_date"):
+            continue
+        t = (h.get("ticker") or "").upper()
+        if t and t not in holding_by_tkr:   # holdings arrive ORDER BY entry_date DESC
+            holding_by_tkr[t] = h
+
+    conn = None
+    if os.path.exists(DB_PATH):
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+        except sqlite3.Error:
+            conn = None
+
+    def _entry_decision(tkr):
+        if not conn:
+            return None
+        try:
+            return conn.execute(
+                "SELECT timestamp, rationale, data_inputs FROM decisions "
+                "WHERE ticker = ? AND action = 'BUY' ORDER BY id DESC LIMIT 1",
+                (tkr,)).fetchone()
+        except sqlite3.Error:
+            return None
+
+    def _thesis(tkr):
+        if not conn:
+            return None
+        try:
+            return conn.execute(
+                "SELECT timestamp, return_pct, holding_days, current_signals, "
+                "sell_triggered, trigger_type, sell_reason FROM thesis_reviews "
+                "WHERE ticker = ? ORDER BY id DESC LIMIT 1", (tkr,)).fetchone()
+        except sqlite3.Error:
+            return None
+
+    try:
+        for p in positions or []:
+            sym = p.get("symbol", "")
+            tkr = sym.split(" ")[0].upper()
+            if not tkr or tkr in details:
+                continue
+
+            qty = float(p.get("quantity", 0) or 0)
+            avg_cost = float(p.get("avg_cost", 0) or 0)
+            mkt_val = float(p.get("market_value", 0) or 0)
+            upnl = p.get("unrealized_pnl")
+            cur_price = (mkt_val / qty) if qty else None
+            cost_basis = avg_cost * qty
+            upnl_pct = (upnl / cost_basis * 100.0) if (cost_basis and upnl is not None) else None
+
+            h = holding_by_tkr.get(tkr, {})
+            entry_date = h.get("entry_date")
+            days_held = h.get("holding_days")
+            if days_held is None and entry_date:
+                try:
+                    ed = datetime.strptime(
+                        entry_date.replace(" UTC", "").strip(), "%Y-%m-%d %H:%M:%S"
+                    ).replace(tzinfo=timezone.utc)
+                    days_held = (datetime.now(timezone.utc) - ed).days
+                except (ValueError, AttributeError):
+                    days_held = None
+            peak_gain = float(h.get("peak_gain_pct", 0) or 0)
+
+            entry_signals: list = []
+            confluence: dict = {}
+            rationale = ""
+            dec = _entry_decision(tkr)
+            if dec:
+                rationale = dec["rationale"] or ""
+                try:
+                    di = json.loads(dec["data_inputs"]) if dec["data_inputs"] else {}
+                    conf = di.get("confluence", {}) or {}
+                    entry_signals = conf.get("signals") or di.get("signals") or []
+                    confluence = {"score": conf.get("score"), "tier": conf.get("tier"),
+                                  "nlv_pct": conf.get("nlv_pct")}
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            thesis = None
+            th = _thesis(tkr)
+            if th:
+                thesis = {
+                    "timestamp": th["timestamp"],
+                    "return_pct": th["return_pct"],
+                    "holding_days": th["holding_days"],
+                    "current_signals": _parse_signal_list(th["current_signals"]),
+                    "sell_triggered": bool(th["sell_triggered"]),
+                    "trigger_type": th["trigger_type"],
+                    "sell_reason": th["sell_reason"],
+                }
+
+            exit_status = None
+            if avg_cost and cur_price is not None and days_held is not None:
+                exit_status = _exit_status_for(
+                    tkr, avg_cost, cur_price, peak_gain, int(days_held), entry_signals)
+
+            details[tkr] = {
+                "symbol": sym,
+                "ticker": tkr,
+                "name": p.get("name", ""),
+                "asset_class": p.get("assetClass", "equity"),
+                "sector": p.get("sector", ""),
+                "current_price": round(cur_price, 2) if cur_price is not None else None,
+                "quantity": qty,
+                "avg_cost": avg_cost,
+                "market_value": round(mkt_val, 2),
+                "unrealized_pnl": upnl,
+                "unrealized_pct": round(upnl_pct, 2) if upnl_pct is not None else None,
+                "entry_date": entry_date,
+                "days_held": int(days_held) if days_held is not None else None,
+                "entry_signals": entry_signals,
+                "confluence": confluence,
+                "rationale": rationale,
+                "exit_status": exit_status,
+                "thesis": thesis,
+            }
+    finally:
+        if conn:
+            conn.close()
+
+    return details
+
+
 def build_payload(perf: dict, db: dict, ibkr: dict) -> dict:
     decisions_display = []
     for d in db.get("decisions", [])[:20]:
@@ -1161,6 +1446,7 @@ def build_payload(perf: dict, db: dict, ibkr: dict) -> dict:
         "decisions":      decisions_display,
         "decisions_counts": db.get("decisions_counts", {"executed": 0, "skipped": 0}),
         "positions":      positions,
+        "position_details": build_position_details(positions, db.get("holdings", [])),
         "sector_breakdown": _compute_sector_exposure(positions),
         "chain_tier_breakdown": compute_chain_tier_breakdown(price_map),
         "ibkr_connected": ibkr.get("connected", False),
@@ -1361,6 +1647,120 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       .risk-3col    { grid-template-columns: repeat(2,1fr); }
     }
     @media(max-width:600px) { body { padding: 12px; } .metrics-grid { grid-template-columns:1fr; } }
+    /* ── Position rows are clickable ── */
+    #positions-wrap tbody tr { cursor: pointer; transition: background 0.12s; }
+    #positions-wrap tbody tr:hover td { background: rgba(0,204,255,0.05); }
+    #positions-wrap tbody tr td:first-child { position: relative; }
+    #positions-wrap tbody tr:hover td:first-child::before {
+      content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--cyan);
+    }
+    /* ── Slide-over panel ── */
+    .so-overlay {
+      position: fixed; inset: 0; z-index: 90;
+      background: rgba(4,8,18,0.55); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+      opacity: 0; visibility: hidden; transition: opacity 0.28s ease, visibility 0.28s ease;
+    }
+    .so-overlay.open { opacity: 1; visibility: visible; }
+    .so-panel {
+      position: fixed; top: 0; right: 0; bottom: 0; z-index: 91;
+      width: min(40%, 560px); max-width: 100vw;
+      background: var(--surface2); border-left: 1px solid var(--border2);
+      box-shadow: -24px 0 60px rgba(0,0,0,0.55);
+      transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.22,0.61,0.36,1);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .so-overlay.open .so-panel { transform: translateX(0); }
+    .so-body { overflow-y: auto; padding: 0 26px 32px; flex: 1; }
+    .so-body::-webkit-scrollbar { width: 8px; }
+    .so-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+    .so-body::-webkit-scrollbar-track { background: transparent; }
+    /* Header */
+    .so-head {
+      position: sticky; top: 0; z-index: 2; background: var(--surface2);
+      padding: 24px 26px 18px; border-bottom: 1px solid var(--border);
+    }
+    .so-close {
+      position: absolute; top: 20px; right: 22px; width: 28px; height: 28px;
+      border: 1px solid var(--border2); border-radius: 6px; background: var(--surface);
+      color: var(--dim); font-size: 15px; line-height: 1; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; transition: all 0.18s;
+    }
+    .so-close:hover { color: var(--text); border-color: var(--red); background: var(--red-dim); }
+    .so-sym { font-size: 26px; font-weight: 700; letter-spacing: 1px; }
+    .so-sym.equity { color: var(--cyan); }
+    .so-sym.crypto { color: var(--purple); }
+    .so-class {
+      font-size: 8.5px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim);
+      border: 1px solid var(--border2); border-radius: 4px; padding: 2px 7px; margin-left: 10px;
+      vertical-align: middle;
+    }
+    .so-name { font-size: 12px; color: var(--dim); margin-top: 4px; }
+    .so-price-row { display: flex; align-items: baseline; gap: 16px; margin-top: 14px; flex-wrap: wrap; }
+    .so-price { font-size: 20px; font-weight: 700; color: var(--text); }
+    .so-pnl-big { font-size: 20px; font-weight: 700; }
+    .so-pnl-pct { font-size: 13px; opacity: 0.85; margin-left: 6px; }
+    /* Sections */
+    .so-sec { margin-top: 26px; }
+    .so-sec-hdr {
+      font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--dim);
+      margin-bottom: 14px; display: flex; align-items: center; gap: 10px;
+    }
+    .so-sec-hdr::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+    /* Facts grid */
+    .so-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 22px; }
+    .so-fact-label { font-size: 8.5px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--dim); margin-bottom: 5px; }
+    .so-fact-val { font-size: 15px; font-weight: 700; color: var(--text); }
+    /* Pills */
+    .so-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .so-pill {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.5px; padding: 5px 11px; border-radius: 20px;
+      background: var(--cyan-dim); color: var(--cyan); border: 1px solid rgba(0,204,255,0.3);
+    }
+    .so-pill.rev { background: var(--purple-dim); color: var(--purple); border-color: rgba(187,102,255,0.3); }
+    .so-conf-row { display: flex; align-items: center; gap: 12px; }
+    .so-conf-dots { display: flex; gap: 4px; }
+    .so-conf-dot { width: 18px; height: 5px; border-radius: 3px; background: var(--border2); }
+    .so-conf-dot.on { background: var(--cyan); }
+    .so-conf-txt { font-size: 11px; color: var(--dim); }
+    /* Rationale */
+    .so-prose { font-size: 12.5px; line-height: 1.65; color: var(--text); opacity: 0.92; }
+    .so-prose.empty { color: var(--muted); font-style: italic; }
+    /* Bars */
+    .so-bar-track { height: 8px; border-radius: 5px; background: var(--bg); overflow: hidden; border: 1px solid var(--border); }
+    .so-bar-fill { height: 100%; border-radius: 5px; transition: width 0.4s ease; }
+    .so-bar-meta { display: flex; justify-content: space-between; font-size: 11px; margin: 9px 0 5px; }
+    .so-bar-detail { font-size: 10.5px; color: var(--dim); margin-top: 6px; line-height: 1.4; }
+    .so-kv-row { display: flex; gap: 26px; margin-bottom: 16px; flex-wrap: wrap; }
+    .so-kv-label { font-size: 8.5px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--dim); margin-bottom: 4px; }
+    .so-kv-val { font-size: 16px; font-weight: 700; }
+    /* Expandable all-conditions */
+    .so-expand { margin-top: 14px; }
+    .so-expand-btn {
+      font-size: 10px; letter-spacing: 0.5px; color: var(--cyan); background: none; border: none;
+      cursor: pointer; padding: 4px 0; font-family: inherit; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .so-expand-btn:hover { color: var(--text); }
+    .so-expand-body { display: none; margin-top: 12px; }
+    .so-expand.open .so-expand-body { display: block; }
+    .so-expand.open .so-caret { transform: rotate(90deg); }
+    .so-caret { transition: transform 0.2s; display: inline-block; }
+    .so-cond {
+      display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border);
+    }
+    .so-cond:last-child { border-bottom: none; }
+    .so-cond-name { font-size: 11.5px; font-weight: 700; color: var(--text); width: 150px; flex-shrink: 0; }
+    .so-cond-detail { font-size: 10px; color: var(--dim); line-height: 1.35; flex: 1; }
+    .so-cond-prox { font-size: 11px; font-weight: 700; width: 42px; text-align: right; flex-shrink: 0; }
+    /* Conviction status chip */
+    .so-chip {
+      font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+      padding: 3px 9px; border-radius: 4px;
+    }
+    .so-chip.fresh { background: var(--green-dim); color: var(--green); }
+    .so-chip.decaying { background: var(--amber-dim); color: var(--amber); }
+    .so-chip.liberated { background: var(--red-dim); color: var(--red); }
+    .so-empty { font-size: 11.5px; color: var(--muted); font-style: italic; padding: 4px 0; }
+    @media(max-width:768px) { .so-panel { width: 100vw; } }
   </style>
 </head>
 <body>
@@ -1458,6 +1858,22 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 </div>
 
 <div style="height:32px"></div>
+
+<!-- ── Ticker detail slide-over ── -->
+<div class="so-overlay" id="so-overlay">
+  <aside class="so-panel" id="so-panel" role="dialog" aria-modal="true" aria-labelledby="so-sym">
+    <div class="so-head">
+      <button class="so-close" id="so-close" aria-label="Close">&times;</button>
+      <div><span class="so-sym" id="so-sym"></span><span class="so-class" id="so-class"></span></div>
+      <div class="so-name" id="so-name"></div>
+      <div class="so-price-row">
+        <span class="so-price" id="so-price"></span>
+        <span><span class="so-pnl-big" id="so-pnl"></span><span class="so-pnl-pct" id="so-pnl-pct"></span></span>
+      </div>
+    </div>
+    <div class="so-body" id="so-body"></div>
+  </aside>
+</div>
 
 <script>
   const DATA = __DATA_JSON__;
@@ -1971,7 +2387,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       const upnlStr = upnl != null
         ? `<span class="${upnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${upnl >= 0 ? '+' : ''}$${Math.abs(upnl).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>`
         : \'<span style="color:var(--muted)">\u2014</span>\';
-      html += `<tr>
+      const rawTkr = p.symbol.split(" ")[0];
+      html += `<tr data-ticker="${rawTkr}" onclick="openPanel('${rawTkr}')">
         <td style="color:var(--${cls});font-weight:700">${p.symbol}</td>
         <td style="color:var(--dim);font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name || ""}</td>
         <td style="color:var(--dim);text-transform:uppercase;font-size:10px">${p.assetClass}</td>
@@ -2188,6 +2605,178 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         console.error("Refresh failed:", err);
       });
   }
+
+  // ── Ticker detail slide-over ───────────────────────────────────────
+  (function initSlideOver() {
+    const overlay = document.getElementById("so-overlay");
+    const body    = document.getElementById("so-body");
+    const DETAILS = DATA.position_details || {};
+
+    function money(v, dp) {
+      if (v == null) return "—";
+      dp = dp == null ? 2 : dp;
+      return "$" + Math.abs(v).toLocaleString("en-US", {minimumFractionDigits:dp, maximumFractionDigits:dp});
+    }
+    function signMoney(v) {
+      if (v == null) return "—";
+      return (v >= 0 ? "+" : "−") + money(v);
+    }
+    function pct(v, dp) {
+      if (v == null) return "—";
+      dp = dp == null ? 2 : dp;
+      return (v >= 0 ? "+" : "") + v.toFixed(dp) + "%";
+    }
+    function esc(s) {
+      return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    function barColor(p) {            // proximity 0 (calm) -> 100 (firing)
+      if (p >= 75) return "var(--red)";
+      if (p >= 45) return "var(--amber)";
+      return "var(--green)";
+    }
+    function fact(label, val) {
+      return `<div><div class="so-fact-label">${label}</div><div class="so-fact-val">${val}</div></div>`;
+    }
+
+    function renderBody(d) {
+      let h = "";
+
+      // Position Facts
+      h += `<div class="so-sec"><div class="so-sec-hdr">Position Facts</div><div class="so-facts">`;
+      h += fact("Entry date", d.entry_date ? esc(d.entry_date.slice(0,10)) : "—");
+      h += fact("Days held", d.days_held != null ? d.days_held : "—");
+      h += fact("Avg cost", money(d.avg_cost));
+      h += fact("Shares held", d.quantity != null ? d.quantity.toLocaleString() : "—");
+      h += fact("Market value", money(d.market_value));
+      h += fact("Sector", d.sector ? esc(d.sector) : "—");
+      h += `</div></div>`;
+
+      // Entry Signals
+      h += `<div class="so-sec"><div class="so-sec-hdr">Entry Signals</div>`;
+      const sigs = d.entry_signals || [];
+      if (sigs.length) {
+        h += `<div class="so-pills">`;
+        sigs.forEach(s => {
+          const rev = String(s).toUpperCase().indexOf("REVERSION") >= 0 ? " rev" : "";
+          h += `<span class="so-pill${rev}">${esc(s)}</span>`;
+        });
+        h += `</div>`;
+      } else {
+        h += `<div class="so-empty">No entry signals recorded</div>`;
+      }
+      const conf = d.confluence || {};
+      if (conf.score != null) {
+        const score = Math.max(0, Math.min(5, conf.score));
+        let dots = "";
+        for (let i = 0; i < 5; i++) dots += `<span class="so-conf-dot${i < score ? " on" : ""}"></span>`;
+        h += `<div class="so-conf-row"><div class="so-conf-dots">${dots}</div>`
+          + `<div class="so-conf-txt">Confluence ${conf.score}${conf.tier ? " · " + esc(conf.tier) : ""}</div></div>`;
+      }
+      h += `</div>`;
+
+      // Entry Rationale
+      h += `<div class="so-sec"><div class="so-sec-hdr">Entry Rationale</div>`;
+      h += d.rationale
+        ? `<div class="so-prose">${esc(d.rationale)}</div>`
+        : `<div class="so-prose empty">No rationale recorded for this entry.</div>`;
+      h += `</div>`;
+
+      // Exit Status
+      h += `<div class="so-sec"><div class="so-sec-hdr">Exit Status</div>`;
+      const ex = d.exit_status;
+      if (ex) {
+        const peakCls = ex.peak_gain_pct >= 0 ? "pnl-pos" : "pnl-neg";
+        h += `<div class="so-kv-row">`;
+        h += `<div><div class="so-kv-label">Peak gain</div><div class="so-kv-val ${peakCls}">${pct(ex.peak_gain_pct,1)}</div></div>`;
+        h += `<div><div class="so-kv-label">Trailing stop</div><div class="so-kv-val">${ex.trail_pct != null ? ex.trail_pct.toFixed(0) + "% trail" : "Not armed"}</div></div>`;
+        h += `<div><div class="so-kv-label">Hard stop</div><div class="so-kv-val">${ex.closing_stop_pct != null ? ex.closing_stop_pct.toFixed(0) + "%" : "—"}</div></div>`;
+        h += `</div>`;
+        if (ex.closest) {
+          const p = ex.closest.proximity;
+          h += `<div class="so-bar-meta"><span style="color:var(--dim)">Closest trigger: <b style="color:var(--text)">${esc(ex.closest.name)}</b></span>`
+            + `<span style="color:${barColor(p)};font-weight:700">${p.toFixed(0)}%</span></div>`;
+          h += `<div class="so-bar-track"><div class="so-bar-fill" style="width:${p}%;background:${barColor(p)}"></div></div>`;
+          h += `<div class="so-bar-detail">${esc(ex.closest.detail)}</div>`;
+        }
+        h += `<div class="so-expand" id="so-expand"><button class="so-expand-btn" id="so-expand-btn">`
+          + `<span class="so-caret">▸</span> Show all exit conditions</button><div class="so-expand-body">`;
+        (ex.conditions || []).forEach(c => {
+          const pv = c.proximity;
+          const proxTxt = (c.measurable && pv != null)
+            ? `<span class="so-cond-prox" style="color:${barColor(pv)}">${pv.toFixed(0)}%</span>`
+            : `<span class="so-cond-prox" style="color:var(--muted)">—</span>`;
+          h += `<div class="so-cond"><div class="so-cond-name">${esc(c.name)}</div><div class="so-cond-detail">${esc(c.detail)}</div>${proxTxt}</div>`;
+        });
+        h += `</div></div>`;
+      } else {
+        h += `<div class="so-empty">Exit metrics unavailable for this position.</div>`;
+      }
+      h += `</div>`;
+
+      // Thesis & Conviction
+      h += `<div class="so-sec"><div class="so-sec-hdr">Thesis &amp; Conviction</div>`;
+      const conv = ex ? ex.conviction : null;
+      if (conv) {
+        const st = (conv.status || "").toLowerCase();
+        const rem = conv.remaining_pct;
+        const cColor = st === "liberated" ? "var(--red)" : (st === "decaying" ? "var(--amber)" : "var(--green)");
+        h += `<div class="so-bar-meta"><span style="color:var(--dim)">Conviction <span class="so-chip ${st}">${esc(conv.status)}</span></span>`
+          + `<span style="color:var(--text);font-weight:700">${rem.toFixed(0)}%</span></div>`;
+        h += `<div class="so-bar-track"><div class="so-bar-fill" style="width:${rem}%;background:${cColor}"></div></div>`;
+        h += `<div class="so-bar-detail">Held ${conv.days_held}d of ${conv.window_days}d decay window</div>`;
+      }
+      const th = d.thesis;
+      if (th) {
+        const retCls = (th.return_pct != null && th.return_pct < 0) ? "pnl-neg" : "pnl-pos";
+        h += `<div style="margin-top:14px"><div class="so-bar-detail" style="font-size:11px">Last review ${th.timestamp ? esc(th.timestamp.slice(0,10)) : "—"}`
+          + (th.return_pct != null ? ` · <span class="${retCls}">${pct(th.return_pct,1)}</span>` : "")
+          + (th.holding_days != null ? ` · ${th.holding_days}d held` : "") + `</div>`;
+        if (th.sell_triggered && th.sell_reason) {
+          h += `<div class="so-bar-detail" style="color:var(--amber);margin-top:6px">⚠ ${esc(th.trigger_type || "Exit")} — ${esc(th.sell_reason)}</div>`;
+        }
+        h += `</div>`;
+      } else if (!conv) {
+        h += `<div class="so-empty">No thesis review recorded yet.</div>`;
+      }
+      h += `</div>`;
+
+      return h;
+    }
+
+    window.openPanel = function(ticker) {
+      const d = DETAILS[(ticker || "").toUpperCase()];
+      if (!d) return;
+      const symEl = document.getElementById("so-sym");
+      symEl.textContent = d.ticker;
+      symEl.className = "so-sym " + (d.asset_class === "crypto" ? "crypto" : "equity");
+      document.getElementById("so-class").textContent = d.asset_class || "equity";
+      document.getElementById("so-name").textContent = d.name || "";
+      document.getElementById("so-price").textContent = d.current_price != null ? money(d.current_price) : "—";
+      const neg = d.unrealized_pnl != null && d.unrealized_pnl < 0;
+      const pnlEl = document.getElementById("so-pnl");
+      const pctEl = document.getElementById("so-pnl-pct");
+      pnlEl.textContent = signMoney(d.unrealized_pnl);
+      pnlEl.className = "so-pnl-big " + (neg ? "pnl-neg" : "pnl-pos");
+      pctEl.textContent = d.unrealized_pct != null ? "(" + pct(d.unrealized_pct,2) + ")" : "";
+      pctEl.className = "so-pnl-pct " + (neg ? "pnl-neg" : "pnl-pos");
+      body.innerHTML = renderBody(d);
+      body.scrollTop = 0;
+      overlay.classList.add("open");
+      document.body.style.overflow = "hidden";
+      const exBtn = document.getElementById("so-expand-btn");
+      if (exBtn) exBtn.addEventListener("click", function() {
+        document.getElementById("so-expand").classList.toggle("open");
+      });
+    };
+
+    function closePanel() {
+      overlay.classList.remove("open");
+      document.body.style.overflow = "";
+    }
+    document.getElementById("so-close").addEventListener("click", closePanel);
+    overlay.addEventListener("click", function(e) { if (e.target === overlay) closePanel(); });
+    document.addEventListener("keydown", function(e) { if (e.key === "Escape") closePanel(); });
+  })();
 
   // Auto-refresh: reload the page every 5 minutes
   // Only when served from the Flask server (not file://)
