@@ -588,8 +588,23 @@ def is_protected(ticker: str) -> bool:
     return row is not None
 
 
-def sell_holdings(ticker: str, qty_to_sell: float, sold_date: str, sold_price: float) -> list[dict]:
-    """Mark oldest open lots as sold (FIFO). Returns list of closed lots."""
+def sell_holdings(
+    ticker: str,
+    qty_to_sell: float,
+    sold_date: str,
+    sold_price: float,
+    reason: str,
+    exit_signals: list[str] | None = None,
+) -> list[dict]:
+    """Mark oldest open lots as sold (FIFO). Returns list of closed lots.
+
+    `reason` is REQUIRED and records which exit condition closed the position:
+    every equity close funnels through here, so recording the exit reason at
+    this one point makes it impossible to close a position silently. The reason
+    (+ exit price/date and any exit_signals) is written to position_exits in the
+    same transaction that marks the lots sold — it both feeds the dashboard's
+    closed-trade list and powers the re-entry guard (get_position_exit).
+    """
     conn = get_connection()
     lots = conn.execute(
         f"SELECT {HOLDINGS_SELECT} FROM holdings WHERE ticker = ? AND sold_date IS NULL ORDER BY entry_date ASC",
@@ -628,6 +643,22 @@ def sell_holdings(ticker: str, qty_to_sell: float, sold_date: str, sold_price: f
             "holding_days": lot["holding_days"],
         })
         remaining -= sell_qty
+
+    # Record the exit reason for every close (same txn as the lot updates). Only
+    # when a lot actually closed — a no-op sell (nothing open) records nothing.
+    if closed:
+        conn.execute(
+            """INSERT INTO position_exits
+               (ticker, exit_date, exit_price, exit_reason, exit_signals)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(ticker) DO UPDATE SET
+                exit_date    = excluded.exit_date,
+                exit_price   = excluded.exit_price,
+                exit_reason  = excluded.exit_reason,
+                exit_signals = excluded.exit_signals""",
+            (ticker, sold_date, sold_price, reason,
+             json.dumps(exit_signals) if exit_signals else None),
+        )
 
     conn.commit()
     conn.close()

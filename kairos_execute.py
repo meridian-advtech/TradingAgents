@@ -655,7 +655,12 @@ def log_execution(decision: dict, trade: dict, execution: dict,
 
         # ── SELL close logging — needs a real fill price for PnL ─────────
         elif exec_filled and fill_price and action_upper == "SELL":
-            closed_lots = sell_holdings(ticker, qty, timestamp, fill_price)
+            # Exit reason: the SELL decision's own rationale (covers manual
+            # sells, reallocation buy-legs, and the oversized+underwater TRIM,
+            # which all route through here). sell_holdings records it so the
+            # close is never silent.
+            sell_reason = (trade.get("rationale") or "").strip() or "SELL (unspecified)"
+            closed_lots = sell_holdings(ticker, qty, timestamp, fill_price, sell_reason)
             closed = closed_lots
             for lot in closed:
                 days = lot["holding_days"]

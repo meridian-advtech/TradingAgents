@@ -965,6 +965,11 @@ def build_closed_trades(holdings: list[dict]) -> list[dict]:
     for h in (holdings or []):
         if not (h.get("sold_date") and h.get("sold_price") is not None):
             continue
+        # Reconciliation lot-merges aren't economic exits (sold at cost, zero
+        # P&L) — they carry a [RECON-merged] marker on sold_date. Skip them so
+        # the closed-trade list shows only real exits.
+        if "[RECON-merged]" in str(h.get("sold_date") or ""):
+            continue
         try:
             entry = float(h["entry_price"])
             qty   = float(h["quantity"])

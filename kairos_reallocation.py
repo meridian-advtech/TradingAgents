@@ -726,7 +726,8 @@ def execute_reallocation(
     )
 
     sell_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    closed_lots = sell_holdings(exit_ticker, exit_qty, sell_date, sell_price)
+    closed_lots = sell_holdings(exit_ticker, exit_qty, sell_date, sell_price,
+                                sell_reason)
     print(f"    SELL {exit_ticker}: {sell_execution.get('status', '?')} "
           f"@ ${sell_price:,.2f} (P&L: ${pnl_dollars:+,.0f})")
 

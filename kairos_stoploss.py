@@ -116,8 +116,13 @@ def _place_market_sell(ib, ticker: str, qty: int) -> dict:
 
 
 def _log_sell(ticker: str, qty: int, entry_price: float, sell_price: float,
-              holding_days: int, reason: str, execution: dict) -> None:
-    """Log stop-loss sell to kairos.db (decisions + holdings)."""
+              holding_days: int, reason: str, execution: dict,
+              exit_signals: list[str] | None = None) -> None:
+    """Log stop-loss sell to kairos.db (decisions + holdings).
+
+    exit_signals: signals present at exit, forwarded to sell_holdings for the
+    re-entry guard (the exit engine passes its current_signals here).
+    """
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     sell_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -166,7 +171,8 @@ def _log_sell(ticker: str, qty: int, entry_price: float, sell_price: float,
             commission=execution.get("commission"),
         )
 
-        closed_lots = sell_holdings(ticker, qty, sell_date, sell_price)
+        closed_lots = sell_holdings(ticker, qty, sell_date, sell_price,
+                                    reason, exit_signals)
         print(f"    DB: decision #{decision_id}, {len(closed_lots)} lot(s) closed")
 
         # Ledger entry — record the closed trade for pattern analysis

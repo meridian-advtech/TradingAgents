@@ -681,18 +681,12 @@ def run_exit_engine(ib=None, regime: str | None = None, dry_run: bool = False) -
         execution = _place_market_sell(ib, ticker, total_qty)
         sell_price = execution.get("fill_price") or current_price
 
-        _log_sell(ticker, total_qty, avg_cost, sell_price, holding_days, reason, execution)
+        # sell_holdings (inside _log_sell) records the exit reason + signals to
+        # position_exits in the same txn that closes the lots — this is the
+        # single enforcement point, so no separate upsert is needed here.
+        _log_sell(ticker, total_qty, avg_cost, sell_price, holding_days, reason,
+                  execution, exit_signals=current_signals)
         _alert_stoploss(ticker, avg_cost, sell_price, gain_pct, holding_days, reason)
-
-        # Record the exit for the re-entry guard.
-        try:
-            from kairos_log_db import upsert_position_exit
-            upsert_position_exit(
-                ticker,
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-                sell_price, reason, current_signals)
-        except Exception as exc:
-            print(f"    WARNING: position_exit upsert failed: {exc}")
 
         # ML close.
         try:
