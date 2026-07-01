@@ -985,6 +985,102 @@ def build_closed_trades(holdings: list[dict]) -> list[dict]:
     return trades
 
 
+# ── Slide-over price series (native thesis_reviews + IBKR fallback) ─────
+
+def build_price_series(ticker: str, entry_date, entry_price: float,
+                       end_date, end_price: float, conn=None) -> list[dict]:
+    """One point per day for a ticker's price over its holding window.
+
+    Native source: thesis_reviews.current_price (~1 point per trading day since
+    entry). Anchored with the entry price at the entry day and the end price
+    (current for open, sold for closed) at the end day. Returns [{t, p}] sorted
+    by day. Empty on error / no data (the caller then shows a 'building history'
+    state or tries the IBKR fallback).
+    """
+    ed = _parse_trade_date(entry_date)
+    if ed is None:
+        return []
+    # _parse_trade_date is naive → keep the window bound naive too.
+    end_dt = _parse_trade_date(end_date) if end_date else datetime.now(timezone.utc).replace(tzinfo=None)
+    if end_dt is None:
+        end_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+    day2price: dict[str, float] = {}
+
+    own = False
+    if conn is None:
+        if not os.path.exists(DB_PATH):
+            return []
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            own = True
+        except sqlite3.Error:
+            return []
+    try:
+        rows = conn.execute(
+            "SELECT timestamp, current_price FROM thesis_reviews "
+            "WHERE ticker = ? AND current_price IS NOT NULL AND current_price > 0 "
+            "ORDER BY id ASC", (ticker,)).fetchall()
+        for r in rows:
+            d = _parse_trade_date(r["timestamp"])
+            if d is None or d < ed or d > end_dt:
+                continue
+            day2price[d.strftime("%Y-%m-%d")] = round(float(r["current_price"]), 2)
+    except sqlite3.Error:
+        pass
+    finally:
+        if own:
+            conn.close()
+
+    # Anchor the ends: entry price at the entry day, end price at the end day.
+    if entry_price:
+        day2price[ed.strftime("%Y-%m-%d")] = round(float(entry_price), 2)
+    if end_price and end_dt:
+        day2price[end_dt.strftime("%Y-%m-%d")] = round(float(end_price), 2)
+
+    return [{"t": d, "p": day2price[d]} for d in sorted(day2price)]
+
+
+def _ibkr_historical_series(tickers: list[str]) -> dict:
+    """Fallback: 30 calendar days of daily closes per ticker via IBKR, in ONE
+    connection. Returns {ticker: [{t, p}]}. Empty on any failure (ib_insync
+    missing, gateway down, etc.) — the caller keeps whatever native series it had.
+    """
+    out: dict = {}
+    if not tickers:
+        return out
+    try:
+        from ib_insync import IB, Stock
+    except Exception:
+        return out
+    ib = IB()
+    try:
+        ib.connect("127.0.0.1", 7497, clientId=17, timeout=8)
+    except Exception:
+        return out
+    try:
+        ib.reqMarketDataType(3)
+        for t in tickers:
+            try:
+                c = Stock(t, "SMART", "USD")
+                ib.qualifyContracts(c)
+                bars = ib.reqHistoricalData(
+                    c, endDateTime="", durationStr="30 D", barSizeSetting="1 day",
+                    whatToShow="TRADES", useRTH=True, formatDate=1)
+                pts = [{"t": str(b.date), "p": round(float(b.close), 2)}
+                       for b in bars if b.close and b.close > 0]
+                if len(pts) >= 3:
+                    out[t] = pts
+            except Exception:
+                continue
+    finally:
+        try:
+            ib.disconnect()
+        except Exception:
+            pass
+    return out
+
+
 def build_closed_details(closed_trades: list[dict], name_map: dict) -> dict:
     """Detail records for the slide-over panel, keyed by str(holding id).
 
@@ -994,31 +1090,54 @@ def build_closed_details(closed_trades: list[dict], name_map: dict) -> dict:
     figures (exit price, realized P&L, exit reason) instead of live/unrealized.
     """
     details: dict = {}
-    for t in closed_trades:
-        hid = t.get("id")
-        if hid is None:
-            continue
-        entry, sold, qty = t["entry_price"], t["sold_price"], t["quantity"]
-        details[str(hid)] = {
-            "closed":       True,
-            "ticker":       t["ticker"],
-            "name":         name_map.get(t["ticker"], ""),
-            "asset_class":  "equity",
-            "entry_date":   t["entry_date"],
-            "sold_date":    t["sold_date"],
-            "days_held":    t["days_held"],
-            "entry_price":  entry,
-            "sold_price":   sold,
-            "quantity":     qty,
-            "cost_basis":   round(entry * qty, 2),
-            "proceeds":     round(sold * qty, 2),
-            "realized_pnl": t["realized_pnl_usd"],
-            "realized_pct": t["realized_pnl_pct"],
-            "entry_signals": t.get("entry_signals", []),
-            "exit_reason":  t["exit_reason"],
-            "exit_type":    t["exit_type"],
-            "exit_color":   t["exit_color"],
-        }
+    # One shared connection for all price-series lookups (indexed by ticker).
+    conn = None
+    if os.path.exists(DB_PATH):
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+        except sqlite3.Error:
+            conn = None
+    try:
+        for t in closed_trades:
+            hid = t.get("id")
+            if hid is None:
+                continue
+            entry, sold, qty = t["entry_price"], t["sold_price"], t["quantity"]
+            # Native price line for the holding window; entry + exit anchored.
+            series = build_price_series(t["ticker"], t["entry_date"], entry,
+                                        t["sold_date"], sold, conn=conn)
+            details[str(hid)] = {
+                "closed":       True,
+                "ticker":       t["ticker"],
+                "name":         name_map.get(t["ticker"], ""),
+                "asset_class":  "equity",
+                "entry_date":   t["entry_date"],
+                "sold_date":    t["sold_date"],
+                "days_held":    t["days_held"],
+                "entry_price":  entry,
+                "sold_price":   sold,
+                "quantity":     qty,
+                "cost_basis":   round(entry * qty, 2),
+                "proceeds":     round(sold * qty, 2),
+                "realized_pnl": t["realized_pnl_usd"],
+                "realized_pct": t["realized_pnl_pct"],
+                "entry_signals": t.get("entry_signals", []),
+                "exit_reason":  t["exit_reason"],
+                "exit_type":    t["exit_type"],
+                "exit_color":   t["exit_color"],
+                # Chart: series + marked points; closed → no live stop lines.
+                "price_series": series,
+                "entry_t":      (_parse_trade_date(t["entry_date"]).strftime("%Y-%m-%d")
+                                 if _parse_trade_date(t["entry_date"]) else None),
+                "exit_t":       (_parse_trade_date(t["sold_date"]).strftime("%Y-%m-%d")
+                                 if _parse_trade_date(t["sold_date"]) else None),
+                "hard_stop_price":  None,
+                "trail_stop_price": None,
+            }
+    finally:
+        if conn:
+            conn.close()
     return details
 
 
@@ -1479,7 +1598,8 @@ def _exit_status_for(ticker, avg_cost, current_price, peak_gain_pct,
     }
 
 
-def build_position_details(positions: list, holdings: list) -> dict:
+def build_position_details(positions: list, holdings: list,
+                           ibkr_connected: bool = False) -> dict:
     """Assemble the full read-only detail record for each open position,
     keyed by raw symbol (no '(SIM)' suffix), for the slide-over panel.
 
@@ -1589,6 +1709,21 @@ def build_position_details(positions: list, holdings: list) -> dict:
                 exit_status = _exit_status_for(
                     tkr, avg_cost, cur_price, peak_gain, int(days_held), entry_signals)
 
+            # Chart: native price line since entry, plus stop-level prices for
+            # the horizontal reference lines. Crypto/SIM have no thesis_reviews.
+            is_crypto = p.get("assetClass", "equity") == "crypto"
+            series = ([] if is_crypto else
+                      build_price_series(tkr, entry_date, avg_cost, None, cur_price, conn=conn))
+            hard_stop_price = trail_stop_price = None
+            if exit_status and avg_cost:
+                csp = exit_status.get("closing_stop_pct")
+                if csp is not None:
+                    hard_stop_price = round(avg_cost * (1 + csp / 100.0), 2)
+                tp = exit_status.get("trail_pct")
+                pk = exit_status.get("peak_gain_pct")
+                if tp is not None and pk is not None:
+                    trail_stop_price = round(avg_cost * (1 + pk / 100.0) * (1 - tp / 100.0), 2)
+
             details[tkr] = {
                 "symbol": sym,
                 "ticker": tkr,
@@ -1608,10 +1743,36 @@ def build_position_details(positions: list, holdings: list) -> dict:
                 "rationale": rationale,
                 "exit_status": exit_status,
                 "thesis": thesis,
+                # Chart data.
+                "price_series": series,
+                "entry_t": (_parse_trade_date(entry_date).strftime("%Y-%m-%d")
+                            if _parse_trade_date(entry_date) else None),
+                "exit_t": None,
+                "hard_stop_price": hard_stop_price,
+                "trail_stop_price": trail_stop_price,
             }
     finally:
         if conn:
             conn.close()
+
+    # IBKR fallback: freshly-opened equity positions have too few native
+    # points to chart. If IBKR is connected, backfill true 30-day daily closes
+    # in one connection (keeping the entry marker + stop lines).
+    if ibkr_connected:
+        need = [tkr for tkr, d in details.items()
+                if d.get("asset_class") != "crypto" and len(d.get("price_series") or []) < 3]
+        if need:
+            hist = _ibkr_historical_series(need)
+            for tkr, pts in hist.items():
+                d = details.get(tkr)
+                if not d:
+                    continue
+                # Extend to 'now' with the live price so the line reaches today.
+                cur = d.get("current_price")
+                if cur is not None:
+                    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    pts = [pt for pt in pts if pt["t"] != today] + [{"t": today, "p": cur}]
+                d["price_series"] = pts
 
     return details
 
@@ -1653,6 +1814,52 @@ def _et_hhmm(dt_utc: datetime) -> str:
     return d.strftime("%H:%M ET")
 
 
+def _typical_cycle_minutes(default: float = 30.0) -> float:
+    """Median gap (minutes) between the last N completed cycles, from the
+    scheduler log. Falls back to `default` if there's not enough same-session
+    data. Replaces a hardcoded 30-min cadence assumption that drifted out of
+    sync with actual cycle runtime (observed ~50min as of 2026-07-01) —
+    self-adjusts instead of needing another manual edit next time it drifts.
+    """
+    try:
+        stamps = []
+        with open(_SCHED_LOG) as f:
+            for line in f:
+                if "] PASS —" in line or "] FAIL —" in line:
+                    s = line[1:line.index("]")].rstrip("Z")
+                    try:
+                        stamps.append(datetime.strptime(s, "%Y-%m-%dT%H:%M:%S")
+                                      .replace(tzinfo=timezone.utc))
+                    except ValueError:
+                        pass
+        stamps = stamps[-15:]  # recent window only
+        gaps = []
+        for a, b in zip(stamps, stamps[1:]):
+            g = (b - a).total_seconds() / 60.0
+            if 5 <= g <= 120:  # exclude overnight/weekend rollovers
+                gaps.append(g)
+        if len(gaps) >= 3:
+            return statistics.median(gaps)
+    except Exception:
+        pass
+    return default
+
+
+def _next_rth_open(dt_utc: datetime):
+    """Next weekday 09:30 ET open at/after dt_utc. Returns (open_dt_utc, same_day)."""
+    et = _et_zone()
+    if et is None:
+        return None, False
+    d = dt_utc.astimezone(et)
+    step = 1 if (d.hour * 100 + d.minute) >= 1600 or d.weekday() >= 5 else 0
+    nd = d + timedelta(days=step) if step else d
+    while nd.weekday() >= 5:
+        nd = nd + timedelta(days=1)
+    same_day = nd.date() == d.date()
+    open_et = nd.replace(hour=9, minute=30, second=0, microsecond=0)
+    return open_et.astimezone(timezone.utc), same_day
+
+
 def build_system_health(ibkr: dict) -> dict:
     """Ambient system-health facts for the top strip. Read-only; each item is
     {label, value, level} with level ∈ {ok, warn, down, info}. Every probe is
@@ -1661,6 +1868,7 @@ def build_system_health(ibkr: dict) -> dict:
     now = datetime.now(timezone.utc)
     items: dict = {}
     last_ts = None   # UTC datetime of the last cycle, for the next-cycle estimate
+    cadence = _typical_cycle_minutes()  # observed, not assumed — see docstring above
 
     # ── Last cycle: last PASS/FAIL line in the scheduler log ─────────────
     last = {"label": "Last cycle", "value": "unknown", "level": "warn"}
@@ -1677,8 +1885,10 @@ def build_system_health(ibkr: dict) -> dict:
             ok = "] PASS —" in last_line
             mins = (now - ts).total_seconds() / 60.0
             level = "ok" if ok else "down"
-            # A green run that hasn't cycled in >40 min during RTH is a warning.
-            if ok and _in_rth(now) and mins > 40:
+            # A green run that's gone well past the observed cadence during
+            # RTH is a warning — threshold floats with actual cycle time
+            # instead of a hardcoded 40min that drifts out of sync.
+            if ok and _in_rth(now) and mins > cadence * 1.5:
                 level = "warn"
             last = {"label": "Last cycle",
                     "value": f"{_et_hhmm(ts)} · {'success' if ok else 'ERROR'}",
@@ -1690,33 +1900,26 @@ def build_system_health(ibkr: dict) -> dict:
     items["last_cycle"] = last
 
     # ── Next scheduled cycle: DERIVED estimate (not tracked anywhere) ────
-    # launchd fires every 1800s from load time; the scheduler self-exits
-    # outside RTH. Best effort: +30 min within the window, else next RTH open.
+    # launchd fires every 1800s from load time, but a still-running cycle
+    # blocks the next fire, so real cadence runs longer — use the observed
+    # median (`cadence`) rather than the nominal 30min interval.
     nxt = {"label": "Next", "value": "—", "level": "info"}
     et = _et_zone()
     if et is not None:
-        d = now.astimezone(et)
         if _in_rth(now):
-            # Estimate from the 30-min cadence off the last cycle; if that's
-            # already past (cycle overdue), the next fire is imminent.
             base = last_ts if last_ts else now
-            cand = base + timedelta(minutes=30)
+            cand = base + timedelta(minutes=cadence)
             if cand < now:
-                cand = now + timedelta(minutes=30)
+                cand = now + timedelta(minutes=cadence)
             if not _in_rth(cand):
                 cand = None  # would fall past the close → next open
             nxt["value"] = (f"~{_et_hhmm(cand)} (est)" if cand
                             else "~09:30 ET next day (est)")
         else:
-            # Next weekday 09:30 ET.
-            nd = d
-            step = 1 if (d.hour * 100 + d.minute) >= 1600 or d.weekday() >= 5 else 0
-            nd = d + timedelta(days=step) if step else d
-            while nd.weekday() >= 5:
-                nd = nd + timedelta(days=1)
-            same_day = nd.date() == d.date()
-            nxt["value"] = ("~09:30 ET (est)" if same_day
-                            else f"~{nd.strftime('%a')} 09:30 ET (est)")
+            open_dt, same_day = _next_rth_open(now)
+            if open_dt is not None:
+                nxt["value"] = ("~09:30 ET (est)" if same_day
+                                else f"~{open_dt.astimezone(et).strftime('%a')} 09:30 ET (est)")
     items["next_cycle"] = nxt
 
     # ── Commander daemon: PID file + signal-0 probe ─────────────────────
@@ -1774,6 +1977,27 @@ def build_system_health(ibkr: dict) -> dict:
         pass
     items["regime"] = reg
 
+    # ── Market hours: open/closed + count up/down against the close/open ──
+    mkt = {"label": "Market", "value": "—", "level": "info"}
+    if et is not None:
+        if _in_rth(now):
+            close_et = now.astimezone(et).replace(hour=16, minute=0, second=0, microsecond=0)
+            remain = (close_et.astimezone(timezone.utc) - now).total_seconds() / 60.0
+            h, m = int(remain // 60), int(remain % 60)
+            mkt = {"label": "Market",
+                   "value": f"OPEN · closes in {h}h {m:02d}m",
+                   "level": "ok"}
+        else:
+            open_dt, same_day = _next_rth_open(now)
+            if open_dt is not None:
+                until = (open_dt - now).total_seconds() / 60.0
+                h, m = int(until // 60), int(until % 60)
+                when = f"in {h}h {m:02d}m" if same_day else f"{open_dt.astimezone(et).strftime('%a')} 09:30 ET"
+                mkt = {"label": "Market",
+                       "value": f"closed · opens {when}",
+                       "level": "info"}
+    items["market"] = mkt
+
     return items
 
 
@@ -1820,7 +2044,8 @@ def build_payload(perf: dict, db: dict, ibkr: dict) -> dict:
     # still open), then merge the closed detail records — keyed by numeric
     # holding id — into the same position_details map the panel reads.
     closed_trades = build_closed_trades(db.get("holdings", []))
-    position_details = build_position_details(positions, db.get("holdings", []))
+    position_details = build_position_details(
+        positions, db.get("holdings", []), ibkr_connected=bool(ibkr.get("connected")))
     try:
         closed_name_map = _resolve_ticker_names(
             sorted({t["ticker"] for t in closed_trades if t.get("ticker")}))
@@ -2178,6 +2403,19 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     .so-body::-webkit-scrollbar { width: 8px; }
     .so-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
     .so-body::-webkit-scrollbar-track { background: transparent; }
+    /* Price mini-chart */
+    .so-chart-wrap { position: relative; height: 110px; margin: 16px 0 6px; }
+    .so-chart-empty {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      color: var(--muted); font-size: 11px; letter-spacing: 1px;
+    }
+    .so-chart-legend {
+      display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px;
+      font-size: 9.5px; color: var(--dim); letter-spacing: 0.5px;
+    }
+    .so-chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .so-chart-legend .lg-dot { width: 7px; height: 7px; border-radius: 50%; }
+    .so-chart-legend .lg-dash { width: 12px; border-top: 2px dashed; height: 0; }
     /* Header */
     .so-head {
       position: sticky; top: 0; z-index: 2; background: var(--surface2);
@@ -2437,7 +2675,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     if (!el) return;
     if (!H) { el.style.display = "none"; return; }
     const esc = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-    const order = ["last_cycle", "next_cycle", "commander", "ibkr", "regime"];
+    const order = ["last_cycle", "next_cycle", "market", "commander", "ibkr", "regime"];
     let html = `<span class="sh-title">System</span>`;
     order.forEach(k => {
       const it = H[k];
@@ -3532,10 +3770,100 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       return `<div><div class="so-fact-label">${label}</div><div class="so-fact-val">${val}</div></div>`;
     }
 
+    // ── Price mini-chart (top of the panel body) ──────────────────────
+    let soChart = null;
+
+    function chartSection() {
+      return `<div class="so-chart-wrap"><canvas id="so-chart"></canvas>`
+           + `<div class="so-chart-empty" id="so-chart-empty" style="display:none">`
+           + `Building price history…</div>`
+           + `<div class="so-chart-legend" id="so-chart-legend"></div></div>`;
+    }
+
+    function destroyChart() {
+      if (soChart) { try { soChart.destroy(); } catch (e) {} soChart = null; }
+    }
+
+    function buildSoChart(d) {
+      destroyChart();
+      const series = d.price_series || [];
+      const canvas = document.getElementById("so-chart");
+      const empty  = document.getElementById("so-chart-empty");
+      const legend = document.getElementById("so-chart-legend");
+      if (!canvas) return;
+      if (series.length < 3) {           // too sparse to be meaningful
+        canvas.style.display = "none";
+        if (empty) empty.style.display = "block";
+        return;
+      }
+      const labels = series.map(s => s.t);
+      const data   = series.map(s => s.p);
+      const net = d.closed ? d.realized_pnl : d.unrealized_pnl;
+      const up = net == null ? true : net >= 0;
+      const lineColor = up ? "#00e676" : "#ff4466";
+
+      // Highlight the entry (cyan) and, for closed trades, the exit point.
+      const ptR = [], ptBg = [];
+      labels.forEach(t => {
+        if (t === d.entry_t)      { ptR.push(4); ptBg.push("#00ccff"); }
+        else if (t === d.exit_t)  { ptR.push(4); ptBg.push("#c8d8f0"); }
+        else                      { ptR.push(0); ptBg.push(lineColor); }
+      });
+
+      const datasets = [{
+        label: "Price", data, borderColor: lineColor,
+        backgroundColor: (up ? "rgba(0,230,118,0.08)" : "rgba(255,68,102,0.08)"),
+        borderWidth: 2, tension: 0.25, fill: true,
+        pointRadius: ptR, pointBackgroundColor: ptBg, pointHoverRadius: 5,
+      }];
+
+      const hline = (val, color) => ({
+        label: "", data: labels.map(() => val), borderColor: color,
+        borderWidth: 1, borderDash: [4, 3], pointRadius: 0, fill: false, tension: 0,
+      });
+      let legendHtml = `<span><span class="lg-dot" style="background:#00ccff"></span>Entry</span>`;
+      if (d.exit_t) legendHtml += `<span><span class="lg-dot" style="background:#c8d8f0"></span>Exit</span>`;
+      if (d.hard_stop_price != null) {
+        datasets.push(hline(d.hard_stop_price, "#ff4466"));
+        legendHtml += `<span><span class="lg-dash" style="border-color:#ff4466"></span>Hard stop</span>`;
+      }
+      if (d.trail_stop_price != null) {
+        datasets.push(hline(d.trail_stop_price, "#ffaa00"));
+        legendHtml += `<span><span class="lg-dash" style="border-color:#ffaa00"></span>Trailing stop</span>`;
+      }
+      if (legend) legend.innerHTML = legendHtml;
+
+      soChart = new Chart(canvas, {
+        type: "line",
+        data: { labels, datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: "#0d1426", borderColor: "#1a2845", borderWidth: 1,
+              titleColor: "#c8d8f0", bodyColor: "#6a80a8",
+              filter: item => item.datasetIndex === 0,
+              callbacks: { label: ctx => " $" + ctx.parsed.y.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2}) },
+            },
+          },
+          scales: {
+            x: { display: false },
+            y: {
+              position: "right",
+              grid: { color: "rgba(26,40,69,0.6)", drawBorder: false },
+              ticks: { color: "#6a80a8", font: { size: 9 }, maxTicksLimit: 4,
+                       callback: v => "$" + v },
+            },
+          },
+        },
+      });
+    }
+
     function renderClosedBody(d) {
       const pnlCls = d.realized_pnl == null ? "" : (d.realized_pnl >= 0 ? "pnl-pos" : "pnl-neg");
       const pctCls = d.realized_pct == null ? "" : (d.realized_pct >= 0 ? "pnl-pos" : "pnl-neg");
-      let h = "";
+      let h = chartSection();
 
       // Realized Trade facts
       h += `<div class="so-sec"><div class="so-sec-hdr">Realized Trade</div><div class="so-facts">`;
@@ -3586,7 +3914,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 
     function renderBody(d) {
       if (d.closed) return renderClosedBody(d);
-      let h = "";
+      let h = chartSection();
 
       // Position Facts
       h += `<div class="so-sec"><div class="so-sec-hdr">Position Facts</div><div class="so-facts">`;
@@ -3715,6 +4043,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       body.scrollTop = 0;
       overlay.classList.add("open");
       document.body.style.overflow = "hidden";
+      buildSoChart(d);
       const exBtn = document.getElementById("so-expand-btn");
       if (exBtn) exBtn.addEventListener("click", function() {
         document.getElementById("so-expand").classList.toggle("open");
@@ -3724,6 +4053,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     function closePanel() {
       overlay.classList.remove("open");
       document.body.style.overflow = "";
+      destroyChart();
     }
     document.getElementById("so-close").addEventListener("click", closePanel);
     overlay.addEventListener("click", function(e) { if (e.target === overlay) closePanel(); });
