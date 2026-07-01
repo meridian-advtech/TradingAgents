@@ -2124,6 +2124,19 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     #closed-list .cl-date { color: var(--dim); font-size: 11px; white-space: nowrap; }
     #closed-list .cl-days { color: var(--text); }
     #closed-list td, #closed-list th { white-space: nowrap; }
+    /* ── Signal analytics table ── */
+    #signal-analytics td, #signal-analytics th { white-space: nowrap; }
+    #signal-analytics th.sortable { cursor: pointer; user-select: none; }
+    #signal-analytics th.sortable:hover { color: var(--text); }
+    #signal-analytics th .arrow { color: var(--cyan); font-size: 9px; margin-left: 3px; }
+    #signal-analytics tbody tr:hover td { background: rgba(255,255,255,0.02); }
+    .sig-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-weight: 700; color: var(--text); font-size: 11px;
+    }
+    .sig-pill .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--cyan); }
+    .sig-pill.muted { color: var(--muted); font-weight: 400; }
+    .sig-pill.muted .dot { background: var(--muted); }
     .exit-chip {
       display: inline-flex; align-items: center; gap: 6px;
       font-size: 11px; color: var(--text);
@@ -2349,6 +2362,12 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
   </div>
   <div class="closed-grid" id="closed-summary"></div>
   <div id="closed-list"></div>
+</div>
+
+<!-- ── Signal Performance Analytics ── -->
+<div class="card">
+  <div class="section-hdr">Signal Performance Analytics</div>
+  <div id="signal-analytics"></div>
 </div>
 
 <!-- ── Decision Log ── -->
@@ -2612,6 +2631,38 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     document.getElementById("pm-trends").innerHTML = trends.join("");
   })();
 
+  // ── Realized-trade aggregation (shared) ────────────────────────────
+  // Pure function reused by the Closed Positions summary band (over the
+  // filtered set) and the Signal Performance Analytics section (per signal
+  // group). Includes avg_days (mean hold time) for the analytics table.
+  function computeSummary(trades) {
+    let winners = 0, losers = 0, breakeven = 0;
+    let totalPnl = 0, totalCost = 0;
+    const winPcts = [], lossPcts = [], days = [];
+    trades.forEach(t => {
+      const pnl = t.realized_pnl_usd, cost = (t.entry_price || 0) * (t.quantity || 0);
+      const pct = t.realized_pnl_pct;
+      if (t.days_held != null) days.push(t.days_held);
+      if (pnl == null) return;
+      totalPnl += pnl; totalCost += cost;
+      if (pnl > 0) { winners++; if (pct != null) winPcts.push(pct); }
+      else if (pnl < 0) { losers++; if (pct != null) lossPcts.push(pct); }
+      else breakeven++;
+    });
+    const n = trades.length;
+    const mean = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : null;
+    return {
+      n, winners, losers, breakeven,
+      total_pnl_usd: n ? totalPnl : null,
+      total_pnl_pct: totalCost ? totalPnl / totalCost * 100 : null,
+      win_rate: n ? winners / n * 100 : null,
+      avg_win_pct: mean(winPcts),
+      avg_loss_pct: mean(lossPcts),
+      avg_days: mean(days),
+      win_loss_ratio: losers ? winners / losers : null,
+    };
+  }
+
   // ── Closed positions: filters + live-recomputing summary + list ────
   (function initClosedPositions() {
     const ALL = DATA.closed_trades || [];
@@ -2639,33 +2690,6 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     const signCls  = (n) => n == null ? "white" : (n >= 0 ? "green" : "red");
     const day      = (s) => s ? String(s).slice(0, 10) : "—";
     const esc      = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-
-    // ── Summary aggregation (realized-trade stats over the filtered set) ──
-    function computeSummary(trades) {
-      let winners = 0, losers = 0, breakeven = 0;
-      let totalPnl = 0, totalCost = 0;
-      const winPcts = [], lossPcts = [];
-      trades.forEach(t => {
-        const pnl = t.realized_pnl_usd, cost = (t.entry_price || 0) * (t.quantity || 0);
-        const pct = t.realized_pnl_pct;
-        if (pnl == null) return;
-        totalPnl += pnl; totalCost += cost;
-        if (pnl > 0) { winners++; if (pct != null) winPcts.push(pct); }
-        else if (pnl < 0) { losers++; if (pct != null) lossPcts.push(pct); }
-        else breakeven++;
-      });
-      const n = trades.length;
-      const mean = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : null;
-      return {
-        n, winners, losers, breakeven,
-        total_pnl_usd: n ? totalPnl : null,
-        total_pnl_pct: totalCost ? totalPnl / totalCost * 100 : null,
-        win_rate: n ? winners / n * 100 : null,
-        avg_win_pct: mean(winPcts),
-        avg_loss_pct: mean(lossPcts),
-        win_loss_ratio: losers ? winners / losers : null,
-      };
-    }
 
     function renderSummary(C, filtered) {
       const card = (accent, label, valHtml, valCls, sub) =>
@@ -2843,6 +2867,111 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 
     stateEl.classList.add("hidden");
     apply();
+  })();
+
+  // ── Signal Performance Analytics (per-signal breakdown) ────────────
+  (function renderSignalAnalytics() {
+    const wrap = document.getElementById("signal-analytics");
+    if (!wrap) return;
+    const ALL = DATA.closed_trades || [];
+    if (!ALL.length) {
+      wrap.innerHTML = `<div class="no-data">No closed trades to analyze yet</div>`;
+      return;
+    }
+
+    const NO_SIGNAL = "__none__";
+    const esc = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const money = (n) => n == null ? "—" : (n >= 0 ? "+$" : "−$") + Math.abs(n).toLocaleString("en-US", {maximumFractionDigits:0});
+    const pctSig = (n) => n == null ? "—" : fmtSign(n, 1) + "%";
+
+    // Group trades by signal — a trade counts toward EVERY signal it carries;
+    // signal-less trades fall into the "No signal" bucket.
+    const buckets = {};
+    ALL.forEach(t => {
+      const sigs = (t.entry_signals || []);
+      const keys = sigs.length ? sigs : [NO_SIGNAL];
+      keys.forEach(k => { (buckets[k] = buckets[k] || []).push(t); });
+    });
+
+    // One aggregated row per signal, reusing the shared computeSummary().
+    let rows = Object.keys(buckets).map(sig => {
+      const C = computeSummary(buckets[sig]);
+      return {
+        signal: sig,
+        is_none: sig === NO_SIGNAL,
+        trades: C.n,
+        win_rate: C.win_rate,
+        avg_win: C.avg_win_pct,
+        avg_loss: C.avg_loss_pct,
+        total_pnl: C.total_pnl_usd,
+        avg_days: C.avg_days,
+      };
+    });
+
+    const COLS = [
+      {key: "signal",    label: "Signal",    sortable: false, align: "left"},
+      {key: "trades",    label: "Trades",    sortable: true},
+      {key: "win_rate",  label: "Win Rate",  sortable: true},
+      {key: "avg_win",   label: "Avg Win",   sortable: false},
+      {key: "avg_loss",  label: "Avg Loss",  sortable: false},
+      {key: "total_pnl", label: "Total P&L", sortable: true},
+      {key: "avg_days",  label: "Avg Hold",  sortable: true},
+    ];
+    let sortKey = "total_pnl", sortDir = -1;   // default: Total P&L descending
+
+    function sortRows() {
+      rows.sort((a, b) => {
+        const av = a[sortKey], bv = b[sortKey];
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;            // nulls last
+        if (bv == null) return -1;
+        return (av - bv) * sortDir;
+      });
+    }
+
+    function render() {
+      sortRows();
+      let head = "<tr>";
+      COLS.forEach(c => {
+        const active = c.sortable && c.key === sortKey;
+        const arrow = active ? `<span class="arrow">${sortDir < 0 ? "▾" : "▴"}</span>` : "";
+        const cls = c.sortable ? "sortable" : "";
+        const style = c.align === "left" ? "" : ' style="text-align:right"';
+        head += `<th class="${cls}"${style} data-key="${c.key}">${c.label}${arrow}</th>`;
+      });
+      head += "</tr>";
+
+      let body = "";
+      rows.forEach(r => {
+        const pnlCls = r.total_pnl == null ? "" : (r.total_pnl >= 0 ? "pnl-pos" : "pnl-neg");
+        const wr = r.win_rate == null ? "—" : fmtN(r.win_rate, 1) + "%";
+        const wrColor = r.win_rate != null && r.win_rate >= 50 ? "pnl-pos" : "";
+        const sigCell = r.is_none
+          ? `<span class="sig-pill muted"><span class="dot"></span>No signal</span>`
+          : `<span class="sig-pill"><span class="dot"></span>${esc(r.signal)}</span>`;
+        const rt = ' style="text-align:right"';
+        body += `<tr>
+          <td>${sigCell}</td>
+          <td${rt}>${r.trades}</td>
+          <td${rt} class="${wrColor}">${wr}</td>
+          <td${rt} class="pnl-pos">${pctSig(r.avg_win)}</td>
+          <td${rt} class="pnl-neg">${pctSig(r.avg_loss)}</td>
+          <td${rt} class="${pnlCls}">${money(r.total_pnl)}</td>
+          <td${rt}>${r.avg_days != null ? Math.round(r.avg_days) + "d" : "—"}</td>
+        </tr>`;
+      });
+
+      wrap.innerHTML = `<div class="tbl-wrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+      wrap.querySelectorAll("th.sortable").forEach(th => {
+        th.addEventListener("click", () => {
+          const k = th.dataset.key;
+          if (k === sortKey) { sortDir = -sortDir; }
+          else { sortKey = k; sortDir = -1; }   // new column starts descending
+          render();
+        });
+      });
+    }
+    render();
   })();
 
   // ── Chart defaults ─────────────────────────────────────────────────
