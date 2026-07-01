@@ -1616,6 +1616,167 @@ def build_position_details(positions: list, holdings: list) -> dict:
     return details
 
 
+# ── System health strip ────────────────────────────────────────────────
+
+_SCHED_LOG   = os.path.join(SCRIPT_DIR, "kairos_scheduler.log")
+_COMMANDER_PID = "/tmp/kairos_commander.pid"
+_REGIME_STATE  = os.path.join(SCRIPT_DIR, ".kairos_regime_state.json")
+
+# Regime → health level (green/amber/red language).
+_REGIME_LEVEL = {"NORMAL": "ok", "CAUTION": "warn",
+                 "RISK-OFF": "down", "EXTREME-FEAR": "down"}
+
+
+def _et_zone():
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo("America/New_York")
+    except Exception:
+        return None
+
+
+def _in_rth(dt_utc: datetime) -> bool:
+    """True if dt (UTC) falls in the equity window (09:30–16:00 ET, Mon–Fri)."""
+    et = _et_zone()
+    if et is None:
+        return False
+    d = dt_utc.astimezone(et)
+    if d.weekday() >= 5:
+        return False
+    hm = d.hour * 100 + d.minute
+    return 930 <= hm < 1600
+
+
+def _et_hhmm(dt_utc: datetime) -> str:
+    et = _et_zone()
+    d = dt_utc.astimezone(et) if et else dt_utc
+    return d.strftime("%H:%M ET")
+
+
+def build_system_health(ibkr: dict) -> dict:
+    """Ambient system-health facts for the top strip. Read-only; each item is
+    {label, value, level} with level ∈ {ok, warn, down, info}. Every probe is
+    defensive so a missing log / pid / table never breaks dashboard generation.
+    """
+    now = datetime.now(timezone.utc)
+    items: dict = {}
+    last_ts = None   # UTC datetime of the last cycle, for the next-cycle estimate
+
+    # ── Last cycle: last PASS/FAIL line in the scheduler log ─────────────
+    last = {"label": "Last cycle", "value": "unknown", "level": "warn"}
+    try:
+        last_line = None
+        with open(_SCHED_LOG) as f:
+            for line in f:
+                if "] PASS —" in line or "] FAIL —" in line:
+                    last_line = line.strip()
+        if last_line and last_line.startswith("["):
+            stamp = last_line[1:last_line.index("]")].rstrip("Z")
+            ts = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+            last_ts = ts
+            ok = "] PASS —" in last_line
+            mins = (now - ts).total_seconds() / 60.0
+            level = "ok" if ok else "down"
+            # A green run that hasn't cycled in >40 min during RTH is a warning.
+            if ok and _in_rth(now) and mins > 40:
+                level = "warn"
+            last = {"label": "Last cycle",
+                    "value": f"{_et_hhmm(ts)} · {'success' if ok else 'ERROR'}",
+                    "level": level}
+    except FileNotFoundError:
+        last["value"] = "no log"
+    except Exception:
+        pass
+    items["last_cycle"] = last
+
+    # ── Next scheduled cycle: DERIVED estimate (not tracked anywhere) ────
+    # launchd fires every 1800s from load time; the scheduler self-exits
+    # outside RTH. Best effort: +30 min within the window, else next RTH open.
+    nxt = {"label": "Next", "value": "—", "level": "info"}
+    et = _et_zone()
+    if et is not None:
+        d = now.astimezone(et)
+        if _in_rth(now):
+            # Estimate from the 30-min cadence off the last cycle; if that's
+            # already past (cycle overdue), the next fire is imminent.
+            base = last_ts if last_ts else now
+            cand = base + timedelta(minutes=30)
+            if cand < now:
+                cand = now + timedelta(minutes=30)
+            if not _in_rth(cand):
+                cand = None  # would fall past the close → next open
+            nxt["value"] = (f"~{_et_hhmm(cand)} (est)" if cand
+                            else "~09:30 ET next day (est)")
+        else:
+            # Next weekday 09:30 ET.
+            nd = d
+            step = 1 if (d.hour * 100 + d.minute) >= 1600 or d.weekday() >= 5 else 0
+            nd = d + timedelta(days=step) if step else d
+            while nd.weekday() >= 5:
+                nd = nd + timedelta(days=1)
+            same_day = nd.date() == d.date()
+            nxt["value"] = ("~09:30 ET (est)" if same_day
+                            else f"~{nd.strftime('%a')} 09:30 ET (est)")
+    items["next_cycle"] = nxt
+
+    # ── Commander daemon: PID file + signal-0 probe ─────────────────────
+    cmd = {"label": "Commander", "value": "dead", "level": "down"}
+    try:
+        with open(_COMMANDER_PID) as f:
+            pid = int(f.read().strip())
+        try:
+            os.kill(pid, 0)
+            cmd = {"label": "Commander", "value": "alive", "level": "ok"}
+        except PermissionError:
+            cmd = {"label": "Commander", "value": "alive", "level": "ok"}
+        except (ProcessLookupError, OSError):
+            cmd = {"label": "Commander", "value": "dead (stale pid)", "level": "down"}
+    except (FileNotFoundError, ValueError):
+        cmd = {"label": "Commander", "value": "dead (no pid)", "level": "down"}
+    items["commander"] = cmd
+
+    # ── IBKR connection (from the payload's ibkr dict) ──────────────────
+    if ibkr.get("connected"):
+        if ibkr.get("marks_stale"):
+            items["ibkr"] = {"label": "IBKR", "value": "connected · delayed", "level": "warn"}
+        else:
+            items["ibkr"] = {"label": "IBKR", "value": "connected", "level": "ok"}
+    else:
+        items["ibkr"] = {"label": "IBKR", "value": "disconnected", "level": "down"}
+
+    # ── Regime: fresh regime_log row; flag if the state file has diverged ─
+    reg = {"label": "Regime", "value": "unknown", "level": "warn"}
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT regime, timestamp FROM regime_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        conn.close()
+        if row and row["regime"]:
+            regime = str(row["regime"]).upper()
+            level = _REGIME_LEVEL.get(regime, "info")
+            note = ""
+            # Divergence check: the on-disk state file the exit engine reads.
+            try:
+                with open(_REGIME_STATE) as f:
+                    js = json.load(f)
+                if str(js.get("regime", "")).upper() != regime:
+                    note = "state file stale"
+                    if level == "ok":
+                        level = "warn"
+            except Exception:
+                pass
+            reg = {"label": "Regime",
+                   "value": regime + (f" · {note}" if note else ""),
+                   "level": level}
+    except Exception:
+        pass
+    items["regime"] = reg
+
+    return items
+
+
 def build_payload(perf: dict, db: dict, ibkr: dict) -> dict:
     decisions_display = []
     for d in db.get("decisions", [])[:20]:
@@ -1681,6 +1842,7 @@ def build_payload(perf: dict, db: dict, ibkr: dict) -> dict:
         "closed_trades":  closed_trades,
         "sector_breakdown": _compute_sector_exposure(positions),
         "chain_tier_breakdown": compute_chain_tier_breakdown(price_map),
+        "system_health":  build_system_health(ibkr),
         "ibkr_connected": ibkr.get("connected", False),
         "marks_stale":    ibkr.get("marks_stale", False),
         "data_mode":      ibkr.get("data_mode", "unknown"),
@@ -1750,7 +1912,28 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     }
     .dot-green { background: var(--green); box-shadow: 0 0 6px var(--green); animation: blink 2s infinite; }
     .dot-amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+    .dot-red   { background: var(--red);   box-shadow: 0 0 6px var(--red); }
     @keyframes blink { 0%,100% { opacity:1 } 50% { opacity:.3 } }
+    /* ── System health strip ── */
+    .sys-health {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 9px 16px; margin-bottom: 18px;
+    }
+    .sh-title {
+      font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+      color: var(--muted); margin-right: 4px;
+    }
+    .sh-item { display: inline-flex; align-items: center; font-size: 11px; color: var(--dim); }
+    .sh-item .dot { animation: none; box-shadow: none; }
+    .sh-item.ok   .dot { background: var(--green); }
+    .sh-item.warn .dot { background: var(--amber); }
+    .sh-item.down .dot { background: var(--red); }
+    .sh-item.info .dot { background: var(--border2); }
+    .sh-label { color: var(--muted); margin-right: 5px; }
+    .sh-val { color: var(--text); }
+    .sh-item.down .sh-val { color: var(--red); }
+    .sh-item.warn .sh-val { color: var(--amber); }
     /* ── Refresh button ── */
     .refresh-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; justify-content: flex-end; }
     .refresh-btn {
@@ -2094,6 +2277,9 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
   </div>
 </div>
 
+<!-- ── System health strip ── -->
+<div class="sys-health" id="sys-health"></div>
+
 <!-- ── Metric Cards ── -->
 <div class="metrics-grid" id="metrics-grid"></div>
 
@@ -2224,6 +2410,26 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
   }
   document.getElementById("snap-count").textContent =
     DATA.snapshot_count + " day" + (DATA.snapshot_count !== 1 ? "s" : "") + " of data";
+
+  // ── System health strip ────────────────────────────────────────────
+  (function renderSystemHealth() {
+    const el = document.getElementById("sys-health");
+    const H = DATA.system_health;
+    if (!el) return;
+    if (!H) { el.style.display = "none"; return; }
+    const esc = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const order = ["last_cycle", "next_cycle", "commander", "ibkr", "regime"];
+    let html = `<span class="sh-title">System</span>`;
+    order.forEach(k => {
+      const it = H[k];
+      if (!it) return;
+      const lvl = it.level || "info";
+      html += `<span class="sh-item ${lvl}"><span class="dot"></span>`
+            + `<span class="sh-label">${esc(it.label)}</span>`
+            + `<span class="sh-val">${esc(it.value)}</span></span>`;
+    });
+    el.innerHTML = html;
+  })();
 
   // ── Helpers ────────────────────────────────────────────────────────
   const fmtN = (n, d=2) => n == null ? "\u2014" :
