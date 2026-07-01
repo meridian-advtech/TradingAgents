@@ -867,6 +867,176 @@ def compute_closed_summary(holdings: list[dict]) -> dict:
     }
 
 
+# ── Closed-positions trade list (individual realized trades) ───────────
+
+# Prefix (the token before the first ':') of a stored exit_reason → the
+# friendly condition label + a color key matching the dashboard palette.
+# Only these three conditions are actually emitted by the exit engine today;
+# anything else falls through to a title-cased prefix with a neutral color.
+_EXIT_TYPE_MAP = {
+    "STOP-LOSS":          ("Hard Stop",     "red"),
+    "TRAILING-STOP":      ("Trailing Stop", "amber"),
+    "REVERSION-COMPLETE": ("Reversion",     "cyan"),
+}
+
+
+def _parse_exit_type(reason: str) -> tuple[str, str]:
+    """Map a raw exit_reason string to (friendly_label, color_key)."""
+    if not reason:
+        return ("Not recorded", "muted")
+    prefix = str(reason).split(":", 1)[0].strip().upper()
+    if prefix in _EXIT_TYPE_MAP:
+        return _EXIT_TYPE_MAP[prefix]
+    return (prefix.replace("-", " ").title() or "Exit", "white")
+
+
+def _load_exit_reasons() -> dict[tuple, dict]:
+    """Load stored exit reasons keyed by (TICKER, sold-day) for a precise join.
+
+    position_exits has ticker as its PRIMARY KEY, so it retains only the most
+    recent exit per ticker — a repeat-traded ticker's older closes cannot be
+    resolved. Keying on ticker + same calendar day (exit_date vs. a holding's
+    sold_date) avoids mislabeling those older lots: they simply won't match and
+    render "Not recorded" rather than borrowing an unrelated reason.
+    """
+    reasons: dict[tuple, dict] = {}
+    if not os.path.exists(DB_PATH):
+        return reasons
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT ticker, exit_date, exit_reason FROM position_exits"
+        ).fetchall()
+        conn.close()
+    except sqlite3.Error:
+        return reasons
+
+    for r in rows:
+        tkr = (r["ticker"] or "").strip().upper()
+        day = (r["exit_date"] or "")[:10]
+        if not tkr or not day:
+            continue
+        label, color = _parse_exit_type(r["exit_reason"])
+        reasons[(tkr, day)] = {
+            "exit_reason": r["exit_reason"],
+            "exit_type":   label,
+            "exit_color":  color,
+        }
+    return reasons
+
+
+def _parse_trade_date(raw) -> datetime | None:
+    """Parse a holdings date string, tolerating ' UTC' and '[RECON-merged]'
+    suffixes that break SQLite's julianday() (hence null holding_days)."""
+    if not raw:
+        return None
+    s = str(raw).split("[", 1)[0].replace(" UTC", "").strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _days_held(entry_date, sold_date, fallback) -> int | None:
+    """Whole days between entry and sale, computed robustly; falls back to the
+    SQL-provided value only when both dates fail to parse."""
+    ed, sd = _parse_trade_date(entry_date), _parse_trade_date(sold_date)
+    if ed and sd:
+        return max(0, (sd - ed).days)
+    try:
+        return int(fallback) if fallback is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def build_closed_trades(holdings: list[dict]) -> list[dict]:
+    """Individual realized trades, newest-first by sold_date, for the trade list.
+
+    A trade is closed when sold_date/sold_price are set. Realized P&L is
+    (sold_price - entry_price) * quantity; % is against that lot's cost basis.
+    Exit reason/type is a best-effort join to position_exits by ticker + day;
+    absent, exit_reason is None and exit_type "Not recorded" (never faked).
+    """
+    exit_reasons = _load_exit_reasons()
+    trades = []
+    for h in (holdings or []):
+        if not (h.get("sold_date") and h.get("sold_price") is not None):
+            continue
+        try:
+            entry = float(h["entry_price"])
+            qty   = float(h["quantity"])
+            sold  = float(h["sold_price"])
+        except (TypeError, ValueError, KeyError):
+            continue
+
+        pnl_usd = (sold - entry) * qty
+        pnl_pct = (sold - entry) / entry * 100.0 if entry else None
+        tkr = (h.get("ticker") or "").strip().upper()
+        sold_day = (h.get("sold_date") or "")[:10]
+
+        ex = exit_reasons.get((tkr, sold_day))
+        trades.append({
+            "id":           h.get("id"),
+            "ticker":       tkr,
+            "entry_date":   h.get("entry_date"),
+            "sold_date":    h.get("sold_date"),
+            "days_held":    _days_held(h.get("entry_date"), h.get("sold_date"),
+                                       h.get("holding_days")),
+            "entry_price":  round(entry, 2),
+            "sold_price":   round(sold, 2),
+            "quantity":     qty,
+            "realized_pnl_usd": round(pnl_usd, 2),
+            "realized_pnl_pct": round(pnl_pct, 2) if pnl_pct is not None else None,
+            "exit_reason":  ex["exit_reason"] if ex else None,
+            "exit_type":    ex["exit_type"] if ex else "Not recorded",
+            "exit_color":   ex["exit_color"] if ex else "muted",
+        })
+
+    # Newest first. sold_date is an ISO-ish string (some carry a " UTC" or
+    # "[RECON-merged]" suffix) — lexical sort on the raw string orders correctly.
+    trades.sort(key=lambda t: t.get("sold_date") or "", reverse=True)
+    return trades
+
+
+def build_closed_details(closed_trades: list[dict], name_map: dict) -> dict:
+    """Detail records for the slide-over panel, keyed by str(holding id).
+
+    Numeric-string keys never collide with the open-position records (keyed by
+    uppercase ticker), so both live in the one position_details map the existing
+    panel already reads. Marked closed:true so the panel renders realized
+    figures (exit price, realized P&L, exit reason) instead of live/unrealized.
+    """
+    details: dict = {}
+    for t in closed_trades:
+        hid = t.get("id")
+        if hid is None:
+            continue
+        entry, sold, qty = t["entry_price"], t["sold_price"], t["quantity"]
+        details[str(hid)] = {
+            "closed":       True,
+            "ticker":       t["ticker"],
+            "name":         name_map.get(t["ticker"], ""),
+            "asset_class":  "equity",
+            "entry_date":   t["entry_date"],
+            "sold_date":    t["sold_date"],
+            "days_held":    t["days_held"],
+            "entry_price":  entry,
+            "sold_price":   sold,
+            "quantity":     qty,
+            "cost_basis":   round(entry * qty, 2),
+            "proceeds":     round(sold * qty, 2),
+            "realized_pnl": t["realized_pnl_usd"],
+            "realized_pct": t["realized_pnl_pct"],
+            "exit_reason":  t["exit_reason"],
+            "exit_type":    t["exit_type"],
+            "exit_color":   t["exit_color"],
+        }
+    return details
+
+
 # ── Chart series ───────────────────────────────────────────────────────
 
 def make_series(perf: dict) -> dict:
@@ -1499,6 +1669,20 @@ def build_payload(perf: dict, db: dict, ibkr: dict) -> dict:
         if raw_sym and qty:
             price_map[raw_sym.upper()] = mkt_val / qty
 
+    # Closed-trade list + slide-over detail records. Resolve company names for
+    # closed tickers too (the open-position name map above only covers holdings
+    # still open), then merge the closed detail records — keyed by numeric
+    # holding id — into the same position_details map the panel reads.
+    closed_trades = build_closed_trades(db.get("holdings", []))
+    position_details = build_position_details(positions, db.get("holdings", []))
+    try:
+        closed_name_map = _resolve_ticker_names(
+            sorted({t["ticker"] for t in closed_trades if t.get("ticker")}))
+    except Exception as _cn_err:
+        print(f"  WARNING: closed-name resolution failed: {_cn_err}")
+        closed_name_map = {}
+    position_details.update(build_closed_details(closed_trades, closed_name_map))
+
     # Build the payload dictionary
     return {
         "metrics":        compute_metrics(perf, db),
@@ -1508,8 +1692,9 @@ def build_payload(perf: dict, db: dict, ibkr: dict) -> dict:
         "decisions":      decisions_display,
         "decisions_counts": db.get("decisions_counts", {"executed": 0, "skipped": 0}),
         "positions":      positions,
-        "position_details": build_position_details(positions, db.get("holdings", [])),
+        "position_details": position_details,
         "closed_summary": compute_closed_summary(db.get("holdings", [])),
+        "closed_trades":  closed_trades,
         "sector_breakdown": _compute_sector_exposure(positions),
         "chain_tier_breakdown": compute_chain_tier_breakdown(price_map),
         "ibkr_connected": ibkr.get("connected", False),
@@ -1724,6 +1909,39 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     #positions-wrap tbody tr:hover td:first-child::before {
       content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--cyan);
     }
+    /* ── Closed-trade list ── */
+    #closed-list { margin-top: 18px; }
+    #closed-list tbody tr { cursor: pointer; transition: background 0.12s; }
+    #closed-list tbody tr:hover td { background: rgba(0,204,255,0.05); }
+    #closed-list tbody tr td:first-child { position: relative; }
+    #closed-list tbody tr:hover td:first-child::before {
+      content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--cyan);
+    }
+    #closed-list .cl-tkr  { font-weight: 700; color: var(--cyan); }
+    #closed-list .cl-date { color: var(--dim); font-size: 11px; white-space: nowrap; }
+    #closed-list .cl-days { color: var(--text); }
+    #closed-list td, #closed-list th { white-space: nowrap; }
+    .exit-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--text);
+    }
+    .exit-chip .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+    .exit-chip.cyan  .dot { background: var(--cyan); }
+    .exit-chip.amber .dot { background: var(--amber); }
+    .exit-chip.red   .dot { background: var(--red); }
+    .exit-chip.green .dot { background: var(--green); }
+    .exit-chip.white .dot { background: var(--border2); }
+    .exit-chip.muted { color: var(--muted); }
+    .exit-chip.muted .dot { background: var(--muted); }
+    .cl-more-wrap { text-align: center; margin-top: 14px; }
+    .cl-more-btn {
+      background: var(--surface2); color: var(--dim);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 8px 20px; font-family: inherit; font-size: 11px;
+      letter-spacing: 1px; text-transform: uppercase; cursor: pointer;
+      transition: color 0.12s, border-color 0.12s;
+    }
+    .cl-more-btn:hover { color: var(--cyan); border-color: var(--cyan); }
     /* ── Slide-over panel ── */
     .so-overlay {
       position: fixed; inset: 0; z-index: 90;
@@ -1913,6 +2131,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 <div class="card">
   <div class="section-hdr">Closed Positions</div>
   <div class="closed-grid" id="closed-summary"></div>
+  <div id="closed-list"></div>
 </div>
 
 <!-- ── Decision Log ── -->
@@ -2197,6 +2416,63 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     ];
     el.className = "closed-grid";
     el.innerHTML = cards.join("");
+  })();
+
+  // ── Closed positions trade list (default recent + load more) ───────
+  (function renderClosedList() {
+    const trades = DATA.closed_trades || [];
+    const wrap = document.getElementById("closed-list");
+    if (!wrap) return;
+    if (!trades.length) { wrap.innerHTML = ""; return; }
+
+    const BATCH = 12;
+    let shown = 0;
+
+    const money = (n) => n == null ? "—"
+      : (n >= 0 ? "+$" : "−$") + Math.abs(n).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+    const pctSig = (n) => n == null ? "—" : (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
+    const day = (s) => s ? String(s).slice(0, 10) : "—";
+    const esc = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+    wrap.innerHTML =
+      '<div class="tbl-wrap"><table><thead><tr>' +
+      '<th>Ticker</th><th>Entry</th><th>Exit</th><th>Days</th>' +
+      '<th>Realized P&amp;L</th><th>P&L %</th><th>Exit Reason</th>' +
+      '</tr></thead><tbody id="cl-body"></tbody></table></div>' +
+      '<div class="cl-more-wrap" id="cl-more-wrap"></div>';
+
+    const body = document.getElementById("cl-body");
+    const moreWrap = document.getElementById("cl-more-wrap");
+
+    function rowHtml(t) {
+      const pnlCls = t.realized_pnl_usd == null ? "" : (t.realized_pnl_usd >= 0 ? "pnl-pos" : "pnl-neg");
+      const pctCls = t.realized_pnl_pct == null ? "" : (t.realized_pnl_pct >= 0 ? "pnl-pos" : "pnl-neg");
+      const days = t.days_held != null ? t.days_held + "d" : "—";
+      const chip = `<span class="exit-chip ${t.exit_color || "muted"}"><span class="dot"></span>${esc(t.exit_type || "Not recorded")}</span>`;
+      return `<tr onclick="openPanel('${t.id}')">
+        <td class="cl-tkr">${esc(t.ticker)}</td>
+        <td class="cl-date">${day(t.entry_date)}</td>
+        <td class="cl-date">${day(t.sold_date)}</td>
+        <td class="cl-days">${days}</td>
+        <td class="${pnlCls}">${money(t.realized_pnl_usd)}</td>
+        <td class="${pctCls}">${pctSig(t.realized_pnl_pct)}</td>
+        <td>${chip}</td>
+      </tr>`;
+    }
+
+    function renderMore() {
+      const next = trades.slice(shown, shown + BATCH);
+      body.insertAdjacentHTML("beforeend", next.map(rowHtml).join(""));
+      shown += next.length;
+      const remaining = trades.length - shown;
+      moreWrap.innerHTML = remaining > 0
+        ? `<button class="cl-more-btn" id="cl-more-btn">Load more (${remaining} remaining)</button>`
+        : "";
+      const btn = document.getElementById("cl-more-btn");
+      if (btn) btn.addEventListener("click", renderMore);
+    }
+
+    renderMore();
   })();
 
   // ── Chart defaults ─────────────────────────────────────────────────
@@ -2757,7 +3033,45 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       return `<div><div class="so-fact-label">${label}</div><div class="so-fact-val">${val}</div></div>`;
     }
 
+    function renderClosedBody(d) {
+      const pnlCls = d.realized_pnl == null ? "" : (d.realized_pnl >= 0 ? "pnl-pos" : "pnl-neg");
+      const pctCls = d.realized_pct == null ? "" : (d.realized_pct >= 0 ? "pnl-pos" : "pnl-neg");
+      let h = "";
+
+      // Realized Trade facts
+      h += `<div class="so-sec"><div class="so-sec-hdr">Realized Trade</div><div class="so-facts">`;
+      h += fact("Entry date", d.entry_date ? esc(d.entry_date.slice(0,10)) : "—");
+      h += fact("Exit date", d.sold_date ? esc(d.sold_date.slice(0,10)) : "—");
+      h += fact("Days held", d.days_held != null ? d.days_held + "d" : "—");
+      h += fact("Shares", d.quantity != null ? d.quantity.toLocaleString() : "—");
+      h += fact("Entry price", money(d.entry_price));
+      h += fact("Exit price", money(d.sold_price));
+      h += fact("Cost basis", money(d.cost_basis));
+      h += fact("Proceeds", money(d.proceeds));
+      h += `</div></div>`;
+
+      // Realized P&L
+      h += `<div class="so-sec"><div class="so-sec-hdr">Realized P&amp;L</div><div class="so-kv-row">`;
+      h += `<div><div class="so-kv-label">Net P&L</div><div class="so-kv-val ${pnlCls}">${signMoney(d.realized_pnl)}</div></div>`;
+      h += `<div><div class="so-kv-label">Return</div><div class="so-kv-val ${pctCls}">${pct(d.realized_pct)}</div></div>`;
+      h += `</div></div>`;
+
+      // Exit
+      h += `<div class="so-sec"><div class="so-sec-hdr">Exit</div>`;
+      if (d.exit_reason) {
+        h += `<div class="so-bar-meta"><span style="color:var(--dim)">Condition</span>`
+          + `<span class="exit-chip ${d.exit_color || "white"}"><span class="dot"></span>${esc(d.exit_type)}</span></div>`;
+        h += `<div class="so-prose" style="margin-top:10px">${esc(d.exit_reason)}</div>`;
+      } else {
+        h += `<div class="so-empty">Exit reason not recorded for this trade.</div>`;
+      }
+      h += `</div>`;
+
+      return h;
+    }
+
     function renderBody(d) {
+      if (d.closed) return renderClosedBody(d);
       let h = "";
 
       // Position Facts
@@ -2868,15 +3182,20 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       const symEl = document.getElementById("so-sym");
       symEl.textContent = d.ticker;
       symEl.className = "so-sym " + (d.asset_class === "crypto" ? "crypto" : "equity");
-      document.getElementById("so-class").textContent = d.asset_class || "equity";
+      document.getElementById("so-class").textContent =
+        d.closed ? "closed" : (d.asset_class || "equity");
       document.getElementById("so-name").textContent = d.name || "";
-      document.getElementById("so-price").textContent = d.current_price != null ? money(d.current_price) : "—";
-      const neg = d.unrealized_pnl != null && d.unrealized_pnl < 0;
+      // Closed → final exit price + realized P&L; open → live price + unrealized.
+      const price   = d.closed ? d.sold_price     : d.current_price;
+      const pnlVal  = d.closed ? d.realized_pnl   : d.unrealized_pnl;
+      const pnlPct  = d.closed ? d.realized_pct   : d.unrealized_pct;
+      document.getElementById("so-price").textContent = price != null ? money(price) : "—";
+      const neg = pnlVal != null && pnlVal < 0;
       const pnlEl = document.getElementById("so-pnl");
       const pctEl = document.getElementById("so-pnl-pct");
-      pnlEl.textContent = signMoney(d.unrealized_pnl);
+      pnlEl.textContent = signMoney(pnlVal);
       pnlEl.className = "so-pnl-big " + (neg ? "pnl-neg" : "pnl-pos");
-      pctEl.textContent = d.unrealized_pct != null ? "(" + pct(d.unrealized_pct,2) + ")" : "";
+      pctEl.textContent = pnlPct != null ? "(" + pct(pnlPct,2) + ")" : "";
       pctEl.className = "so-pnl-pct " + (neg ? "pnl-neg" : "pnl-pos");
       body.innerHTML = renderBody(d);
       body.scrollTop = 0;
