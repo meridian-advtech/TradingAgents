@@ -805,6 +805,68 @@ def compute_metrics(perf: dict, db: dict) -> dict:
     }
 
 
+# ── Closed-positions summary (realized-trade aggregates) ───────────────
+
+def compute_closed_summary(holdings: list[dict]) -> dict:
+    """Aggregate realized-trade stats across all closed holdings.
+
+    A holding is closed when sold_date/sold_price are set. Per-trade P&L is
+    (sold_price - entry_price) * quantity; the % is measured against that
+    trade's own cost basis. Totals are summed from these rows (holdings-sum),
+    so total $ = winners$ + losers$ and reconciles with the win/loss split —
+    this may differ slightly from the ledger-based figure on the top KPI tile
+    (commissions, partial lots, DRIP), which the sub-label notes.
+
+    Winners are pnl > 0, losers pnl < 0, breakeven pnl == 0. Breakeven trades
+    count toward the total and the win-rate denominator (matching the existing
+    win_rate metric) but are excluded from the avg win/loss figures.
+    """
+    closed = [h for h in (holdings or [])
+              if h.get("sold_date") and h.get("sold_price") is not None]
+
+    n = len(closed)
+    if not n:
+        return {"closed_trades": 0, "total_pnl_usd": None, "total_pnl_pct": None,
+                "win_rate": None, "avg_win_pct": None, "avg_loss_pct": None,
+                "winners": 0, "losers": 0, "breakeven": 0, "win_loss_ratio": None}
+
+    win_pcts, loss_pcts = [], []
+    total_pnl = total_cost = 0.0
+    winners = losers = breakeven = 0
+
+    for h in closed:
+        entry = float(h["entry_price"])
+        qty   = float(h["quantity"])
+        sold  = float(h["sold_price"])
+        pnl   = (sold - entry) * qty
+        cost  = entry * qty
+        pct   = (sold - entry) / entry * 100.0 if entry else 0.0
+
+        total_pnl  += pnl
+        total_cost += cost
+        if pnl > 0:
+            winners += 1
+            win_pcts.append(pct)
+        elif pnl < 0:
+            losers += 1
+            loss_pcts.append(pct)
+        else:
+            breakeven += 1
+
+    return {
+        "closed_trades":  n,
+        "total_pnl_usd":  round(total_pnl, 2),
+        "total_pnl_pct":  round(total_pnl / total_cost * 100.0, 2) if total_cost else None,
+        "win_rate":       round(winners / n * 100.0, 1),
+        "avg_win_pct":    round(statistics.mean(win_pcts), 2) if win_pcts else None,
+        "avg_loss_pct":   round(statistics.mean(loss_pcts), 2) if loss_pcts else None,
+        "winners":        winners,
+        "losers":         losers,
+        "breakeven":      breakeven,
+        "win_loss_ratio": round(winners / losers, 2) if losers else None,
+    }
+
+
 # ── Chart series ───────────────────────────────────────────────────────
 
 def make_series(perf: dict) -> dict:
@@ -1447,6 +1509,7 @@ def build_payload(perf: dict, db: dict, ibkr: dict) -> dict:
         "decisions_counts": db.get("decisions_counts", {"executed": 0, "skipped": 0}),
         "positions":      positions,
         "position_details": build_position_details(positions, db.get("holdings", [])),
+        "closed_summary": compute_closed_summary(db.get("holdings", [])),
         "sector_breakdown": _compute_sector_exposure(positions),
         "chain_tier_breakdown": compute_chain_tier_breakdown(price_map),
         "ibkr_connected": ibkr.get("connected", False),
@@ -1544,6 +1607,12 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       gap: 12px;
       margin-bottom: 18px;
     }
+    .closed-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 12px;
+    }
+    .closed-empty { color: var(--muted); padding: 20px 4px; letter-spacing: 1px; font-size: 12px; }
     .mcard {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -1645,8 +1714,9 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       .metrics-grid { grid-template-columns: repeat(2,1fr); }
       .charts-2col  { grid-template-columns: 1fr; }
       .risk-3col    { grid-template-columns: repeat(2,1fr); }
+      .closed-grid  { grid-template-columns: repeat(3,1fr); }
     }
-    @media(max-width:600px) { body { padding: 12px; } .metrics-grid { grid-template-columns:1fr; } }
+    @media(max-width:600px) { body { padding: 12px; } .metrics-grid { grid-template-columns:1fr; } .closed-grid { grid-template-columns: repeat(2,1fr); } }
     /* ── Position rows are clickable ── */
     #positions-wrap tbody tr { cursor: pointer; transition: background 0.12s; }
     #positions-wrap tbody tr:hover td { background: rgba(0,204,255,0.05); }
@@ -1837,6 +1907,12 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 <div class="card">
   <div class="section-hdr">Current Positions</div>
   <div id="positions-wrap"></div>
+</div>
+
+<!-- ── Closed Positions ── -->
+<div class="card">
+  <div class="section-hdr">Closed Positions</div>
+  <div class="closed-grid" id="closed-summary"></div>
 </div>
 
 <!-- ── Decision Log ── -->
@@ -2078,6 +2154,49 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       tile("History", String(P.snapshot_days || 0), "day" + ((P.snapshot_days||0) !== 1 ? "s" : "") + " of snapshots"),
     ];
     document.getElementById("pm-trends").innerHTML = trends.join("");
+  })();
+
+  // ── Closed positions summary band ──────────────────────────────────
+  (function renderClosedSummary() {
+    const C = DATA.closed_summary;
+    const el = document.getElementById("closed-summary");
+    if (!el) return;
+    if (!C || !C.closed_trades) {
+      el.className = "";
+      el.innerHTML = `<div class="closed-empty">No closed positions yet.</div>`;
+      return;
+    }
+
+    const moneySig = (n) => n == null ? "—" : (n >= 0 ? "+$" : "-$") + fmtN(Math.abs(n), 2);
+    const pctSig   = (n) => n == null ? "—" : fmtSign(n, 2) + "%";
+    const signCls  = (n) => n == null ? "white" : (n >= 0 ? "green" : "red");
+    const card = (accent, label, valHtml, valCls, sub) =>
+      `<div class="mcard c-${accent}">` +
+      `<div class="mlabel">${label}</div>` +
+      `<div class="mval ${valCls || "white"}">${valHtml}</div>` +
+      `<div class="msub">${sub}</div></div>`;
+
+    const cards = [
+      card(signCls(C.total_pnl_usd), "Realized P&L",
+           moneySig(C.total_pnl_usd), signCls(C.total_pnl_usd),
+           `<span class="${C.total_pnl_pct >= 0 ? "pnl-pos" : "pnl-neg"}">${pctSig(C.total_pnl_pct)}</span> · holdings-sum, may differ from top`),
+      card("cyan", "Win Rate",
+           C.win_rate != null ? fmtN(C.win_rate, 1) + "%" : "—", "cyan",
+           `${C.winners} of ${C.closed_trades} up`),
+      card("green", "Avg Win",
+           pctSig(C.avg_win_pct), "green", "Winners, avg return"),
+      card("red", "Avg Loss",
+           pctSig(C.avg_loss_pct), "red", "Losers, avg return"),
+      card("white", "Win / Loss",
+           `${C.winners} / ${C.losers}`, "white",
+           C.win_loss_ratio != null ? `ratio ${fmtN(C.win_loss_ratio, 2)}`
+             : (C.breakeven ? `${C.breakeven} breakeven` : "no losers")),
+      card("cyan", "Closed Trades",
+           String(C.closed_trades), "cyan",
+           C.breakeven ? `${C.breakeven} breakeven · all-time` : "all-time"),
+    ];
+    el.className = "closed-grid";
+    el.innerHTML = cards.join("");
   })();
 
   // ── Chart defaults ─────────────────────────────────────────────────
