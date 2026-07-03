@@ -69,6 +69,28 @@ _DEFAULT_CFG = {
     "weight_bound": 1.0,
 }
 
+# ── Exit-parameter proposals (axis = 'param:<dotted.config.path>') ────
+# The Arbiter may also propose changes to a SMALL, HARD-CODED whitelist of
+# exit-engine parameters, reusing the axis_weight_history table and the
+# proposed/approved/rejected/superseded lifecycle unchanged. A param proposal
+# stores axis='param:<dotted.path>', prior_weight=the current config value, and
+# new_weight=the proposed value. Approval writes the value into kairos_config.json
+# at that dotted path (timestamped backup + json re-validate) and NEVER touches
+# axis_weights. The human gate is mandatory: params are deliberately excluded from
+# AUTO_PROPOSE_AXES and nothing here ever auto-applies.
+PARAM_PREFIX = "param:"
+
+# Whitelist: dotted path → (lo_bound, hi_bound). ANY path not listed here is
+# refused at both propose and apply time.
+PARAM_WHITELIST = {
+    "exits.trailing_stop.profit_floor_pp":        (0.5, 3.0),
+    "exits.trailing_stop.target_armed.trail_pct": (4.0, 12.0),
+}
+PARAM_MIN_SAMPLE = 10          # min TRAILING-STOP closes before a param is proposed
+PARAM_MAX_CHANGE_FRAC = 0.25   # an approved proposal may move a value at most ±25%
+# Give-back (pp) that maps to a full-strength (100% of the allowed ±25%) nudge.
+PARAM_GIVEBACK_REF = 15.0
+
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -544,6 +566,328 @@ def _format_slack_propose_all(run_id: str, proposals: list[dict],
     return "\n".join(lines)
 
 
+# ── Exit-parameter proposals: helpers ────────────────────────────────
+
+def _is_param_axis(axis: str) -> bool:
+    return isinstance(axis, str) and axis.startswith(PARAM_PREFIX)
+
+
+def _param_path(axis: str) -> str | None:
+    """Strip the 'param:' prefix; None if axis is not a param proposal."""
+    return axis[len(PARAM_PREFIX):] if _is_param_axis(axis) else None
+
+
+def _get_dotted(cfg: dict, path: str):
+    """Return (value, found) for a dotted path into a nested dict."""
+    cur = cfg
+    for key in path.split("."):
+        if not isinstance(cur, dict) or key not in cur:
+            return None, False
+        cur = cur[key]
+    return cur, True
+
+
+def _set_dotted(cfg: dict, path: str, value) -> None:
+    """Set a dotted path into a nested dict, creating intermediate dicts."""
+    keys = path.split(".")
+    cur = cfg
+    for key in keys[:-1]:
+        nxt = cur.get(key)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[key] = nxt
+        cur = nxt
+    cur[keys[-1]] = value
+
+
+def _current_param_value(path: str) -> float | None:
+    """Current numeric value at a dotted config path, or None if absent/non-numeric."""
+    try:
+        with open(CONFIG_PATH) as f:
+            cfg = json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return None
+    val, found = _get_dotted(cfg, path)
+    if not found or isinstance(val, bool) or not isinstance(val, (int, float)):
+        return None
+    return float(val)
+
+
+# ── Compute: exit-parameter statistic ────────────────────────────────
+
+def compute_param(path: str) -> dict:
+    """Compute exit-parameter evidence from TRAILING-STOP closed trades.
+
+    Whitelisted paths only (raises ValueError otherwise). Reads trade_outcomes
+    rows whose exit_reason was tagged 'TRAILING-STOP…' — the trailing-stop
+    profit-capture exits now recorded by the exit-metadata plumbing fix. Evidence:
+        n, avg_mfe_pct, avg_pnl_pct, avg_give_back_pct,
+        round_trips (winners that round-tripped to a loss: mfe>2 and pnl<=0).
+
+    The proposed new value is a bounded, interpretable nudge: give-back severity
+    (blended with the round-trip rate) sets the MAGNITUDE, the parameter's role
+    sets the DIRECTION (when we are surrendering gains, tighten the trail /
+    raise the floor), and the change is clamped to ±PARAM_MAX_CHANGE_FRAC of the
+    current value AND to the whitelist bounds. Below PARAM_MIN_SAMPLE the compute
+    is gated (no change proposed). Returns
+    {axis, path, computed_score, sample_size, evidence, current_value,
+     proposed_value, gated}.
+    """
+    if path not in PARAM_WHITELIST:
+        raise ValueError(f"param path {path!r} is not whitelisted")
+
+    sql = """
+        SELECT pnl_pct, mfe_pct, give_back_pct
+        FROM trade_outcomes
+        WHERE exit_reason LIKE 'TRAILING-STOP%'
+          AND timestamp_exit IS NOT NULL
+    """
+    conn = _ml_connect_ro()
+    try:
+        rows = [dict(r) for r in conn.execute(sql).fetchall()]
+    finally:
+        conn.close()
+
+    n = len(rows)
+
+    def _avg(key):
+        vals = [r[key] for r in rows if r[key] is not None]
+        return (sum(vals) / len(vals)) if vals else 0.0
+
+    avg_mfe = _avg("mfe_pct")
+    avg_pnl = _avg("pnl_pct")
+    avg_gb = _avg("give_back_pct")
+    round_trips = sum(
+        1 for r in rows
+        if r["mfe_pct"] is not None and r["mfe_pct"] > 2.0
+        and r["pnl_pct"] is not None and r["pnl_pct"] <= 0.0
+    )
+
+    lo, hi = PARAM_WHITELIST[path]
+    current = _current_param_value(path)
+    gated = n < PARAM_MIN_SAMPLE or current is None
+
+    # Give-back severity in [0,1], blended with the round-trip rate. High severity
+    # ⇒ we are surrendering gains ⇒ tighten profit capture.
+    roundtrip_rate = (round_trips / n) if n else 0.0
+    severity = _clamp(avg_gb / PARAM_GIVEBACK_REF, 0.0, 1.0)
+    severity = _clamp(0.7 * severity + 0.3 * roundtrip_rate, 0.0, 1.0)
+
+    # Direction: for both whitelisted params, surrendering gains ⇒ tighter capture.
+    #   trail_pct       ↓ (narrow the trail)   → direction −1
+    #   profit_floor_pp ↑ (lock in more)       → direction +1
+    direction = -1.0 if path.endswith("trail_pct") else +1.0
+    computed_score = round(direction * severity, 6)
+
+    if gated or current is None:
+        proposed_value = current
+    else:
+        max_step = PARAM_MAX_CHANGE_FRAC * abs(current)
+        change = _clamp(direction * severity * max_step, -max_step, max_step)
+        proposed_value = round(_clamp(current + change, lo, hi), 4)
+
+    evidence = {
+        "n": n,
+        "avg_mfe_pct": round(avg_mfe, 4),
+        "avg_pnl_pct": round(avg_pnl, 4),
+        "avg_give_back_pct": round(avg_gb, 4),
+        "round_trips": round_trips,
+        "roundtrip_rate": round(roundtrip_rate, 4),
+        "severity": round(severity, 4),
+        "bounds": [lo, hi],
+        "current_value": current,
+        "max_change_frac": PARAM_MAX_CHANGE_FRAC,
+    }
+    return {
+        "axis": PARAM_PREFIX + path,
+        "path": path,
+        "computed_score": computed_score,
+        "sample_size": n,
+        "evidence": evidence,
+        "current_value": current,
+        "proposed_value": proposed_value,
+        "gated": gated,
+    }
+
+
+# ── Propose: write a 'proposed' param row (does NOT touch config) ─────
+
+def propose_param_update(path: str, run_id: str | None = None) -> dict:
+    """Compute a param statistic and write a 'proposed' row (whitelisted only).
+
+    Supersede-then-insert into axis_weight_history under axis='param:<path>', with
+    prior_weight=current config value and new_weight=proposed value. Does NOT touch
+    kairos_config.json or axis_weights. min_sample-gated: a gated compute still
+    records a row (proposed_delta 0) so the evidence is auditable, mirroring the
+    weight-axis behavior. Returns the proposal dict (incl. history_id).
+    """
+    if path not in PARAM_WHITELIST:
+        raise ValueError(f"param path {path!r} is not whitelisted — refusing to propose")
+
+    from kairos_log_db import get_connection, init_db
+    init_db()  # ensure axis_weight_history exists (idempotent)
+
+    run_id = run_id or f"{_today_et()}_weekly"
+    result = compute_param(path)
+    axis = result["axis"]
+    current = result["current_value"]
+    proposed = result["proposed_value"]
+    gated = result["gated"]
+
+    if gated or current is None or proposed is None:
+        prior_weight = current if current is not None else 0.0
+        new_weight = prior_weight
+        proposed_delta = 0.0
+    else:
+        prior_weight = current
+        new_weight = proposed
+        proposed_delta = round(new_weight - prior_weight, 6)
+
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE axis_weight_history SET status = 'superseded' "
+            "WHERE axis = ? AND status = 'proposed'",
+            (axis,),
+        )
+        cur = conn.execute(
+            "INSERT INTO axis_weight_history "
+            "(axis, run_id, computed_score, sample_size, evidence, prior_weight, "
+            " proposed_delta, new_weight, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?)",
+            (
+                axis, run_id, result["computed_score"], result["sample_size"],
+                json.dumps(result["evidence"]), prior_weight,
+                proposed_delta, new_weight, _now(),
+            ),
+        )
+        conn.commit()
+        history_id = cur.lastrowid
+    finally:
+        conn.close()
+
+    return {
+        "history_id": history_id,
+        "axis": axis,
+        "path": path,
+        "run_id": run_id,
+        "computed_score": result["computed_score"],
+        "sample_size": result["sample_size"],
+        "prior_weight": prior_weight,
+        "proposed_delta": proposed_delta,
+        "new_weight": new_weight,
+        "gated": gated,
+        "evidence": result["evidence"],
+    }
+
+
+def propose_all_params(run_id: str | None = None) -> dict:
+    """Write a fresh 'proposed' row for every whitelisted exit param, one Slack note.
+
+    The param counterpart to propose_all: iterate PARAM_WHITELIST, propose each
+    (min_sample-gated, supersede-then-insert), collect the summaries, and post ONE
+    combined note to ARBITER_CHANNEL via the env-first Slack path. Approves nothing
+    and writes no config. Each param is isolated in its own try/except so one
+    failure cannot block the others. Returns
+    {run_id, proposals, errors, slack_text, slack_posted}.
+    """
+    run_id = run_id or f"{_today_et()}_weekly"
+    proposals: list[dict] = []
+    errors: list[dict] = []
+    for path in PARAM_WHITELIST:
+        try:
+            p = propose_param_update(path, run_id=run_id)
+            proposals.append({k: p[k] for k in (
+                "axis", "path", "history_id", "computed_score", "sample_size",
+                "prior_weight", "proposed_delta", "new_weight", "gated")})
+        except Exception as exc:
+            errors.append({"axis": PARAM_PREFIX + path, "error": str(exc)})
+            print(f"  propose_all_params: {path} failed: {exc}", file=sys.stderr)
+
+    slack_text = _format_slack_propose_params(run_id, proposals, errors)
+    slack_posted = _post_slack(slack_text)
+    return {
+        "run_id": run_id,
+        "proposals": proposals,
+        "errors": errors,
+        "slack_text": slack_text,
+        "slack_posted": slack_posted,
+    }
+
+
+def _format_slack_propose_params(run_id: str, proposals: list[dict],
+                                 errors: list[dict]) -> str:
+    """One combined Slack summary for a param propose run (human gate unchanged)."""
+    lines = [
+        f":wrench: *Weekly exit-parameter proposals* — run {run_id}",
+        "_From TRAILING-STOP closed-trade outcomes. Nothing applied — 'proposed' "
+        "rows only; approval writes kairos_config.json behind the human gate._",
+    ]
+    for p in proposals:
+        n = p["sample_size"]
+        if p["gated"]:
+            detail = (f"gated — insufficient data (n {n} < {PARAM_MIN_SAMPLE}); "
+                      f"no change (stays {p['prior_weight']:g})")
+        elif abs(p["proposed_delta"]) < 1e-9:
+            detail = (f"no change (stays {p['new_weight']:g}; "
+                      f"score {p['computed_score']:+.4f}, n={n})")
+        else:
+            detail = (f"{p['prior_weight']:g} → *{p['new_weight']:g}* "
+                      f"(Δ {p['proposed_delta']:+g}; score {p['computed_score']:+.4f}, "
+                      f"n={n})  [id {p['history_id']}]")
+        lines.append(f"  • `{p['path']}`: {detail}")
+    for e in errors:
+        lines.append(f"  • `{e['axis']}`: error — {e['error']}")
+    if not proposals and not errors:
+        lines.append("  • (no whitelisted params configured)")
+    lines.append("Review with `--review`; approve at the terminal.")
+    return "\n".join(lines)
+
+
+def _apply_param_to_config(path: str, value: float) -> str:
+    """Backup kairos_config.json, set the dotted path, re-load and json-validate.
+
+    Whitelisted paths only, with a final bounds + 25%-max-change guard against the
+    CURRENT on-disk value (defense in depth — the config may have changed since the
+    proposal was written). Raises ValueError on any violation BEFORE writing so the
+    caller can abort the approval without side effects. Returns the backup path.
+    """
+    if path not in PARAM_WHITELIST:
+        raise ValueError(f"param path {path!r} is not whitelisted — refusing to apply")
+    lo, hi = PARAM_WHITELIST[path]
+    value = float(value)
+    if not (lo <= value <= hi):
+        raise ValueError(f"{path}={value} out of bounds [{lo}, {hi}] — refusing to apply")
+
+    with open(CONFIG_PATH) as f:
+        cfg = json.load(f)
+    current, found = _get_dotted(cfg, path)
+    if found and isinstance(current, (int, float)) and not isinstance(current, bool) \
+            and current != 0:
+        if abs(value - current) > PARAM_MAX_CHANGE_FRAC * abs(current) + 1e-9:
+            raise ValueError(
+                f"{path}: change {current} → {value} exceeds "
+                f"{PARAM_MAX_CHANGE_FRAC:.0%} of the current value — refusing to apply")
+
+    # Timestamped backup of the exact current file BEFORE any write.
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    backup = f"{CONFIG_PATH}.bak_{ts}"
+    with open(CONFIG_PATH) as f:
+        original = f.read()
+    with open(backup, "w") as f:
+        f.write(original)
+
+    # Write to a temp file, re-load to prove it parses, then atomically swap.
+    _set_dotted(cfg, path, value)
+    tmp = CONFIG_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(cfg, f, indent=2)
+    with open(tmp) as f:
+        json.load(f)  # raises if the written JSON is somehow invalid
+    os.replace(tmp, CONFIG_PATH)
+    return backup
+
+
 # ── Apply a human decision (the approval gate) ───────────────────────
 
 def apply_decision(history_id: int, decision: str, decided_by: str) -> dict:
@@ -575,7 +919,32 @@ def apply_decision(history_id: int, decision: str, decided_by: str) -> dict:
                 f"cannot {decision}")
 
         now = _now()
-        if decision == "approve":
+        if decision == "approve" and _is_param_axis(row["axis"]):
+            # Exit-parameter proposal: apply to kairos_config.json (whitelist +
+            # bounds + 25% guard, timestamped backup, json re-validate). If the
+            # apply raises, nothing below runs and the row stays 'proposed'.
+            # axis_weights is NEVER touched for a param proposal.
+            path = _param_path(row["axis"])
+            backup = _apply_param_to_config(path, row["new_weight"])
+            conn.execute(
+                "UPDATE axis_weight_history "
+                "SET status = 'approved', decided_at = ?, decided_by = ? WHERE id = ?",
+                (now, decided_by, history_id),
+            )
+            conn.commit()
+            outcome = {
+                "axis": row["axis"], "path": path, "status": "approved",
+                "new_value": row["new_weight"], "backup": backup,
+                "decided_by": decided_by,
+            }
+            _post_slack(
+                f":wrench: *Exit parameter approved* — `{path}`\n"
+                f"value {row['prior_weight']:g} → *{row['new_weight']:g}* "
+                f"(Δ {row['proposed_delta']:+g}) by {decided_by}\n"
+                f"Written to kairos_config.json (backup saved). Live on the next "
+                f"exit-engine run."
+            )
+        elif decision == "approve":
             conn.execute(
                 "UPDATE axis_weights SET weight = ?, updated_at = ? WHERE axis = ?",
                 (row["new_weight"], now, row["axis"]),
@@ -814,6 +1183,15 @@ def _cli_review() -> int:
               f"new_weight={r['new_weight']:+.6f}")
         print(f"     created_at={r['created_at']}")
         if ev:
+            if _is_param_axis(r["axis"]):
+                print(f"     n={ev.get('n')}  avg_mfe={ev.get('avg_mfe_pct')}pp  "
+                      f"avg_pnl={ev.get('avg_pnl_pct')}pp  "
+                      f"avg_give_back={ev.get('avg_give_back_pct')}pp")
+                print(f"     round_trips={ev.get('round_trips')} "
+                      f"(rate {ev.get('roundtrip_rate')})  severity={ev.get('severity')}  "
+                      f"bounds={ev.get('bounds')}  max_change={ev.get('max_change_frac')}")
+                print()
+                continue
             if r["axis"] == "conviction_calibration":
                 print(f"     rho={ev.get('rho')}  buckets:")
                 for line in _bucket_table_lines(ev.get("buckets", [])):
@@ -848,6 +1226,165 @@ def _cli_decide(history_id: int, decision: str, decided_by: str) -> int:
     return 0
 
 
+def _print_param_compute(r: dict) -> None:
+    ev = r["evidence"]
+    lo, hi = ev["bounds"]
+    print(f"  ── param: {r['path']}")
+    print(f"     current_value={r['current_value']}  bounds=[{lo}, {hi}]  "
+          f"max_change=±{ev['max_change_frac']:.0%}")
+    print(f"     n={ev['n']} (min_sample={PARAM_MIN_SAMPLE})  "
+          f"avg_mfe={ev['avg_mfe_pct']}pp  avg_pnl={ev['avg_pnl_pct']}pp  "
+          f"avg_give_back={ev['avg_give_back_pct']}pp")
+    print(f"     round_trips={ev['round_trips']} (rate {ev['roundtrip_rate']})  "
+          f"severity={ev['severity']}  computed_score={r['computed_score']:+.4f}")
+    if r["gated"]:
+        print(f"     GATED (n < {PARAM_MIN_SAMPLE} or value absent) — no change; "
+              f"proposed stays {r['proposed_value']}")
+    else:
+        print(f"     proposed_value={r['proposed_value']} "
+              f"(Δ {r['proposed_value'] - r['current_value']:+g})")
+
+
+def _cli_compute_params(dry_run: bool) -> int:
+    if dry_run:
+        print("  Exit-parameter compute (DRY RUN — nothing written, nothing posted)\n")
+        for path in PARAM_WHITELIST:
+            _print_param_compute(compute_param(path))
+        return 0
+    result = propose_all_params()
+    print(f"  propose_all_params run {result['run_id']}: "
+          f"{len(result['proposals'])} proposal(s), {len(result['errors'])} error(s).")
+    for p in result["proposals"]:
+        print(f"    {p['path']}: id {p['history_id']}, score {p['computed_score']:+.4f}, "
+              f"n={p['sample_size']}, {p['prior_weight']:g} → {p['new_weight']:g} "
+              f"(Δ {p['proposed_delta']:+g}){' [GATED]' if p['gated'] else ''}")
+    for e in result["errors"]:
+        print(f"    {e['axis']}: ERROR — {e['error']}")
+    print("  kairos_config.json is UNCHANGED (nothing approved).")
+    print(f"  Slack post to {ARBITER_CHANNEL}: "
+          f"{'OK' if result['slack_posted'] else 'FAILED'}")
+    print("\n  ----- Slack message text -----")
+    print(result["slack_text"])
+    return 0
+
+
+# ── Self-test (isolated: temp DBs + a /tmp config copy) ──────────────
+
+def _selftest() -> int:
+    """Exercise whitelist rejection, bounds clamping, and a full propose→approve
+    cycle against COPIES in /tmp — never the live config or the live DBs."""
+    import shutil
+    import tempfile
+    import kairos_log_db
+
+    global CONFIG_PATH, ML_DB_PATH, _post_slack
+    orig_config, orig_ml, orig_db = CONFIG_PATH, ML_DB_PATH, kairos_log_db.DB_PATH
+    orig_post = _post_slack
+    _post_slack = lambda *a, **k: True  # no live Slack posts during the self-test
+    tmpdir = tempfile.mkdtemp(prefix="axis_param_selftest_")
+    failures = []
+
+    def check(name, cond):
+        print(f"  [{'PASS' if cond else 'FAIL'}] {name}")
+        if not cond:
+            failures.append(name)
+
+    try:
+        # 1. Isolated config copy in /tmp.
+        CONFIG_PATH = os.path.join(tmpdir, "kairos_config.json")
+        shutil.copy(orig_config, CONFIG_PATH)
+
+        # 2. Synthetic ML DB with >= min_sample TRAILING-STOP rows (high give-back
+        #    so severity is non-trivial and drives a real, bounded proposal).
+        ML_DB_PATH = os.path.join(tmpdir, "ml.db")
+        mc = sqlite3.connect(ML_DB_PATH)
+        mc.execute("CREATE TABLE trade_outcomes (pnl_pct REAL, mfe_pct REAL, "
+                   "give_back_pct REAL, exit_reason TEXT, timestamp_exit TEXT)")
+        for i in range(15):
+            # winners that round-tripped: big mfe, small/negative pnl → big give-back
+            mc.execute("INSERT INTO trade_outcomes VALUES (?,?,?,?,?)",
+                       (-1.0 if i % 2 else 2.0, 22.0, 21.0,
+                        "TRAILING-STOP: retreated 18% from peak 22%", "2026-06-01 00:00:00 UTC"))
+        mc.commit(); mc.close()
+
+        # 3. Fresh temp kairos.db for axis_weight_history.
+        kairos_log_db.DB_PATH = os.path.join(tmpdir, "kairos.db")
+        kairos_log_db.init_db()
+
+        # ── Whitelist rejection ──────────────────────────────────────
+        try:
+            compute_param("exits.trailing_stop.enabled")
+            check("whitelist rejection: compute_param(non-whitelisted) raises", False)
+        except ValueError:
+            check("whitelist rejection: compute_param(non-whitelisted) raises", True)
+        try:
+            propose_param_update("exits.some.other.path")
+            check("whitelist rejection: propose_param_update(non-whitelisted) raises", False)
+        except ValueError:
+            check("whitelist rejection: propose_param_update(non-whitelisted) raises", True)
+        try:
+            _apply_param_to_config("exits.not.whitelisted", 1.0)
+            check("whitelist rejection: _apply_param_to_config(non-whitelisted) raises", False)
+        except ValueError:
+            check("whitelist rejection: _apply_param_to_config(non-whitelisted) raises", True)
+
+        # ── Bounds clamping (compute) ────────────────────────────────
+        trail = compute_param("exits.trailing_stop.target_armed.trail_pct")
+        lo, hi = PARAM_WHITELIST["exits.trailing_stop.target_armed.trail_pct"]
+        cur = trail["current_value"]
+        within_bounds = lo <= trail["proposed_value"] <= hi
+        within_25 = abs(trail["proposed_value"] - cur) <= PARAM_MAX_CHANGE_FRAC * abs(cur) + 1e-9
+        check(f"bounds: trail_pct proposal {trail['proposed_value']} in [{lo},{hi}]", within_bounds)
+        check(f"25% cap: |{trail['proposed_value']}-{cur}| <= 25% of {cur}", within_25)
+        check("direction: high give-back TIGHTENS trail_pct (proposed <= current)",
+              trail["proposed_value"] <= cur)
+
+        # ── Bounds clamping (apply guard) ────────────────────────────
+        try:
+            _apply_param_to_config("exits.trailing_stop.target_armed.trail_pct", 99.0)
+            check("bounds: _apply out-of-bounds (99.0) raises", False)
+        except ValueError:
+            check("bounds: _apply out-of-bounds (99.0) raises", True)
+        try:
+            # within bounds but > 25% jump from current (8.0 → 11.0 is +37.5%)
+            _apply_param_to_config("exits.trailing_stop.target_armed.trail_pct", 11.0)
+            check("25% cap: _apply >25% jump (8.0→11.0) raises", False)
+        except ValueError:
+            check("25% cap: _apply >25% jump (8.0→11.0) raises", True)
+
+        # ── Full propose → approve cycle ─────────────────────────────
+        p = propose_param_update("exits.trailing_stop.target_armed.trail_pct")
+        check("propose: non-gated proposal written (n>=min_sample)", not p["gated"])
+        check("propose: history_id assigned", isinstance(p["history_id"], int))
+        outcome = apply_decision(p["history_id"], "approve", "selftest")
+        check("approve: outcome status approved", outcome.get("status") == "approved")
+        # Config now carries the approved value.
+        with open(CONFIG_PATH) as f:
+            applied = json.load(f)
+        applied_val, _ = _get_dotted(applied, "exits.trailing_stop.target_armed.trail_pct")
+        check(f"approve: config updated to proposed value ({p['new_weight']})",
+              abs(applied_val - p["new_weight"]) < 1e-9)
+        check("approve: a timestamped backup was created",
+              os.path.exists(outcome.get("backup", "")))
+        # Row is now approved, not re-approvable.
+        try:
+            apply_decision(p["history_id"], "approve", "selftest")
+            check("lifecycle: re-approving an approved row raises", False)
+        except ValueError:
+            check("lifecycle: re-approving an approved row raises", True)
+
+        print()
+        if failures:
+            print(f"  SELFTEST FAILED — {len(failures)} check(s): {failures}")
+            return 1
+        print("  SELFTEST PASSED — all checks green.")
+        return 0
+    finally:
+        CONFIG_PATH, ML_DB_PATH, kairos_log_db.DB_PATH = orig_config, orig_ml, orig_db
+        _post_slack = orig_post
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Kairos axis weights — conviction_calibration, exit_timing, "
@@ -860,6 +1397,12 @@ def main() -> int:
     group.add_argument("--propose-all", action="store_true",
                        help="Auto-propose every AUTO_PROPOSE_AXES axis (weekly loop); "
                             "one combined Slack note. Approves nothing.")
+    group.add_argument("--compute-params", action="store_true",
+                       help="Compute + propose exit-parameter updates (param:<dotted.path>) "
+                            "for every whitelisted param; one combined Slack note. Approves "
+                            "nothing. With --dry-run, preview only (writes/posts nothing).")
+    group.add_argument("--selftest", action="store_true",
+                       help="Run the param propose→approve self-test against /tmp copies.")
     group.add_argument("--review", action="store_true",
                        help="List all pending ('proposed') proposals with evidence")
     group.add_argument("--approve", type=int, metavar="ID",
@@ -871,6 +1414,8 @@ def main() -> int:
                              "Ignored by --review/--approve/--reject (they act by id).")
     parser.add_argument("--by", default=os.environ.get("USER", "operator"),
                         help="Name recorded as decided_by for approve/reject")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="With --compute-params: compute and print, but write/post nothing.")
     args = parser.parse_args()
 
     if args.compute:
@@ -879,6 +1424,10 @@ def main() -> int:
         return _cli_propose(args.axis)
     if args.propose_all:
         return _cli_propose_all()
+    if args.compute_params:
+        return _cli_compute_params(args.dry_run)
+    if args.selftest:
+        return _selftest()
     if args.review:
         return _cli_review()
     if args.approve is not None:

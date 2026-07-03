@@ -1254,6 +1254,19 @@ def main() -> int:
             print(f"  WARNING: weekly axis-weight auto-propose failed: {exc}",
                   file=sys.stderr)
 
+        # Exit-engine PARAM proposals (param:<dotted.config.path>), same human
+        # gate. Writes 'proposed' rows + one combined Slack note only — never
+        # approves or edits kairos_config.json. Separately guarded so a param
+        # failure cannot affect the weight proposals or the Arbiter run.
+        try:
+            from kairos_axis_weights import propose_all_params
+            pp = propose_all_params()
+            print(f"  Auto-proposed exit params: {len(pp['proposals'])} proposal(s), "
+                  f"{len(pp['errors'])} error(s) (run_id={pp['run_id']})")
+        except Exception as exc:
+            print(f"  WARNING: weekly exit-param auto-propose failed: {exc}",
+                  file=sys.stderr)
+
     return 0
 
 
