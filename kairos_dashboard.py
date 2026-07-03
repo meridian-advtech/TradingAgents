@@ -831,11 +831,12 @@ def _parse_exit_type(reason: str) -> tuple[str, str]:
 def _load_exit_reasons() -> dict[tuple, dict]:
     """Load stored exit reasons keyed by (TICKER, sold-day) for a precise join.
 
-    position_exits has ticker as its PRIMARY KEY, so it retains only the most
-    recent exit per ticker — a repeat-traded ticker's older closes cannot be
-    resolved. Keying on ticker + same calendar day (exit_date vs. a holding's
-    sold_date) avoids mislabeling those older lots: they simply won't match and
-    render "Not recorded" rather than borrowing an unrelated reason.
+    Reads the append-only position_exits_history: a repeat-traded ticker now has
+    a row per close, so keying on ticker + same calendar day (exit_date vs. a
+    holding's sold_date) attributes each closed lot to its OWN exit reason
+    instead of borrowing the latest. A day with no matching history row renders
+    "Not recorded" rather than an unrelated reason. (On the rare two-closes-same-
+    day collision the later id wins — acceptable for this display join.)
     """
     reasons: dict[tuple, dict] = {}
     if not os.path.exists(DB_PATH):
@@ -843,8 +844,11 @@ def _load_exit_reasons() -> dict[tuple, dict]:
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
+        # Ordered by id so that, on a same-(ticker,day) collision, the later
+        # (higher-id) exit is the one that survives in the dict.
         rows = conn.execute(
-            "SELECT ticker, exit_date, exit_reason FROM position_exits"
+            "SELECT ticker, exit_date, exit_reason FROM position_exits_history "
+            "ORDER BY id ASC"
         ).fetchall()
         conn.close()
     except sqlite3.Error:
@@ -933,8 +937,8 @@ def build_closed_trades(holdings: list[dict]) -> list[dict]:
 
     A trade is closed when sold_date/sold_price are set. Realized P&L is
     (sold_price - entry_price) * quantity; % is against that lot's cost basis.
-    Exit reason/type is a best-effort join to position_exits by ticker + day;
-    absent, exit_reason is None and exit_type "Not recorded" (never faked).
+    Exit reason/type is a best-effort join to position_exits_history by ticker +
+    day; absent, exit_reason is None and exit_type "Not recorded" (never faked).
     """
     exit_reasons = _load_exit_reasons()
     entry_signals = _load_entry_signals()

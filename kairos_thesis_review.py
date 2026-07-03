@@ -314,10 +314,22 @@ def _ask_claude_thesis(ticker: str, entry_rationale: str,
 
     try:
         import anthropic
+        import json as _json
+        import os as _os
+        # Effort level from config (effort_thesis), fallback low. This is a
+        # one-line YES/NO check — low effort on Sonnet 5 is the right tier.
+        _effort = "low"
+        try:
+            _cfg_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "kairos_config.json")
+            with open(_cfg_path) as _f:
+                _effort = _json.load(_f).get("claude", {}).get("effort_thesis", "low")
+        except Exception:
+            pass
         client = anthropic.Anthropic()
         response = client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-sonnet-5",
             max_tokens=256,
+            output_config={"effort": _effort},
             system=[{
                 "type": "text",
                 "text": (

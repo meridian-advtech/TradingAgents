@@ -208,7 +208,7 @@ class KairosRouter:
         """Route Claude API tasks using the Anthropic SDK.
 
         Uses the anthropic Python SDK (Anthropic().messages.create)
-        with model "claude-sonnet-4-6", reading ANTHROPIC_API_KEY from environment.
+        with model "claude-sonnet-5", reading ANTHROPIC_API_KEY from environment.
         """
         import os
         import anthropic
@@ -240,10 +240,22 @@ class KairosRouter:
         
         # Call Anthropic API
         try:
+            # Effort level from config (effort_router), fallback medium.
+            # Router dispatch is structured-output extraction, not deep
+            # reasoning — medium is the cost-appropriate level on Sonnet 5.
+            import json as _json
+            _effort = "medium"
+            try:
+                _cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kairos_config.json")
+                with open(_cfg_path) as _f:
+                    _effort = _json.load(_f).get("claude", {}).get("effort_router", "medium")
+            except Exception:
+                pass
             client = anthropic.Anthropic()  # uses ANTHROPIC_API_KEY env var
             response = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=4096,
+                model="claude-sonnet-5",
+                max_tokens=8192,
+                output_config={"effort": _effort},
                 system=[{
                     "type": "text",
                     "text": "Output ONLY the JSON object. No markdown fences, no explanation, no preamble.",

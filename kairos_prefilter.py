@@ -146,9 +146,82 @@ def fetch_5day_candle(ticker: str, api_key: str) -> list[float] | None:
         return None
 
 
+def fetch_batch_data_yfinance(tickers: list[str], period: str = "1mo") -> dict[str, dict]:
+    """Bulk Tier 0 data fetch via a single yfinance.download() call.
+
+    Replaces the per-ticker Finnhub profile2/candle calls (see the
+    tier0_filter._comment in kairos_config.json — profile2 was returning
+    missing market_cap/avg_volume for the whole universe, and separately
+    the /stock/candle endpoint was returning no data at all under this
+    Finnhub plan). One bulk call gets price, today's volume, a genuine
+    30-day average volume, and the 5-day close history all from data
+    already proven fast (~20s for 622 tickers) and reliable.
+
+    No market cap here — it isn't in yfinance's bulk price history and
+    requires a per-ticker info() call, which is the same "N synchronous
+    calls" shape that broke Finnhub. min_market_cap is 0 (disabled) as of
+    this writing, so check_thresholds' zero-threshold handling makes a
+    missing market_cap a no-op rather than an automatic fail. If a real
+    market-cap floor is wanted later, that's worth adding as a deliberate,
+    separate (slower) enrichment step — not bundled in here.
+
+    Returns {ticker: ticker_data} in the same shape fetch_ticker_data
+    produces, so run_tier0_filter / check_thresholds work unchanged.
+    """
+    import yfinance as yf
+
+    results: dict[str, dict] = {}
+    if not tickers:
+        return results
+
+    df = yf.download(tickers, period=period, auto_adjust=True,
+                      progress=False, threads=True)
+    if df is None or df.empty:
+        return {t: {"ticker": t, "quote": None, "profile": None, "candle": None}
+                for t in tickers}
+
+    multi = hasattr(df.columns, "levels") and "Close" in df.columns.get_level_values(0)
+
+    def _series(field: str, t: str):
+        try:
+            if multi:
+                if t not in df[field].columns:
+                    return None
+                s = df[field][t].dropna()
+            else:
+                if field not in df.columns:
+                    return None
+                s = df[field].dropna()
+            return s if len(s) else None
+        except Exception:
+            return None
+
+    for t in tickers:
+        closes = _series("Close", t)
+        vols = _series("Volume", t)
+        if closes is None or len(closes) < 2:
+            results[t] = {"ticker": t, "quote": None, "profile": None, "candle": None}
+            continue
+
+        price = float(closes.iloc[-1])
+        prev_close = float(closes.iloc[-2]) if len(closes) >= 2 else None
+        today_vol = float(vols.iloc[-1]) if vols is not None else None
+        avg_vol_30d = float(vols.mean()) if vols is not None else None
+        candle = [float(c) for c in closes.tail(5).tolist()]
+        dp = ((price - prev_close) / prev_close * 100) if prev_close else None
+
+        results[t] = {
+            "ticker": t,
+            "quote": {"c": price, "v": today_vol, "d": None, "dp": dp},
+            "profile": {"avgVolume": avg_vol_30d, "marketCapitalization": None},
+            "candle": candle if len(candle) >= 2 else None,
+        }
+
+    return results
+
+
 def fetch_ticker_data(ticker: str, api_key: str) -> dict:
     """Fetch all data needed for Tier 0 filtering for one ticker.
-    
     Returns a dict with all available data. Missing fields will be None.
     """
     quote = fetch_quote(ticker, api_key)
@@ -226,43 +299,55 @@ def check_thresholds(ticker_data: dict, config: dict) -> tuple[bool, dict]:
     
     details["price_change_5d_pct"] = price_change_5d_pct
     
-    # Check each threshold
+    # Check each threshold. A threshold of 0 means "this dimension is
+    # disabled" — missing data on a disabled dimension is a no-op, not an
+    # automatic fail. (Previously every check unconditionally failed on
+    # missing data regardless of threshold, which is what let one broken
+    # Finnhub field — market_cap — silently reject the entire universe even
+    # though min_market_cap was already set to 0. See tier0_filter._comment
+    # in kairos_config.json.)
+
     # Check 1: price >= min_price
     if price is None:
-        details["passes"] = False
-        details["failures"].append("price: missing data")
+        if config["min_price"] != 0:
+            details["passes"] = False
+            details["failures"].append("price: missing data")
     elif price < config["min_price"]:
         details["passes"] = False
         details["failures"].append(f"price: price >= ${config['min_price']} (actual: {price})")
     
     # Check 2: market_cap >= min_market_cap
     if market_cap is None:
-        details["passes"] = False
-        details["failures"].append("market_cap: missing data")
+        if config["min_market_cap"] != 0:
+            details["passes"] = False
+            details["failures"].append("market_cap: missing data")
     elif market_cap < config["min_market_cap"]:
         details["passes"] = False
         details["failures"].append(f"market_cap: market cap >= ${config['min_market_cap']:,.0f} (actual: {market_cap:,.0f})")
     
     # Check 3: avg_volume_30d >= min_30day_avg_volume
     if avg_volume_30d is None:
-        details["passes"] = False
-        details["failures"].append("avg_volume_30d: missing data")
+        if config["min_30day_avg_volume"] != 0:
+            details["passes"] = False
+            details["failures"].append("avg_volume_30d: missing data")
     elif avg_volume_30d < config["min_30day_avg_volume"]:
         details["passes"] = False
         details["failures"].append(f"avg_volume_30d: 30-day avg volume >= {config['min_30day_avg_volume']:,.0f} (actual: {avg_volume_30d:,.0f})")
     
     # Check 4: volume_ratio >= min_today_volume_ratio
     if details["volume_ratio"] is None:
-        details["passes"] = False
-        details["failures"].append("volume_ratio: missing data")
+        if config["min_today_volume_ratio"] != 0:
+            details["passes"] = False
+            details["failures"].append("volume_ratio: missing data")
     elif details["volume_ratio"] < config["min_today_volume_ratio"]:
         details["passes"] = False
         details["failures"].append(f"volume_ratio: today's volume >= {config['min_today_volume_ratio']*100:.0f}% of 30-day avg (actual: {details['volume_ratio']*100:.1f}%)")
     
     # Check 5: price_change_5d_pct >= min_5day_price_change_pct
     if price_change_5d_pct is None:
-        details["passes"] = False
-        details["failures"].append("price_change_5d_pct: missing data")
+        if config["min_5day_price_change_pct"] != 0:
+            details["passes"] = False
+            details["failures"].append("price_change_5d_pct: missing data")
     elif price_change_5d_pct < config["min_5day_price_change_pct"]:
         details["passes"] = False
         details["failures"].append(f"price_change_5d_pct: abs 5-day price change >= {config['min_5day_price_change_pct']:.1f}% (actual: {price_change_5d_pct:.2f}%)")
@@ -308,18 +393,22 @@ def run_tier0_filter(
     api_key: str = None,
     dry_run: bool = False,
     return_data: bool = False,
+    data_source: str = "yfinance",
 ):
     """Run Tier 0 rules-based pre-filter on a list of tickers.
 
     Args:
         tickers: List of ticker symbols to filter
-        api_key: Finnhub API key. If None and not dry_run, raises ValueError
-        dry_run: If True, skip Finnhub and use placeholder data
+        api_key: Finnhub API key. Only required when data_source="finnhub".
+        dry_run: If True, skip the data fetch and use placeholder data
         return_data: If True, also return a quote_data_dict mapping
             ticker -> {"price": float, "change_pct": float, "volume_signal": str}
-            for every ticker whose Finnhub quote was successfully fetched.
-            Lets downstream callers reuse pre-filter quote data instead of
-            re-hitting Finnhub.
+            for every ticker with a usable quote. Lets downstream callers
+            reuse pre-filter quote data instead of a second fetch.
+        data_source: "yfinance" (default) — one bulk call, no per-ticker
+            requests, no Finnhub dependency for this stage. "finnhub" is kept
+            for comparison/testing only; it's the path that broke (see
+            tier0_filter._comment in kairos_config.json) and requires api_key.
 
     Returns:
         If return_data is False (default): list of tickers that pass thresholds.
@@ -351,13 +440,18 @@ def run_tier0_filter(
             return tickers, {}
         return tickers
     
-    if not api_key:
-        raise ValueError("FINNHUB_API_KEY is required for Tier 0 filtering. Set FINNHUB_API_KEY environment variable or pass api_key.")
+    if not api_key and data_source == "finnhub":
+        raise ValueError("FINNHUB_API_KEY is required when data_source='finnhub'. "
+                          "Set FINNHUB_API_KEY environment variable or pass api_key, "
+                          "or use data_source='yfinance' (default).")
     
     # Fetch data for all tickers
-    logger.info(f"  Fetching data for {len(tickers)} tickers...")
+    logger.info(f"  Fetching data for {len(tickers)} tickers via {data_source}...")
     t0 = time.time()
-    all_data = fetch_batch_data(tickers, api_key)
+    if data_source == "yfinance":
+        all_data = fetch_batch_data_yfinance(tickers)
+    else:
+        all_data = fetch_batch_data(tickers, api_key)
     fetch_time = time.time() - t0
     logger.info(f"  Data fetched in {fetch_time:.1f}s")
     

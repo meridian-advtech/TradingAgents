@@ -301,10 +301,12 @@ def compute_exit_timing() -> dict:
 def compute_reallocation_aggressiveness() -> dict:
     """Bidirectional rotation-discipline score from thesis decay + B2a features.
 
-    exit_reason-based reallocation tagging is unusable today (position_exits is
-    almost entirely NULL — a downstream symptom of the write_trade_close
-    decision_id bug), so this keys off thesis_conditions_intact at the LAST
-    checkpoint of each closed trade instead:
+    exit_reason-based reallocation tagging keys off trade_outcomes.exit_reason,
+    which was almost entirely NULL when this was written (a downstream symptom of
+    the write_trade_close decision_id bug). Exit reasons now persist per-close in
+    position_exits_history and are backfilled into trade_outcomes, but this stat
+    still keys off thesis_conditions_intact at the LAST checkpoint of each closed
+    trade — reallocation exits remain too thin to tag reliably by reason:
 
       * too-EAGER (+): thesis was still INTACT at exit yet the price ran up after
         we sold (post_exit_peak_pct) — we rotated out of a live thesis early.

@@ -10,7 +10,7 @@ trade_outcomes feature columns (added idempotently in kairos_ml_outcomes.py):
     post_exit_peak_pct     — (max High in (exit, exit+window] − exit)/exit × 100
                              ONLY once the full window has elapsed; else NULL
     post_exit_window_days  — the window used
-    exit_reason            — trigger copied from kairos.db position_exits
+    exit_reason            — trigger copied from kairos.db position_exits_history
     features_filled_at     — set when mfe/give-back are computed
 
 This does NOT touch write_trade_close, the scheduler, kairos_reason.py, or any
@@ -42,15 +42,19 @@ sys.path.insert(0, SCRIPT_DIR)
 from kairos_arbiter import _download_daily, _parse_utc
 
 
-# ── exit_reason lookup (kairos.db position_exits) ────────────────────
+# ── exit_reason lookup (kairos.db position_exits_history) ────────────
 
 def _load_exit_reasons() -> dict:
-    """{ticker: [{exit_date(dt), exit_reason}, ...]} from kairos.db position_exits."""
+    """{ticker: [{exit_date(dt), exit_reason}, ...]} from position_exits_history.
+
+    The append-only history gives multiple exits per ticker; _match_exit_reason
+    picks the one nearest each trade's exit timestamp (Δt match).
+    """
     from kairos_log_db import get_connection
     conn = get_connection()
     try:
         rows = conn.execute(
-            "SELECT ticker, exit_date, exit_reason FROM position_exits"
+            "SELECT ticker, exit_date, exit_reason FROM position_exits_history"
         ).fetchall()
     finally:
         conn.close()
@@ -66,8 +70,9 @@ def _load_exit_reasons() -> dict:
 def _match_exit_reason(reasons: dict, ticker: str, exit_dt) -> str | None:
     """The exit_reason for this ticker nearest the trade's exit timestamp.
 
-    position_exits is keyed by ticker (one row each today), so this is usually a
-    direct lookup; the nearest-by-date match is defensive for future multi-row.
+    position_exits_history holds a row per exit, so a re-traded ticker has
+    several candidates; the nearest-by-date match attributes each trade to its
+    own close instead of the latest.
     """
     cands = reasons.get(ticker) or []
     if not cands:

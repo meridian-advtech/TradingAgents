@@ -86,6 +86,30 @@ CREATE TABLE IF NOT EXISTS position_exits (
 );
 """
 
+# Append-only exit history — the successor to position_exits. One row per exit
+# EVENT (never upserted), so a re-traded ticker keeps every close instead of only
+# its latest. entry_date / lot_ids attribute the exit to the specific closed
+# holdings lot(s) so simultaneous same-ticker lots (the FCX-style two-lot case)
+# are disambiguated, not just timestamped. The old position_exits table is kept
+# frozen alongside for one release cycle as a safety net (see migrate script).
+# Recency per ticker is by id (append order = chronological): the highest id for
+# a ticker is its most-recent exit — this is what the re-entry guard reads.
+SCHEMA_POSITION_EXITS_HISTORY = """
+CREATE TABLE IF NOT EXISTS position_exits_history (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker       TEXT NOT NULL,
+    exit_date    TEXT,
+    exit_price   REAL,
+    exit_reason  TEXT,
+    exit_signals TEXT,
+    entry_date   TEXT,
+    lot_ids      TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_position_exits_history_ticker
+    ON position_exits_history(ticker);
+"""
+
 SCHEMA_CRYPTO_DECISIONS = """
 CREATE TABLE IF NOT EXISTS crypto_decisions (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -316,7 +340,7 @@ def init_db(reset: bool = False):
         conn.execute("DROP TABLE IF EXISTS options_decisions")
     conn.executescript(
         SCHEMA_DECISIONS + SCHEMA_OUTCOMES + SCHEMA_HOLDINGS
-        + SCHEMA_POSITION_EXITS
+        + SCHEMA_POSITION_EXITS + SCHEMA_POSITION_EXITS_HISTORY
         + SCHEMA_CRYPTO_DECISIONS + SCHEMA_CRYPTO_HOLDINGS
         + SCHEMA_OPTIONS_DECISIONS + SCHEMA_OPTIONS_POSITIONS
         + SCHEMA_IPO_LOCKUP + SCHEMA_NLV_SNAPSHOTS
@@ -612,6 +636,7 @@ def sell_holdings(
     ).fetchall()
 
     closed = []
+    closed_lot_ids = []  # holdings ids of the lots this exit event closed (FIFO)
     remaining = qty_to_sell
     for lot in lots:
         if remaining <= 0:
@@ -642,22 +667,25 @@ def sell_holdings(
             "quantity": sell_qty,
             "holding_days": lot["holding_days"],
         })
+        closed_lot_ids.append(lot["id"])
         remaining -= sell_qty
 
-    # Record the exit reason for every close (same txn as the lot updates). Only
-    # when a lot actually closed — a no-op sell (nothing open) records nothing.
+    # Record the exit reason for every close (same txn as the lot updates), as a
+    # new APPEND-ONLY history row — never an upsert, so a re-traded ticker keeps
+    # every close. entry_date/lot_ids attribute this exit to the specific lot(s)
+    # closed (oldest FIFO lot + all touched ids) so simultaneous same-ticker lots
+    # are disambiguated. Only when a lot actually closed — a no-op sell records
+    # nothing. (The frozen legacy position_exits table is intentionally NOT
+    # written here anymore; get_position_exit now reads history.)
     if closed:
         conn.execute(
-            """INSERT INTO position_exits
-               (ticker, exit_date, exit_price, exit_reason, exit_signals)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT(ticker) DO UPDATE SET
-                exit_date    = excluded.exit_date,
-                exit_price   = excluded.exit_price,
-                exit_reason  = excluded.exit_reason,
-                exit_signals = excluded.exit_signals""",
+            """INSERT INTO position_exits_history
+               (ticker, exit_date, exit_price, exit_reason, exit_signals, entry_date, lot_ids)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (ticker, sold_date, sold_price, reason,
-             json.dumps(exit_signals) if exit_signals else None),
+             json.dumps(exit_signals) if exit_signals else None,
+             closed[0]["entry_date"],
+             ",".join(str(i) for i in closed_lot_ids)),
         )
 
     conn.commit()
@@ -808,21 +836,19 @@ def upsert_position_exit(
     exit_reason: str,
     exit_signals: list[str] | None = None,
 ) -> None:
-    """Record (or overwrite) the most recent exit for a ticker.
+    """Record an exit for a ticker as a new append-only history row.
 
     Powers the re-entry guard: a later BUY above this exit price is blocked
-    unless a signal fires that was NOT present at this exit.
+    unless a signal fires that was NOT present at this exit. Despite the legacy
+    name, this now APPENDS (never overwrites) — each call is a distinct exit
+    event. Lot attribution (entry_date/lot_ids) is left null here because this
+    entry point has no lot context; the lot-aware writer is sell_holdings.
     """
     conn = get_connection()
     conn.execute(
-        """INSERT INTO position_exits
+        """INSERT INTO position_exits_history
            (ticker, exit_date, exit_price, exit_reason, exit_signals)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(ticker) DO UPDATE SET
-            exit_date    = excluded.exit_date,
-            exit_price   = excluded.exit_price,
-            exit_reason  = excluded.exit_reason,
-            exit_signals = excluded.exit_signals""",
+           VALUES (?, ?, ?, ?, ?)""",
         (ticker, exit_date, exit_price, exit_reason,
          json.dumps(exit_signals) if exit_signals else None),
     )
@@ -831,14 +857,18 @@ def upsert_position_exit(
 
 
 def get_position_exit(ticker: str) -> dict | None:
-    """Return the last-exit record for a ticker, or None if never exited.
+    """Return the MOST-RECENT exit record for a ticker, or None if never exited.
 
-    The returned dict's exit_signals is decoded back into a list[str].
+    Reads the append-only position_exits_history: the highest id for a ticker is
+    its latest exit (append order is chronological). The returned dict's
+    exit_signals is decoded back into a list[str]. Contract is unchanged from the
+    old latest-per-ticker table — only the backing store moved.
     """
     conn = get_connection()
     row = conn.execute(
         "SELECT ticker, exit_date, exit_price, exit_reason, exit_signals "
-        "FROM position_exits WHERE ticker = ?",
+        "FROM position_exits_history WHERE ticker = ? "
+        "ORDER BY id DESC LIMIT 1",
         (ticker,),
     ).fetchone()
     conn.close()
