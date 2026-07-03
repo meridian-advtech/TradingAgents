@@ -487,6 +487,91 @@ def find_open_trade(ticker: str, action: str = "BUY") -> Optional[str]:
     return row["trade_id"] if row else None
 
 
+def record_exit_outcome(
+    ticker: str,
+    timestamp_exit: str,
+    price_exit: float,
+    exit_reason: str,
+) -> Optional[str]:
+    """Populate exit fields on the oldest OPEN trade_outcomes row for a ticker.
+
+    Called at the sell_holdings chokepoint (the single point every equity close
+    funnels through) so the ML outcomes DB captures the exit_reason / realized
+    PnL / give-back that were previously left NULL on all but a couple of rows.
+
+    Match: ticker + timestamp_exit IS NULL; if several are open, the oldest by
+    entry (FIFO) — mirroring how sell_holdings closes the underlying lots. Sets
+    timestamp_exit, price_exit, pnl_pct, pnl_dollar, exit_reason, hold_duration_mins,
+    and give_back_pct = mfe_pct - pnl_pct when mfe_pct has already been computed
+    (by kairos_outcome_features.py). PnL is direction-aware, matching
+    write_trade_close. outcome_label is deliberately left untouched so the
+    downstream write_trade_close (matched by outcome_label IS NULL) still fires.
+
+    Returns the trade_id updated, or None if no open row matched. Callers MUST
+    wrap this so a DB failure never blocks or raises into the trade path.
+    """
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """SELECT trade_id, action, quantity, price_entry, timestamp_entry, mfe_pct
+               FROM trade_outcomes
+               WHERE ticker = ? AND timestamp_exit IS NULL
+               ORDER BY timestamp_entry ASC LIMIT 1""",
+            (ticker,),
+        ).fetchone()
+        if row is None:
+            return None
+
+        price_entry = row["price_entry"]
+        action = row["action"]
+        quantity = row["quantity"] or 0
+
+        # Direction-aware PnL (mirrors write_trade_close).
+        if action == "BUY":
+            pnl_dollar = (price_exit - price_entry) * quantity
+        else:  # SELL (short)
+            pnl_dollar = (price_entry - price_exit) * quantity
+        pnl_pct = ((price_exit - price_entry) / price_entry * 100) if price_entry else 0.0
+        if action == "SELL":
+            pnl_pct = -pnl_pct
+
+        hold_duration_mins = _compute_duration_mins(row["timestamp_entry"], timestamp_exit)
+
+        give_back_pct = None
+        if row["mfe_pct"] is not None:
+            give_back_pct = round(row["mfe_pct"] - pnl_pct, 4)
+
+        conn.execute(
+            """UPDATE trade_outcomes
+               SET timestamp_exit = ?, price_exit = ?, pnl_pct = ?, pnl_dollar = ?,
+                   exit_reason = ?, give_back_pct = ?, hold_duration_mins = ?
+               WHERE trade_id = ?""",
+            (timestamp_exit, price_exit, round(pnl_pct, 4), round(pnl_dollar, 4),
+             exit_reason, give_back_pct, hold_duration_mins, row["trade_id"]),
+        )
+        conn.commit()
+        return row["trade_id"]
+    finally:
+        conn.close()
+
+
+def get_thesis_target(ticker: str) -> Optional[float]:
+    """Most recent logged predicted_return_pct for this ticker's thesis.
+
+    Returns None if no thesis_predictions row exists (e.g. pre-logging-fix
+    trades, or signal types that don't log a prediction) — caller must
+    fall back to the existing flat trail in that case.
+    """
+    conn = get_connection()
+    row = conn.execute(
+        """SELECT predicted_return_pct FROM thesis_predictions
+           WHERE ticker = ? ORDER BY timestamp_entry DESC LIMIT 1""",
+        (ticker,),
+    ).fetchone()
+    conn.close()
+    return row["predicted_return_pct"] if row and row["predicted_return_pct"] is not None else None
+
+
 # ── Reconcile provisional entry prices ───────────────────────────────
 
 def list_provisional_entries() -> list[dict]:

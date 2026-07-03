@@ -662,6 +662,25 @@ def sell_holdings(
 
     conn.commit()
     conn.close()
+
+    # Mirror the exit into the ML outcomes DB (separate database). This is the
+    # single point every equity close funnels through, so recording the exit
+    # reason / realized PnL / give-back here fills the trade_outcomes fields that
+    # write_trade_close never captured. Best-effort only: a failure here must
+    # NEVER block or raise into the trade path, so it is fully wrapped and only
+    # logs a warning. Only when a lot actually closed (a real exit).
+    if closed:
+        try:
+            from kairos_ml_outcomes import record_exit_outcome
+            record_exit_outcome(
+                ticker=ticker,
+                timestamp_exit=sold_date,
+                price_exit=sold_price,
+                exit_reason=reason,
+            )
+        except Exception as exc:
+            print(f"  WARNING: ML outcomes exit-metadata update failed for {ticker}: {exc}")
+
     return closed
 
 

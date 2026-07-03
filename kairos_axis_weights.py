@@ -617,8 +617,14 @@ def apply_decision(history_id: int, decision: str, decided_by: str) -> dict:
 def _post_slack(text: str) -> bool:
     try:
         sys.path.insert(0, SCRIPT_DIR)
-        from kairos_alerts import post_message
-        return post_message(ARBITER_CHANNEL, text)
+        from kairos_alerts import post_message, _load_slack_config
+        # Env-first token resolution: SLACK_BOT_TOKEN over kairos_config.json.
+        # _load_slack_config already applies that override; resolving it here and
+        # passing it explicitly keeps this notify path env-first (so a blank
+        # config bot_token no longer forces a 'Slack skipped') independent of
+        # post_message's default config loading.
+        cfg = _load_slack_config()
+        return post_message(ARBITER_CHANNEL, text, cfg=cfg)
     except Exception as exc:
         print(f"  Slack post failed: {exc}", file=sys.stderr)
         return False
