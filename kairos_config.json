@@ -70,14 +70,18 @@
   },
   "ollama": {
     "screen_model": "phi4-mini",
-    "reason_model": "qwen3:30b-a3b",
-    "_comment": "screen_model: phi4-mini ~2.3GB, better instruction following than llama3.2 for Tier 1 batch classification. reason_model: qwen3:30b-a3b ~17GB MoE (3B active per token), upgraded from qwen3:14b \u2014 stronger routing/filtering at inference speed of a 3B model. Load/unload architecture means screener and router never share RAM simultaneously. thinking mode disabled in kairos_ollama.py ask()."
+    "reason_model": "qwen3.6:35b-a3b",
+    "_comment": "screen_model: phi4-mini ~2.3GB, better instruction following than llama3.2 for Tier 1 batch classification. reason_model: qwen3.6:35b-a3b ~23GB MoE (~3B active per token), upgraded from qwen3:30b-a3b \u2014 next-gen Qwen3.6 family, stronger routing/filtering. qwen3:30b-a3b kept installed as fallback pending validation. Load/unload architecture means screener and router never share RAM simultaneously. thinking mode disabled in kairos_ollama.py ask()."
   },
   "claude": {
     "cli_path": "/opt/homebrew/bin/claude",
-    "reasoning_timeout_s": 180,
+    "reasoning_timeout_s": 240,
     "poll_interval_s": 5,
-    "_comment": "Claude Code CLI invoked via subprocess for Phase 2 reasoning. Set cli_path if claude is not on PATH."
+    "model": "claude-sonnet-5",
+    "effort_decision": "high",
+    "effort_router": "medium",
+    "effort_thesis": "low",
+    "_comment": "Claude Code CLI invoked via subprocess for Phase 2 reasoning. Set cli_path if claude is not on PATH. model: claude-sonnet-5 (June 2026, intro pricing thru Aug 31). effort_*: Sonnet 5 effort levels per call type \u2014 decision=high (main trading JSON), router=medium (task dispatch), thesis=low (YES/NO invalidation check). API default is high; passed via output_config={'effort': ...}."
   },
   "slack": {
     "bot_token": "",
@@ -156,8 +160,8 @@
     "min_market_cap": 0,
     "min_5day_price_change_pct": 0.0,
     "min_today_volume_ratio": 0.0,
-    "_comment": "Tier 0 pre-filter. All thresholds set to 0 \u2014 Finnhub profile API returning missing data for market_cap and avg_volume_30d, causing all 714 tickers to fail. Ollama Tier 1 handles quality filtering. Only min_price ($5) remains active to exclude penny stocks.",
-    "skip_tier0": true
+    "_comment": "Tier 0 pre-filter. Data source switched from Finnhub profile2 (was returning missing market_cap/avg_volume, and the /stock/candle endpoint was returning no data at all) to a single bulk yfinance call \u2014 fast (~21s for 622 tickers) and reliable. check_thresholds also fixed: a threshold of 0 now genuinely disables that check instead of still requiring the field to exist, which is what let the broken market_cap field silently reject the whole universe even at threshold=0. All activity thresholds (volume, 5d change) intentionally stay at 0 \u2014 Tier 0 is a sanity floor only (dead tickers, sub-$5 price); filtering on price/volume activity here would exclude quiet pre-move setups before HOT-INSIDER/HOT-CONGRESS ever see them, which defeats the point of the system. Re-enabled 2026-07-01.",
+    "skip_tier0": false
   },
   "reallocation": {
     "MIN_CONVICTION": 5,
@@ -216,7 +220,14 @@
       ],
       "ipo_multiplier": 2.0,
       "ipo_window_days": 10,
-      "_ipo_note": "Young IPOs whip-saw on day-1/2 noise. For the first ipo_window_days HOLDING days, the trailing-stop trail (and thus the intraday backstop = trail x intraday_mult) is widened by ipo_multiplier so normal IPO volatility does not trigger a profit-capture exit. IPO identity is read from kairos_ipo_cache.json (detected set), NOT the signal tag, which is lost once a position is held."
+      "_ipo_note": "Young IPOs whip-saw on day-1/2 noise. For the first ipo_window_days HOLDING days, the trailing-stop trail (and thus the intraday backstop = trail x intraday_mult) is widened by ipo_multiplier so normal IPO volatility does not trigger a profit-capture exit. IPO identity is read from kairos_ipo_cache.json (detected set), NOT the signal tag, which is lost once a position is held.",
+      "target_armed": {
+        "enabled": true,
+        "trail_pct": 8.0
+      },
+      "_target_armed_note": "TARGET-ARMED trail (backtest-verified, +31.6pts over flat tiers on n=49): no trail arms until peak_gain_pct reaches the position's own logged thesis target (predicted_return_pct from thesis_predictions); THEN a flat trail_pct trail arms, harvesting only the give-back on the SURPLUS above what the thesis promised. Falls back to the flat tiers above for any ticker with no logged target. enabled=false ships as a no-op; J flips true after reviewing dry-run output.",
+      "profit_floor_pp": 1.0,
+      "_profit_floor_note": "Once ANY trail is armed, allowed retreat is capped at (peak - profit_floor_pp) so an armed winner can never exit below ~breakeven+floor. Added 2026-07-02 after giveback analysis: target-armed positions with single-digit peaks had backstops wider than their peaks (guaranteed-loss exits). 0 disables."
     },
     "tax_gate": {
       "enabled": true,

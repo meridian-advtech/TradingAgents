@@ -270,14 +270,35 @@ def evaluate_position(
                 f"{closing_stop:.1f}% ({signal}, {regime})")
 
     # ── Condition 2: Trailing stop (profit capture) ──────────────────
-    trail = trailing_stop_threshold(peak_gain_pct, cfg)
+    # Target-armed trail (backtest-verified): if enabled and this position has a
+    # logged thesis target (predicted_return_pct), no trail arms until the peak
+    # reaches that target — then a single flat trail harvests give-back on the
+    # SURPLUS above what the thesis promised, letting winners run uninterrupted
+    # while they are still delivering. Any ticker with no logged target falls
+    # through to the existing flat-tier trail below (unchanged behaviour). The
+    # target is fetched ONCE per position per eval and wrapped so a DB hiccup
+    # degrades to the flat tiers rather than crashing the loop.
+    ts_cfg = cfg.get("trailing_stop", {})
+    ta_cfg = ts_cfg.get("target_armed", {})
+    trail = None
+    target_armed = False
+    if ta_cfg.get("enabled", False):
+        try:
+            from kairos_ml_outcomes import get_thesis_target
+            target = get_thesis_target(ticker)
+        except Exception:
+            target = None
+        if target is not None and peak_gain_pct >= target:
+            trail = float(ta_cfg.get("trail_pct", 8.0))
+            target_armed = True
+    if trail is None:
+        trail = trailing_stop_threshold(peak_gain_pct, cfg)
     if trail is not None:
         # IPO widening: a young IPO whip-saws on day-1/2 noise, and the standard
         # trail fires a profit-capture exit on that noise. For the first
         # ipo_window_days HOLDING days of a detected IPO, widen the trail by
         # ipo_multiplier so the position can breathe. Identity comes from the IPO
         # cache (not the signal tag, which is lost on held conviction trades).
-        ts_cfg = cfg.get("trailing_stop", {})
         ipo_window = int(ts_cfg.get("ipo_window_days", 0))
         ipo_mult = float(ts_cfg.get("ipo_multiplier", 1.0))
         ipo_widened = False
@@ -288,13 +309,32 @@ def evaluate_position(
         retreat = peak_gain_pct - gain_pct  # how far off the high-water mark
         intraday_mult = float(cfg["stop_loss"].get(signal, cfg["stop_loss"]["STANDARD"])
                               .get("intraday_mult", 1.5))
-        _tag = " [IPO-widened]" if ipo_widened else ""
-        if retreat >= trail * intraday_mult:
+        # Profit floor (giveback analysis 2026-07-02): an ARMED winner must
+        # never round-trip into a loss. When the peak is small enough that the
+        # standard backstop (trail x intraday_mult) permits a negative exit
+        # (observed: DLR peak +6.1 -> exit -6.0, MU +10.4 -> -7.5), cap the
+        # allowed retreat at (peak - profit_floor_pp) so the worst armed exit
+        # is ~breakeven+floor. Non-binding once peak > trail*mult + floor, so
+        # the flat 15/30/50 tiers are unaffected; this exists for the
+        # target-armed path, which arms on single-digit peaks.
+        backstop = trail * intraday_mult
+        close_trail = trail
+        _floor_tag = ""
+        floor_pp = float(ts_cfg.get("profit_floor_pp", 1.0))
+        if floor_pp > 0:
+            cap = max(peak_gain_pct - floor_pp, 0.25)
+            if cap < backstop:
+                backstop = cap
+                close_trail = min(close_trail, cap)
+                _floor_tag = " [profit-floor]"
+        _tag = ("" + (" [target-armed]" if target_armed else "")
+                + (" [IPO-widened]" if ipo_widened else "") + _floor_tag)
+        if retreat >= backstop:
             return (f"TRAILING-STOP: retreated {retreat:.1f}% from peak "
-                    f"{peak_gain_pct:.1f}% (intraday backstop {trail * intraday_mult:.1f}%{_tag})")
-        if is_close_eval and retreat >= trail:
+                    f"{peak_gain_pct:.1f}% (intraday backstop {backstop:.1f}%{_tag})")
+        if is_close_eval and retreat >= close_trail:
             return (f"TRAILING-STOP: retreated {retreat:.1f}% from peak "
-                    f"{peak_gain_pct:.1f}% (trail {trail:.1f}%, gain {gain_pct:+.1f}%{_tag})")
+                    f"{peak_gain_pct:.1f}% (trail {close_trail:.1f}%, gain {gain_pct:+.1f}%{_tag})")
 
     # ── Condition 5: HOT-REVERSION validity check (replaced time gate) ──
     # Sell when price reverts to 30d SMA (thesis complete), not on elapsed time.
