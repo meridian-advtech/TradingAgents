@@ -81,3 +81,15 @@ kairos_dashboard.html
 *.bak_*
 *.log.[0-9]*
 kairos_axis_snapshot.json
+
+# Runtime state (2026-07-03 cleanup — these churn every cycle, same
+# pattern as kairos_state.json etc. above)
+kairos_catalyst_signals.json
+kairos_dividend_state.json
+kairos_ipo_cache.json
+kairos_ipo_pipeline.json
+kairos_iv_history.json
+kairos_ml_result.json
+
+# Arbiter reports — generated nightly/weekly, not source
+arbiter_reports/
