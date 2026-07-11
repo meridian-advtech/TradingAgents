@@ -722,10 +722,10 @@
       "upstream_dependency": "NVDA,AMD,AAPL,MSFT"
     }
   ],
-  "paused_signals": [
-    "HOT-EARNINGS",
-    "HOT-OPTIONS"
-  ],
+  "paused_signals": {
+    "HOT-OPTIONS": "hard",
+    "HOT-CONGRESS": "hard"
+  },
   "axis_weights": {
     "learning_rate": 0.3,
     "per_run_cap": 0.15,

@@ -493,6 +493,14 @@ def _has_compute(axis: str) -> bool:
         return True
 
 
+
+# 2026-07-11: proposal generation frozen after the approve-ratchet postmortem.
+# Evidence was stale (mfe NULL on 28/30 rows; averages driven by 2 trades) and the
+# objective one-sided (no forgone-gain term), so daily proposals compounded 25%/night
+# on unchanged information. Set to False (or empty) only after the evidence redesign
+# (freshness gate + regime windows + two-sided score) lands.
+PROPOSALS_FROZEN = "2026-07-11 ratchet postmortem"
+
 def propose_all(run_id: str | None = None) -> dict:
     """Write a fresh 'proposed' row for each AUTO_PROPOSE_AXES axis, one Slack note.
 
@@ -505,6 +513,10 @@ def propose_all(run_id: str | None = None) -> dict:
     own try/except so one failure cannot block the others. Returns
     {run_id, proposals: [...], errors: [...], slack_posted: bool}.
     """
+    if PROPOSALS_FROZEN:
+        _p = f"proposals FROZEN pending evidence redesign ({PROPOSALS_FROZEN}); compute skipped."
+        print(_p)
+        return {"frozen": True, "reason": PROPOSALS_FROZEN}
     run_id = run_id or f"{_today_et()}_weekly"
     proposals: list[dict] = []
     errors: list[dict] = []
@@ -793,6 +805,10 @@ def propose_all_params(run_id: str | None = None) -> dict:
     failure cannot block the others. Returns
     {run_id, proposals, errors, slack_text, slack_posted}.
     """
+    if PROPOSALS_FROZEN:
+        _p = f"proposals FROZEN pending evidence redesign ({PROPOSALS_FROZEN}); compute skipped."
+        print(_p)
+        return {"frozen": True, "reason": PROPOSALS_FROZEN}
     run_id = run_id or f"{_today_et()}_weekly"
     proposals: list[dict] = []
     errors: list[dict] = []
