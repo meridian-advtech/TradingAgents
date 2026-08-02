@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 
 SCRIPT_DIR    = os.path.dirname(os.path.abspath(__file__))
 DB_PATH       = os.path.join(SCRIPT_DIR, "kairos.db")
+ML_DB_PATH    = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
 PERF_FILE     = os.path.join(SCRIPT_DIR, "kairos_performance.json")
 DASHBOARD_OUT = os.path.join(SCRIPT_DIR, "kairos_dashboard.html")
 LEDGER_FILE   = os.path.join(SCRIPT_DIR, "kairos_ledger.txt")
@@ -715,6 +716,72 @@ def query_db() -> dict:
             "decisions_counts": decisions_counts}
 
 
+# ── ML trade ledger (single source of truth for closed-trade stats) ────
+
+def load_ml_trade_stats() -> dict | None:
+    """Closed-trade stats from the reconciled ML ledger (kairos_ml_outcomes.db).
+
+    This is the authoritative trade universe: one row per attributable round
+    trip, P&L frozen at exit. The legacy kairos.db holdings lots are NOT — the
+    daily reconciler rewrites/merges closed lots at broker cost, which erases
+    their realized P&L over time.
+
+    Opened READ-ONLY (uri mode=ro) so the dashboard can never lock the ML DB
+    against the live trading writers. Returns None on any error, so callers
+    fall back to their legacy computation instead of showing nothing.
+
+    Returns {closed_trades, win_rate, realized_pnl, monthly[]} where monthly is
+    ascending by "YYYY-MM" with {month, n, win_rate, avg_pct, total_usd}.
+    """
+    if not os.path.exists(ML_DB_PATH):
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{ML_DB_PATH}?mode=ro", uri=True, timeout=2)
+        try:
+            conn.execute("PRAGMA busy_timeout = 2000")
+            rows = conn.execute(
+                "SELECT timestamp_exit, pnl_pct, pnl_dollar FROM trade_outcomes "
+                "WHERE timestamp_exit IS NOT NULL AND pnl_pct IS NOT NULL"
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception as exc:
+        print(f"  WARNING: ML trade ledger unavailable ({exc}) — using legacy stats")
+        return None
+
+    if not rows:
+        return None
+
+    n_total = len(rows)
+    wins    = sum(1 for _, pct, _ in rows if pct is not None and pct > 0)
+    realized = sum(float(usd or 0.0) for _, _, usd in rows)
+
+    buckets: dict[str, list] = {}
+    for ts_exit, pct, usd in rows:
+        month = str(ts_exit)[:7]          # "YYYY-MM-DD ..." → "YYYY-MM"
+        if len(month) != 7:
+            continue
+        buckets.setdefault(month, []).append((float(pct), float(usd or 0.0)))
+
+    monthly = []
+    for month in sorted(buckets):
+        b = buckets[month]
+        monthly.append({
+            "month":     month,
+            "n":         len(b),
+            "win_rate":  round(sum(1 for pct, _ in b if pct > 0) / len(b) * 100, 1),
+            "avg_pct":   round(sum(pct for pct, _ in b) / len(b), 2),
+            "total_usd": round(sum(usd for _, usd in b), 2),
+        })
+
+    return {
+        "closed_trades": n_total,
+        "win_rate":      round(wins / n_total * 100, 1),
+        "realized_pnl":  round(realized, 2),
+        "monthly":       monthly,
+    }
+
+
 # ── Metrics ────────────────────────────────────────────────────────────
 
 def compute_metrics(perf: dict, db: dict) -> dict:
@@ -748,11 +815,26 @@ def compute_metrics(perf: dict, db: dict) -> dict:
     trades = [d for d in decs if d.get("action", "HOLD").upper() in ("BUY", "SELL")]
     filled = [d for d in trades if d.get("execution_status") == "Filled"]
 
-    # Win rate: realized (closed) positions only — exclude open/unrealized
+    # Win rate / closed count / realized P&L: the reconciled ML ledger is the
+    # single source of truth (see load_ml_trade_stats). The legacy JSON-holdings
+    # computation below is the explicit fallback when that ledger is unreadable
+    # — it counts a different trade universe and its lots decay as the daily
+    # reconciler rewrites them at cost.
+    ml = load_ml_trade_stats()
+
     closed = [h for h in db.get("holdings", [])
               if h.get("sold_date") and h.get("sold_price")]
     wins   = [h for h in closed if h["sold_price"] > h["entry_price"]]
     win_rt = len(wins) / len(closed) * 100 if closed else None
+
+    closed_n   = len(closed)
+    stats_src  = "legacy"
+    monthly    = []
+    if ml:
+        win_rt    = ml["win_rate"]
+        closed_n  = ml["closed_trades"]
+        monthly   = ml["monthly"]
+        stats_src = "ml"
 
     max_dd, peak = 0.0, start_val
     for s in snaps:
@@ -773,7 +855,7 @@ def compute_metrics(perf: dict, db: dict) -> dict:
 
     pnls         = [d["pnl"] for d in decs if d.get("pnl") is not None]
     largest_loss = round(min(pnls), 2) if pnls else 0.0
-    total_pnl    = round(sum(pnls), 2) if pnls else 0.0
+    total_pnl    = ml["realized_pnl"] if ml else (round(sum(pnls), 2) if pnls else 0.0)
 
     return {
         "start_value":       round(start_val, 2),
@@ -795,7 +877,9 @@ def compute_metrics(perf: dict, db: dict) -> dict:
         "total_trades":      len(trades),
         "filled_trades":     len(filled),
         "win_rate":          round(win_rt, 1) if win_rt is not None else None,
-        "closed_trades":     len(closed),
+        "closed_trades":     closed_n,
+        "trade_stats_source": stats_src,
+        "monthly_performance": monthly,
         "max_drawdown":      round(max_dd, 2),
         "sharpe_ratio":      sharpe,
         "largest_loss":      largest_loss,
@@ -1342,18 +1426,25 @@ def compute_portfolio_metrics(ibkr: dict, snaps: list[dict]) -> dict:
     cash_pct = round(cash / nlv * 100.0, 2) if (nlv and cash is not None) else None
     invested_pct = round((nlv - cash) / nlv * 100.0, 2) if (nlv and cash is not None) else None
 
-    # realized P&L (cumulative closed): authoritative from the closed-lot ledger.
-    realized_cum = None
-    try:
-        from kairos_log_db import get_connection
-        from kairos_execute import _realized_pnl_cumulative
-        conn = get_connection()
+    # Realized P&L (cumulative closed): the ML ledger is the source of truth —
+    # same number kairos_execute._realized_pnl_cumulative() now writes into
+    # nlv_snapshots. Read it directly here rather than importing that module,
+    # which drags in ib_insync and would silently fail to the stale snapshot
+    # value on any host without it. Fallbacks, in order: the shared helper (its
+    # own kairos.db lot-sum fallback included), then the last snapshot value.
+    ml_stats = load_ml_trade_stats()
+    realized_cum = ml_stats["realized_pnl"] if ml_stats else None
+    if realized_cum is None:
         try:
-            realized_cum = _realized_pnl_cumulative(conn)
-        finally:
-            conn.close()
-    except Exception:
-        realized_cum = (latest or {}).get("realized_pnl_cum")
+            from kairos_log_db import get_connection
+            from kairos_execute import _realized_pnl_cumulative
+            conn = get_connection()
+            try:
+                realized_cum = _realized_pnl_cumulative(conn)
+            finally:
+                conn.close()
+        except Exception:
+            realized_cum = (latest or {}).get("realized_pnl_cum")
 
     # ── Concentration + best/worst (live positions only) ──────────────
     largest_pct = top5_pct = None
@@ -1389,6 +1480,10 @@ def compute_portfolio_metrics(ibkr: dict, snaps: list[dict]) -> dict:
     if ranked:
         best = max(ranked, key=lambda r: r["pct"])
         worst = min(ranked, key=lambda r: r["pct"])
+    # Breadth is only real when at least one position carried an unrealized P&L.
+    # With IBKR offline nothing is enriched, and "0 ▲ / 0 ▼" next to 59 open
+    # positions is false data — report None so the tile renders "—" instead.
+    have_breadth = (n_profit + n_loss) > 0
     # Blended unrealized return on the open book (distinct from total return,
     # which blends in realized P&L). None until we have positions with basis.
     unrealized_return_pct = (round(open_upnl_sum / open_cost_basis_sum * 100.0, 2)
@@ -1401,23 +1496,56 @@ def compute_portfolio_metrics(ibkr: dict, snaps: list[dict]) -> dict:
             latest_date = datetime.strptime(latest["snapshot_date"], "%Y-%m-%d").date()
         except (ValueError, TypeError, KeyError):
             latest_date = None
-        cur_nlv = latest.get("nlv")
 
-        # Daily: latest vs the immediately prior snapshot.
-        prior = snaps[-2]
-        if cur_nlv and prior.get("nlv"):
+        # Use LIVE IBKR NLV as "current" when connected, so trend metrics reflect
+        # today's real value even if today's snapshot hasn't been written yet
+        # (a missed snapshot used to freeze every trend number against a stale
+        # baseline). Fall back to the latest snapshot when disconnected.
+        from datetime import date as _date
+        today = datetime.now(timezone.utc).astimezone().date()
+        if connected and nlv:
+            cur_nlv = nlv
+            cur_date = today
+            # Baseline = most recent snapshot strictly BEFORE today, so we never
+            # compare live-now against a snapshot already taken today (or a stale
+            # one two days back). If today's snapshot exists it's snaps[-1]; the
+            # correct prior is then snaps[-2]; otherwise it's snaps[-1].
+            prior = _snapshot_on_or_before(snaps, today - timedelta(days=1))
+        else:
+            cur_nlv = latest.get("nlv")
+            cur_date = latest_date
+            prior = snaps[-2]
+
+        # Daily: current vs the prior-day baseline. Snapshots are sparse, so
+        # carry the baseline date — the tile labels the real span rather than
+        # implying one calendar day.
+        if cur_nlv and prior and prior.get("nlv"):
             d_usd = round(cur_nlv - prior["nlv"], 2)
-            daily = {"usd": d_usd, "pct": round(d_usd / prior["nlv"] * 100.0, 2)}
+            daily = {"usd": d_usd, "pct": round(d_usd / prior["nlv"] * 100.0, 2),
+                     "since": prior.get("snapshot_date")}
 
-        # Weekly: latest vs the snapshot on/before 7 calendar days ago.
-        if latest_date and cur_nlv:
-            wk = _snapshot_on_or_before(snaps, latest_date - timedelta(days=7))
-            if wk and wk is not latest and wk.get("nlv"):
+        # Weekly: current vs the snapshot on/before 7 calendar days ago. Two
+        # honesty guards, because a short/sparse history used to make this tile
+        # silently duplicate the daily figure:
+        #   1. the baseline must be >= 5 days older than "now"; and
+        #   2. it must not be the SAME snapshot the daily figure used — a
+        #      weekly number identical to the daily one is not a weekly number.
+        if cur_date and cur_nlv:
+            wk = _snapshot_on_or_before(snaps, cur_date - timedelta(days=7))
+            wk_date = None
+            if wk:
+                try:
+                    wk_date = datetime.strptime(wk["snapshot_date"], "%Y-%m-%d").date()
+                except (ValueError, TypeError, KeyError):
+                    wk_date = None
+            if (wk and wk is not latest and wk is not prior and wk.get("nlv")
+                    and wk_date and (cur_date - wk_date).days >= 5):
                 w_usd = round(cur_nlv - wk["nlv"], 2)
-                weekly = {"usd": w_usd, "pct": round(w_usd / wk["nlv"] * 100.0, 2)}
+                weekly = {"usd": w_usd, "pct": round(w_usd / wk["nlv"] * 100.0, 2),
+                          "since": wk.get("snapshot_date")}
 
             # 30-day return.
-            m = _snapshot_on_or_before(snaps, latest_date - timedelta(days=30))
+            m = _snapshot_on_or_before(snaps, cur_date - timedelta(days=30))
             if m and m is not latest and m.get("nlv"):
                 ret_30d = round((cur_nlv - m["nlv"]) / m["nlv"] * 100.0, 2)
 
@@ -1433,8 +1561,8 @@ def compute_portfolio_metrics(ibkr: dict, snaps: list[dict]) -> dict:
         # Snapshot (now)
         "open_positions": len(positions) if (connected or not latest)
                           else (latest or {}).get("num_positions"),
-        "positions_in_profit": n_profit,
-        "positions_in_loss": n_loss,
+        "positions_in_profit": n_profit if have_breadth else None,
+        "positions_in_loss": n_loss if have_breadth else None,
         "unrealized_return_pct": unrealized_return_pct,
         "nlv": round(nlv, 2) if nlv is not None else None,
         "cash": round(cash, 2) if cash is not None else None,
@@ -2232,6 +2360,22 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     .pm-sub { font-size: 9.5px; color: var(--dim); margin-top: 3px; }
     @media(max-width:1100px) { .pm-grid { grid-template-columns: repeat(3,1fr); } }
     @media(max-width:600px)  { .pm-grid { grid-template-columns: repeat(2,1fr); } }
+    /* ── Monthly performance table ── */
+    .pm-monthly { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+    .pm-monthly th {
+      font-size: 8.5px; letter-spacing: 1.2px; text-transform: uppercase;
+      color: var(--dim); text-align: right; font-weight: 600;
+      padding: 6px 10px; border-bottom: 1px solid var(--border);
+    }
+    .pm-monthly th:first-child, .pm-monthly td:first-child { text-align: left; }
+    .pm-monthly td {
+      font-size: 12px; text-align: right; color: var(--text);
+      padding: 8px 10px; border-bottom: 1px solid var(--border);
+      font-variant-numeric: tabular-nums;
+    }
+    .pm-monthly tr:last-child td { border-bottom: none; }
+    .pm-monthly td.pm-month { color: var(--cyan); font-weight: 600; }
+    .pm-monthly-note { font-size: 9.5px; color: var(--dim); margin-bottom: 16px; }
     /* ── Cards ── */
     .card {
       background: var(--surface);
@@ -2545,6 +2689,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
   <div class="pm-grid" id="pm-snapshot"></div>
   <div class="pm-subhdr">Trends</div>
   <div class="pm-grid" id="pm-trends"></div>
+  <div class="pm-subhdr">Monthly Performance</div>
+  <div id="pm-monthly"></div>
 </div>
 
 <!-- ── Portfolio Value Chart ── -->
@@ -2748,7 +2894,13 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     {
       label: "Win Rate",
       val:   () => M.win_rate != null ? fmtN(M.win_rate, 1) + "%" : "\u2014",
-      sub:   () => (M.closed_trades || 0) + " closed trade" + ((M.closed_trades || 0) !== 1 ? "s" : "") + (M.win_rate == null ? " (no exits yet)" : ""),
+      sub:   () => {
+        const n = M.closed_trades || 0;
+        if (M.win_rate == null) return n + " closed trades (no exits yet)";
+        return M.trade_stats_source === "ml"
+          ? n + " attributable closed trades (ML ledger)"
+          : n + " closed trade" + (n !== 1 ? "s" : "") + " (legacy lots — ML ledger unavailable)";
+      },
       color: () => M.win_rate != null && M.win_rate >= 50 ? "green" : M.win_rate != null && M.win_rate > 0 ? "amber" : "white",
       accent:() => M.win_rate != null && M.win_rate >= 50 ? "c-green" : M.win_rate != null && M.win_rate > 0 ? "c-amber" : "c-white",
     },
@@ -2836,13 +2988,17 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     const worst = P.worst ? `${P.worst.ticker} <span class="${cls(P.worst.pct)}">${pctSig(P.worst.pct)}</span>` : "—";
     const snap = [
       tile("Open Positions", P.open_positions != null ? String(P.open_positions) : "—", src),
+      // Breadth and blended open return both need live position marks. With
+      // IBKR offline they are unknowable — show a dash plus the staleness
+      // source rather than "0 up / 0 down", which reads as real data.
       tile("In Profit / Loss",
-           `<span class="pnl-pos">${P.positions_in_profit != null ? P.positions_in_profit : "—"} \u25B2</span>`
-           + ` / <span class="pnl-neg">${P.positions_in_loss != null ? P.positions_in_loss : "—"} \u25BC</span>`,
-           "Open book breadth"),
+           (P.positions_in_profit == null || P.positions_in_loss == null) ? "—"
+             : `<span class="pnl-pos">${P.positions_in_profit} \u25B2</span>`
+               + ` / <span class="pnl-neg">${P.positions_in_loss} \u25BC</span>`,
+           P.positions_in_profit == null ? "Needs live marks · " + src : "Open book breadth"),
       tile("Unrealized Return",
            `<span class="${cls(P.unrealized_return_pct)}">${pctSig(P.unrealized_return_pct)}</span>`,
-           "Blended, open book"),
+           P.unrealized_return_pct == null ? "Needs live marks · " + src : "Blended, open book"),
       tile("Invested", P.invested_pct != null ? fmtN(P.invested_pct, 2) + "%" : "—", "of NLV"),
       tile("Unrealized P&L", `<span class="${cls(P.unrealized_pnl)}">${moneySig(P.unrealized_pnl)}</span>`, "Open positions"),
       tile("Realized P&L", `<span class="${cls(P.realized_pnl_cum)}">${moneySig(P.realized_pnl_cum)}</span>`, "Cumulative, closed"),
@@ -2854,14 +3010,18 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     document.getElementById("pm-snapshot").innerHTML = snap.join("");
 
     // ── Trends (— until >=2 days of snapshots) ──
+    // Snapshots are sparse, so every trend tile names the baseline date it
+    // actually measured from. Weekly renders "—" unless a distinct baseline
+    // ≥5 days back exists — it must never echo the daily figure.
     const dd  = P.daily, wk = P.weekly;
-    const trendTile = (label, t, sub) => t
+    const trendTile = (label, t, empty) => t
       ? tile(label, `<span class="${cls(t.usd)}">${moneySig(t.usd)}</span>`,
-             `<span class="${cls(t.pct)}">${pctSig(t.pct)}</span>` + (sub ? " · " + sub : ""))
-      : tile(label, "—", "Needs ≥2 days");
+             `<span class="${cls(t.pct)}">${pctSig(t.pct)}</span>`
+             + (t.since ? " · since " + t.since : ""))
+      : tile(label, "—", empty || "Needs ≥2 days");
     const trends = [
       trendTile("Daily P&L", dd),
-      trendTile("Weekly P&L", wk),
+      trendTile("Weekly P&L", wk, "No baseline ≥5 days back"),
       tile("Drawdown from Peak",
            P.drawdown_pct != null ? `<span class="${cls(P.drawdown_pct)}">${pctSig(P.drawdown_pct)}</span>` : "—",
            P.drawdown_pct != null ? "Current vs peak NLV" : "Needs ≥2 days"),
@@ -2871,6 +3031,46 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       tile("History", String(P.snapshot_days || 0), "day" + ((P.snapshot_days||0) !== 1 ? "s" : "") + " of snapshots"),
     ];
     document.getElementById("pm-trends").innerHTML = trends.join("");
+
+    // ── Monthly performance (ML ledger) ──
+    // The blended since-inception win rate hides the trend; one row per month
+    // shows it. Sourced from the same reconciled ledger as the Win Rate tile.
+    (function renderMonthly() {
+      const wrap = document.getElementById("pm-monthly");
+      if (!wrap) return;
+      const rows = (DATA.metrics && DATA.metrics.monthly_performance) || [];
+      if (!rows.length) {
+        wrap.innerHTML = `<div class="pm-monthly-note">No closed trades in the ML ledger yet</div>`;
+        return;
+      }
+      const monthLabel = (m) => {
+        const parts = String(m).split("-");
+        const names = ["Jan","Feb","Mar","Apr","May","Jun",
+                       "Jul","Aug","Sep","Oct","Nov","Dec"];
+        const idx = parseInt(parts[1], 10) - 1;
+        return (names[idx] || parts[1]) + " " + parts[0];
+      };
+      const body = rows.map(r => {
+        const wrCls  = r.win_rate  >= 50 ? "pnl-pos" : (r.win_rate  < 40 ? "pnl-neg" : "");
+        const avgCls = r.avg_pct   == null ? "" : (r.avg_pct   >= 0 ? "pnl-pos" : "pnl-neg");
+        const usdCls = r.total_usd == null ? "" : (r.total_usd >= 0 ? "pnl-pos" : "pnl-neg");
+        return `<tr>
+          <td class="pm-month">${monthLabel(r.month)}</td>
+          <td>${r.n}</td>
+          <td class="${wrCls}">${fmtN(r.win_rate, 1)}%</td>
+          <td class="${avgCls}">${fmtSign(r.avg_pct, 2)}%</td>
+          <td class="${usdCls}">${moneySig(r.total_usd)}</td>
+        </tr>`;
+      }).join("");
+      wrap.innerHTML = `
+        <table class="pm-monthly">
+          <thead><tr>
+            <th>Month</th><th>Trades</th><th>Win %</th><th>Avg %</th><th>Realized $</th>
+          </tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+        <div class="pm-monthly-note">Attributable closed trades, by exit month (ML ledger)</div>`;
+    })();
   })();
 
   // ── Realized-trade aggregation (shared) ────────────────────────────

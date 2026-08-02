@@ -1649,13 +1649,40 @@ def reconcile_positions_against_broker(dry_run: bool = True) -> dict:
 # ── NLV snapshots (daily account-value time series) ─────────────────
 
 def _realized_pnl_cumulative(conn) -> float:
-    """Cumulative realized P&L from kairos.db closed lots.
+    """Cumulative realized P&L — single source of truth: the ML trade ledger.
 
-    Sums (sold_price - entry_price) * quantity over every closed holding lot
-    that has a known exit price. RECON-merged lots (sold at their own cost)
-    contribute ~0; RECON-phantom lots (sold_price NULL, exit unrecorded) are
-    excluded rather than counted as a fabricated gain/loss.
+    PRIMARY: SUM(pnl_dollar) over closed rows in kairos_ml_outcomes.db
+    (trade_outcomes), opened READ-ONLY so this can never lock the ML DB against
+    the writers in kairos_ml_outcomes.py. That ledger is the reconciled record
+    of every attributable round trip, and each row's P&L is frozen at exit.
+
+    FALLBACK (ML DB missing / locked / malformed): the legacy kairos.db lot sum
+    of (sold_price - entry_price) * quantity over closed holdings, via the
+    `conn` argument. This path is UNRELIABLE and exists only so callers such as
+    write_nlv_snapshot never crash: the daily position reconciler rewrites and
+    merges closed lots AT BROKER COST, so those lots contribute ~$0 and the sum
+    silently SHRINKS over time (observed: nlv_snapshots.realized_pnl_cum fell
+    34,956 on 2026-07-14 to 14,499 on 2026-07-29 while real P&L rose). Treat a
+    fallback value as a floor, not a measurement.
     """
+    ml_db = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
+    if os.path.exists(ml_db):
+        try:
+            import sqlite3
+            ml = sqlite3.connect(f"file:{ml_db}?mode=ro", uri=True, timeout=2)
+            try:
+                ml.execute("PRAGMA busy_timeout = 2000")
+                row = ml.execute(
+                    "SELECT COALESCE(SUM(pnl_dollar), 0.0) FROM trade_outcomes "
+                    "WHERE timestamp_exit IS NOT NULL AND pnl_dollar IS NOT NULL"
+                ).fetchone()
+            finally:
+                ml.close()
+            return round(float(row[0] or 0.0), 2)
+        except Exception as exc:
+            print(f"  _realized_pnl_cumulative: ML ledger unavailable ({exc}) "
+                  f"— falling back to kairos.db closed lots (understated)")
+
     row = conn.execute(
         "SELECT COALESCE(SUM((sold_price - entry_price) * quantity), 0.0) AS realized "
         "FROM holdings "
@@ -1663,7 +1690,7 @@ def _realized_pnl_cumulative(conn) -> float:
     ).fetchone()
     try:
         return round(float(row["realized"] or 0.0), 2)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, IndexError, KeyError):
         return 0.0
 
 
@@ -1687,8 +1714,9 @@ def write_nlv_snapshot() -> dict | None:
     Connects READ-ONLY on a dedicated clientId=9 (distinct from 6/7/8), pulls
     NetLiquidation / TotalCashValue / UnrealizedPnL and counts open STK
     positions, and UPSERTs one row keyed on TODAY's ET date — so re-running the
-    same day overwrites rather than duplicates. realized_pnl_cum comes from the
-    kairos.db closed-lot ledger. Returns the written row, or None on failure.
+    same day overwrites rather than duplicates. realized_pnl_cum comes from
+    _realized_pnl_cumulative() — the ML trade ledger, with the kairos.db
+    closed-lot sum only as a fallback. Returns the written row, or None on failure.
     """
     from zoneinfo import ZoneInfo
     from kairos_log_db import get_connection, init_db
