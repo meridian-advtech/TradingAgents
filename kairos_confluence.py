@@ -173,9 +173,23 @@ def compute_confluence(
     points_table = config["signal_points"]
     tiers = config["tiers"]
 
+    # Defense-in-depth: exclude HARD-paused signals from confluence entirely,
+    # even if a hard tag reaches here via some path (the generation chokepoint
+    # already strips them from the summary, but confluence must not credit a
+    # genuinely-cut signal under any circumstance). SOFT-paused signals are
+    # intentionally allowed to score — "never fires alone" still lets them
+    # confirm another healthy signal's trade, which is the point of soft mode.
+    try:
+        from kairos_signals import signal_pause_mode
+        _pm = signal_pause_mode
+    except Exception:
+        _pm = lambda s: None
+
     signals_detail = {}
     for tag in signal_tags:
         tag = tag.strip().upper()
+        if _pm(tag) == "hard":
+            continue
         if tag in points_table:
             signals_detail[tag] = points_table[tag]
         elif tag.startswith("HOT"):

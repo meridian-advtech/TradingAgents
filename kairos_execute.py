@@ -829,6 +829,23 @@ def _derive_entry_signals(trade: dict, ticker: str) -> list[str]:
         if "HOT-REVERSION" not in tags and "REVERSION" in rationale:
             _add(["HOT-REVERSION"])
 
+    # HARD-pause attribution strip (point 4 of the pause-mode design). A
+    # hard-killed signal must never be written to trade_outcomes.signals_fired,
+    # so it can't distort the dashboard or the Arbiter's per-signal analysis
+    # going forward. This is FORWARD-ONLY (existing rows are left intact) and
+    # strips ONLY tags whose mode is exactly 'hard' — co-firing healthy signals
+    # and soft-paused confirmers are preserved, so a confluence trade driven by
+    # a healthy signal keeps its honest attribution.
+    try:
+        from kairos_signals import signal_pause_mode
+        stripped = [t for t in tags if signal_pause_mode(t) == "hard"]
+        if stripped:
+            tags = [t for t in tags if signal_pause_mode(t) != "hard"]
+            print(f"    [PAUSED:hard] {ticker}: excluded {', '.join(stripped)} "
+                  f"from ML attribution (kept: {tags or 'none'})")
+    except Exception:
+        pass
+
     return tags
 
 

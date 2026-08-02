@@ -43,14 +43,53 @@ def get_paused_signals() -> set:
     restart. Returns an empty set on any read/parse failure so signal flow is
     never blocked by a bad config.
     """
+    return set(get_paused_signal_modes().keys())
+
+
+def get_paused_signal_modes() -> dict:
+    """Return {SIGNAL_NAME: mode} for all paused signals, mode in {'soft','hard'}.
+
+    Backward-compatible with two config shapes for `paused_signals`:
+      - LEGACY list form: ["HOT-CONGRESS", ...]  -> every entry defaults to
+        'hard' (a bare pause historically meant "stop it", and hard is the
+        safer default: fully off rather than half-off).
+      - dict form: {"HOT-OPTIONS": "soft", "HOT-CONGRESS": "hard"} -> explicit.
+        Any unrecognized mode value falls back to 'hard'.
+
+    Read fresh on every call so a config edit takes effect on the next
+    screening cycle without a restart. Returns {} on any read/parse failure so
+    signal flow is never blocked by a bad config.
+    """
     config_file = os.path.join(SCRIPT_DIR, "kairos_config.json")
     try:
         with open(config_file) as f:
             cfg = json.load(f)
         raw = cfg.get("paused_signals", []) or []
-        return {str(s).strip().upper() for s in raw if str(s).strip()}
     except (json.JSONDecodeError, IOError):
-        return set()
+        return {}
+
+    modes: dict = {}
+    if isinstance(raw, dict):
+        for name, mode in raw.items():
+            key = str(name).strip().upper()
+            if not key:
+                continue
+            m = str(mode).strip().lower()
+            modes[key] = m if m in ("soft", "hard") else "hard"
+    else:  # legacy list form
+        for name in raw:
+            key = str(name).strip().upper()
+            if key:
+                modes[key] = "hard"
+    return modes
+
+
+def signal_pause_mode(signal: str) -> str | None:
+    """Single resolver used by every intervention point (generation, confluence,
+    catalyst engine, ML attribution). Returns 'soft', 'hard', or None (active)."""
+    if not signal:
+        return None
+    return get_paused_signal_modes().get(str(signal).strip().upper())
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -562,23 +601,47 @@ def run_all_signals(
     # signal_tags / kairos_signal_summary.json, so a paused signal is treated
     # exactly as if it never fired everywhere downstream. Generation (the five
     # detectors above) is untouched — this only filters what they produced.
-    paused = get_paused_signals()
-    if paused:
+    # Mode-aware suppression (soft vs hard):
+    #   HARD — stripped everywhere: no promotion AND removed from the summary
+    #     that confluence/executor read, so it never participates or is
+    #     attributed. A signal you've genuinely cut.
+    #   SOFT — cannot PROMOTE on its own (won't upgrade COLD/WARM here), but is
+    #     RETAINED in signal_tags so confluence can still use it as a confirmer
+    #     of another healthy signal's trade. "Never fires alone."
+    # `promotable_tags` drives the COLD/WARM upgrade below; `signal_tags` is what
+    # gets persisted to kairos_signal_summary.json for confluence/executor.
+    pause_modes = get_paused_signal_modes()
+    promotable_tags: dict = {}
+    if pause_modes:
         for ticker in list(signal_tags.keys()):
-            kept = []
+            promote_kept, retain_kept = [], []
             for tag in signal_tags[ticker]:
-                if tag.strip().upper() in paused:
-                    print(f"  [PAUSED] {tag} suppressed for {ticker} (paused_signals)")
+                mode = pause_modes.get(tag.strip().upper())
+                if mode == "hard":
+                    print(f"  [PAUSED:hard] {tag} fully suppressed for {ticker}")
+                    # excluded from both promotion and retention
+                elif mode == "soft":
+                    print(f"  [PAUSED:soft] {tag} demoted to confirm-only for {ticker}")
+                    retain_kept.append(tag)          # confluence may still use it
+                    # NOT added to promote_kept -> cannot upgrade on its own
                 else:
-                    kept.append(tag)
-            if kept:
-                signal_tags[ticker] = kept
+                    promote_kept.append(tag)
+                    retain_kept.append(tag)
+            if retain_kept:
+                signal_tags[ticker] = retain_kept
             else:
                 del signal_tags[ticker]
+            if promote_kept:
+                promotable_tags[ticker] = promote_kept
+    else:
+        promotable_tags = {t: list(tags) for t, tags in signal_tags.items()}
 
     # ── Upgrade scores for any ticker that fired a signal ────────────
+    # Promotion uses promotable_tags: soft-paused signals are absent here, so
+    # they cannot upgrade a COLD/WARM ticker on their own (but they remain in
+    # signal_tags for confluence). Hard-paused signals are absent from both.
     upgraded = 0
-    for ticker, tags in signal_tags.items():
+    for ticker, tags in promotable_tags.items():
         current = all_scores.get(ticker, "COLD")
         if current == "COLD":
             # Promote to the first signal tag (e.g. HOT-EARNINGS)

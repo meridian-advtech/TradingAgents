@@ -541,6 +541,31 @@ def detect_catalyst_signals(
 
     # Long-only invariant guard: drop anything that isn't a clean C/P buy.
     clean = [s for s in signals if s.get("right") in ("C", "P")]
+
+    # HARD-pause block (point 3 of the pause-mode design). This engine is the
+    # route that let options trades fire while HOT-OPTIONS was "paused" (the
+    # generation chokepoint in kairos_signals.py never saw it). If HOT-OPTIONS
+    # or HOT-CATALYST is HARD-paused, drop the corresponding candidates here so
+    # a hard-killed signal genuinely cannot produce a trade. SOFT does NOT block
+    # generation of a confirmer-style flow signal — only hard cuts the engine.
+    try:
+        from kairos_signals import signal_pause_mode
+        blocked = {sig for sig in ("HOT-OPTIONS", "HOT-CATALYST")
+                   if signal_pause_mode(sig) == "hard"}
+    except Exception:
+        blocked = set()
+    if blocked:
+        before = len(clean)
+        def _sig_type(s: dict) -> str:
+            # SETUP3 follows unusual options flow -> HOT-OPTIONS; the other
+            # setups are catalyst-driven -> HOT-CATALYST.
+            return "HOT-OPTIONS" if s.get("setup") == "SETUP3" else "HOT-CATALYST"
+        clean = [s for s in clean if _sig_type(s) not in blocked]
+        dropped = before - len(clean)
+        if dropped:
+            print(f"  [PAUSED:hard] catalyst engine dropped {dropped} candidate(s) "
+                  f"for blocked signal(s): {', '.join(sorted(blocked))}")
+
     return clean
 
 
