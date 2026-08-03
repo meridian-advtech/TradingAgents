@@ -29,6 +29,23 @@ take the 10-K and add the quarters filed since. Stock fields (cash,
 total_debt, equity, shares_diluted) are point-in-time balances and need no
 such treatment. Do NOT compute ratios off this module until TTM lands.
 
+COVERAGE (first full sync, 2026-08-03): 561 of 582 operating companies =
+96.4%; 928,139 facts. The 27 ETFs in the universe are excluded — a fund files
+no XBRL company facts, so they are a structural absence, not a gap. The 21
+operating-company misses fall into four groups, none of which is a defect
+here:
+  • foreign private issuers filing 20-F under IFRS, not us-gaap — GRAB, NU,
+    ONON, SPOT, TSM, TTM. Recoverable by reading the `ifrs-full` taxonomy;
+    deliberately not built until the diagnostic says fundamentals earn it.
+  • acquired / taken private / renamed, so no current filer — COUP, HZNP,
+    MRO, PXD, SQ.
+  • successor entities whose new CIK has no us-gaap history yet — XOM maps to
+    CIK 2115436 "ExxonMobil Holdings Corp" rather than the long-standing
+    0000034088.
+  • simply absent from SEC's company_tickers.json — AEP, BK, HOLX, MMC, WBA.
+    company_tickers_exchange.json recovers only AEP of these, which is not
+    worth a second fetch; revisit if the diagnostic needs full breadth.
+
 Usage:
     python kairos_fundamentals.py --coverage         # universe coverage report
     python kairos_fundamentals.py --ticker AAPL      # inspect one name
