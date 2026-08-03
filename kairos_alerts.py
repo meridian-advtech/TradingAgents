@@ -5,9 +5,16 @@ Centralizes alert emission so all pipeline components use the same
 plumbing: kairos_run.py (timeout alerts), kairos_execute.py (trade
 alerts), and any future alerting needs.
 
-Uses the Slack Bot API via slack_sdk.  Config in kairos_config.json:
+Uses the Slack Bot API via slack_sdk.
 
-    slack.bot_token          — Bot User OAuth Token (xoxb-...)
+The bot token comes from the SLACK_BOT_TOKEN environment variable (set it in
+~/.zshrc or the launchd plist). It must NEVER be written to kairos_config.json:
+that file is tracked in git, and a live token committed there on 2026-08-02 had
+to be scrubbed from history. slack.bot_token remains only as a legacy fallback
+and is expected to stay "".
+
+Channel IDs (not secrets) stay in kairos_config.json:
+
     slack.channels.alerts    — channel ID for trade alerts, timeouts
     slack.channels.reports   — channel ID for daily performance
     slack.channels.commands  — channel ID for inbound commands
@@ -34,7 +41,20 @@ MONITOR_LOG = os.path.join(SCRIPT_DIR, "kairos_monitor.log")
 # ── Config ────────────────────────────────────────────────────────────
 
 def _load_slack_config() -> dict:
-    """Load Slack config from kairos_config.json."""
+    """Slack config: token from the ENVIRONMENT, channel IDs from config.
+
+    Resolution order for the token is env-first and deliberate:
+      1. SLACK_BOT_TOKEN — the only supported home for a live token.
+      2. kairos_config.json slack.bot_token — legacy fallback, expected "".
+
+    kairos_config.json is tracked in git, so any live value placed in it is one
+    `git commit` away from being published; that happened on 2026-08-02 and cost
+    a history rewrite. Keeping the field blank and the secret in the environment
+    makes the accident structurally impossible rather than merely discouraged.
+
+    This is the single chokepoint every Slack path resolves through
+    (kairos_alerts, kairos_axis_weights, kairos_slack_cards).
+    """
     config_file = os.path.join(SCRIPT_DIR, "kairos_config.json")
     defaults = {
         "bot_token": "",
@@ -54,16 +74,36 @@ def _load_slack_config() -> dict:
             slack = cfg.get("slack", {})
             if slack.get("bot_token"):
                 defaults["bot_token"] = slack["bot_token"]
+                print("  WARNING: kairos_config.json holds a slack.bot_token — "
+                      "that file is tracked in git. Move it to SLACK_BOT_TOKEN "
+                      "and reset the field to \"\".")
             if slack.get("channels"):
                 defaults["channels"].update(slack["channels"])
         except (json.JSONDecodeError, IOError):
             pass
-    # Environment overrides config so the Slack bot token can stay out of the
-    # tracked kairos_config.json (provided via launchd plist / ~/.zshrc).
-    _env_token = os.environ.get("SLACK_BOT_TOKEN", "").strip()
-    if _env_token:
-        defaults["bot_token"] = _env_token
+    # Env wins outright: a token in the environment supersedes anything the
+    # tracked config happens to carry.
+    env_token = os.environ.get("SLACK_BOT_TOKEN", "").strip()
+    if env_token:
+        defaults["bot_token"] = env_token
     return defaults
+
+
+def _token_fingerprint(token: str) -> str:
+    """Non-reconstructable hint that a token is present — for operator output.
+
+    Never returns enough of the secret to be useful if it lands in a log: the
+    scheme prefix, a length, and the last 4 characters only.
+    """
+    if not token:
+        return "(none)"
+    scheme = token.split("-", 1)[0] if "-" in token else "token"
+    return f"{scheme}-…{token[-4:]} (len {len(token)})"
+
+
+_NO_TOKEN_MSG = ("Set SLACK_BOT_TOKEN in the environment (~/.zshrc or the "
+                 "launchd plist). Do NOT put it in kairos_config.json; that "
+                 "file is tracked in git.")
 
 
 # ── Low-level helpers ─────────────────────────────────────────────────
@@ -90,7 +130,7 @@ def post_message(
 
     token = cfg.get("bot_token", "")
     if not token:
-        print(f"  Slack skipped — no bot_token in kairos_config.json")
+        print(f"  Slack skipped — no bot token. {_NO_TOKEN_MSG}")
         return False
 
     channels_map = cfg.get("channels", {})
@@ -625,10 +665,12 @@ def _cli_test():
     print("=" * 60)
 
     if not token:
-        print("  ERROR: No bot_token in kairos_config.json")
+        print(f"  ERROR: no bot token. {_NO_TOKEN_MSG}")
         sys.exit(1)
 
-    print(f"  Bot token: {token[:15]}...")
+    src = "SLACK_BOT_TOKEN (env)" if os.environ.get("SLACK_BOT_TOKEN", "").strip() \
+          else "kairos_config.json (LEGACY — move it to the environment)"
+    print(f"  Bot token: {_token_fingerprint(token)} from {src}")
     print(f"  Channels:")
     for key, cid in cfg.get("channels", {}).items():
         print(f"    {key:<10} → {cid}")
@@ -669,7 +711,7 @@ def _cli_setup():
     token = cfg.get("bot_token", "")
 
     if not token:
-        print("  ERROR: No bot_token in kairos_config.json")
+        print(f"  ERROR: no bot token. {_NO_TOKEN_MSG}")
         sys.exit(1)
 
     from slack_sdk import WebClient

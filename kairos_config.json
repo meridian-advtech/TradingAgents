@@ -85,6 +85,7 @@
   },
   "slack": {
     "bot_token": "",
+    "_bot_token_warning": "NEVER put a live token here. This file is tracked in git; a live xoxb- token committed to this field on 2026-08-02 had to be scrubbed from history with git filter-repo. The token is read from the SLACK_BOT_TOKEN environment variable (~/.zshrc or the launchd plist); this field is a legacy fallback that must stay \"\". See SECURITY.md.",
     "channels": {
       "alerts": "C0AQA4ZH0P2",
       "reports": "C0AP9F2P10T",

@@ -580,7 +580,8 @@ def main() -> None:
 
     token = get_bot_token()
     if not token:
-        log.error("Missing bot token — set SLACK_BOT_TOKEN or slack.bot_token.")
+        log.error("Missing bot token — set SLACK_BOT_TOKEN in the environment "
+                  "(never kairos_config.json; it is tracked in git).")
         sys.exit(1)
 
     channel_id = get_arbiter_channel_id()

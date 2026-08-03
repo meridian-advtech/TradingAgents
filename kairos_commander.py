@@ -1000,8 +1000,9 @@ def main():
 
     token = get_bot_token()
     if not token:
-        log.error("Missing bot token — set SLACK_BOT_TOKEN or "
-                  "slack.bot_token in kairos_config.json.")
+        log.error("Missing bot token — set SLACK_BOT_TOKEN in the "
+                  "environment (~/.zshrc or the launchd plist). Never put it "
+                  "in kairos_config.json; that file is tracked in git.")
         sys.exit(1)
 
     channel_id = get_commands_channel_id()
