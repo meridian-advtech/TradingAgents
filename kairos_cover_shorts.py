@@ -332,8 +332,11 @@ def main() -> int:
             print("  STILL SHORT:")
             for r in remaining:
                 print(f"    {r['ticker']}: -{r['qty_short']}")
-            print("  Re-run to cover the remainder (unfilled limits expire at "
-                  "the close).")
+            print("  Unfilled limits stay WORKING until the close. A plain "
+                  "re-run will SKIP them\n  rather than place a duplicate "
+                  "(that is what --replace is for):")
+            print("    kairos_cover_shorts.py --execute --replace   "
+                  "# cancel + re-price at market")
         else:
             print("  ✅ All short positions flat.")
         return 0
