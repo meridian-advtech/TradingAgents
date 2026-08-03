@@ -718,8 +718,14 @@ def query_db() -> dict:
 
 # ── ML trade ledger (single source of truth for closed-trade stats) ────
 
-def load_ml_trade_stats() -> dict | None:
+def load_ml_trade_stats(since: str | None = None) -> dict | None:
     """Closed-trade stats from the reconciled ML ledger (kairos_ml_outcomes.db).
+
+    `since` ("YYYY-MM-DD") restricts the set to trades that EXITED on or after
+    that date — used for the current-system era view. Stored timestamps come in
+    two shapes ("2026-05-27 13:37:55 UTC" and "2026-07-31T17:36:09Z"); both lead
+    with an ISO date, so a lexicographic compare on the prefix is exact.
+    Filtering here is display-only — no row is ever hidden from the DB itself.
 
     This is the authoritative trade universe: one row per attributable round
     trip, P&L frozen at exit. The legacy kairos.db holdings lots are NOT — the
@@ -748,6 +754,9 @@ def load_ml_trade_stats() -> dict | None:
     except Exception as exc:
         print(f"  WARNING: ML trade ledger unavailable ({exc}) — using legacy stats")
         return None
+
+    if since:
+        rows = [r for r in rows if str(r[0])[:10] >= since]
 
     if not rows:
         return None
@@ -779,6 +788,125 @@ def load_ml_trade_stats() -> dict | None:
         "win_rate":      round(wins / n_total * 100, 1),
         "realized_pnl":  round(realized, 2),
         "monthly":       monthly,
+    }
+
+
+# ── Era baseline (measure the CURRENT system, keep full history) ───────
+
+def load_performance_config() -> dict:
+    """The `performance` block of kairos_config.json: {baseline_date, baseline_note}.
+
+    baseline_date marks where the current system begins — everything before it
+    ran with known critical bugs (zero-qty sizing, unlogged trades, the exit
+    ratchet), so an inception-blended headline measures software that no longer
+    exists. It lives in config precisely because it MOVES: when the next
+    material change ships, J re-points it and every era figure follows.
+
+    Returns {} when the block is absent or unreadable, which makes every era
+    metric None and leaves the dashboard on its inception-only behavior.
+    """
+    try:
+        with open(os.path.join(SCRIPT_DIR, "kairos_config.json")) as f:
+            block = json.load(f).get("performance") or {}
+    except (json.JSONDecodeError, IOError) as exc:
+        print(f"  WARNING: performance config unreadable ({exc}) — era metrics off")
+        return {}
+    date = str(block.get("baseline_date") or "").strip()
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        if date:
+            print(f"  WARNING: bad performance.baseline_date {date!r} — era metrics off")
+        return {}
+    return {"baseline_date": date,
+            "baseline_note": str(block.get("baseline_note") or "").strip()}
+
+
+def _era_baseline_value(baseline_date: str, perf_snaps: list[dict]) -> tuple[float, str] | None:
+    """(value, actual_date) for the era baseline, taken from the PERF series.
+
+    SAME-SERIES BY CONSTRUCTION: both ends of the era return come from
+    kairos_performance.json — this baseline and the current value the inception
+    hero tiles already use. An earlier revision took the baseline from
+    nlv_snapshots and the current value from PERF; those two series are captured
+    at different times of day and disagreed by ~0.23% on 2026-07-01
+    ($1,082,667 vs $1,080,230), so the era return carried a phantom delta that
+    was an artifact of the source mix rather than a real move. nlv_snapshots
+    remains the source for the metrics panel and history — only these two
+    endpoints changed.
+
+    The series is dense (daily), so "nearest" (by absolute day distance, earlier
+    wins a tie) only matters for a baseline outside its range. Returns None when
+    no usable row exists, which drops the caller back to inception.
+    """
+    try:
+        target = datetime.strptime(baseline_date, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+    best = None
+    for snap in perf_snaps:
+        value = snap.get("value")
+        if not value or value <= 0:
+            continue
+        try:
+            d = datetime.strptime(str(snap.get("date"))[:10], "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            continue
+        dist = abs((d - target).days)
+        if best is None or dist < best[0]:
+            best = (dist, float(value), str(snap.get("date"))[:10])
+    return (best[1], best[2]) if best else None
+
+
+def compute_era_metrics(perf: dict, curr_val: float) -> dict | None:
+    """Metrics for the current-system era only — the same shape as the headline
+    figures, measured from performance.baseline_date instead of inception.
+
+    Returns None (callers fall back to inception) when no baseline is configured
+    or no usable baseline value exists. Purely a presentation-layer view: it
+    reads the same snapshot series and ML ledger the inception numbers read, and
+    writes nothing anywhere.
+    """
+    cfg = load_performance_config()
+    baseline_date = cfg.get("baseline_date")
+    if not baseline_date or not curr_val:
+        return None
+
+    baseline = _era_baseline_value(baseline_date, perf.get("snapshots", []))
+    if not baseline:
+        print(f"  WARNING: no PERF snapshot near {baseline_date} — era metrics off")
+        return None
+    base_val, base_actual = baseline
+
+    base_dt  = datetime.strptime(base_actual, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    days     = max(1, (datetime.now(timezone.utc) - base_dt).days)
+    years    = days / 365.25
+    total_ret = (curr_val - base_val) / base_val * 100
+
+    # Same >=7-day guard the inception figure uses: annualizing a handful of
+    # days extrapolates noise into a headline number.
+    annualized = None
+    if days >= 7 and curr_val > 0 and base_val > 0:
+        annualized = ((curr_val / base_val) ** (1.0 / years) - 1.0) * 100
+
+    ml = load_ml_trade_stats(since=baseline_date)
+
+    return {
+        "baseline_date":     baseline_date,
+        "baseline_actual":   base_actual,     # PERF row actually used
+        "baseline_note":     cfg.get("baseline_note", ""),
+        "baseline_value":    round(base_val, 2),
+        "baseline_source":   "PERF series, same-source",
+        "days":              days,
+        "total_return_pct":  round(total_ret, 3),
+        "total_return_usd":  round(curr_val - base_val, 2),
+        "annualized_return": round(annualized, 2) if annualized is not None else None,
+        "vs_advisor":        round(annualized - ADVISOR_RATE * 100, 2) if annualized is not None else None,
+        "vs_target":         round(annualized - TARGET_RATE  * 100, 2) if annualized is not None else None,
+        "win_rate":          ml["win_rate"] if ml else None,
+        "closed_trades":     ml["closed_trades"] if ml else None,
+        "realized_pnl":      ml["realized_pnl"] if ml else None,
     }
 
 
@@ -880,6 +1008,10 @@ def compute_metrics(perf: dict, db: dict) -> dict:
         "closed_trades":     closed_n,
         "trade_stats_source": stats_src,
         "monthly_performance": monthly,
+        # Current-system era view (None → the UI shows inception only). The
+        # monthly table above deliberately stays full-history: the era answers
+        # "what is this system doing now", the months show how it got there.
+        "era":               compute_era_metrics(perf, curr_val),
         "max_drawdown":      round(max_dd, 2),
         "sharpe_ratio":      sharpe,
         "largest_loss":      largest_loss,
@@ -2351,6 +2483,13 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     .mval.purple { color: var(--purple); }
     .mval.white  { color: var(--text); }
     .msub { font-size: 10px; color: var(--dim); }
+    .era-note {
+      font-size: 10px; color: var(--dim); line-height: 1.5;
+      border-left: 2px solid var(--cyan); padding: 6px 0 6px 10px;
+      margin: 0 0 14px;
+    }
+    .era-note b { color: var(--text); font-weight: 600; }
+    .era-note.hidden { display: none; }
     /* ── Portfolio metrics panel ── */
     .pm-subhdr { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin: 4px 0 12px; }
     .pm-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 16px; }
@@ -2680,6 +2819,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 <div class="sys-health" id="sys-health"></div>
 
 <!-- ── Metric Cards ── -->
+<div class="era-note" id="era-note"></div>
 <div class="metrics-grid" id="metrics-grid"></div>
 
 <!-- ── Portfolio Metrics (curated) ── -->
@@ -2846,36 +2986,87 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
   const fmtPct  = (n, d=2) => n == null ? "\u2014" : fmtSign(n, d) + "%";
   const colClass = (n) => n == null ? "white" : n > 0 ? "green" : n < 0 ? "red" : "white";
   const accentOf = (n) => n == null ? "c-white" : n > 0 ? "c-green" : n < 0 ? "c-red" : "c-white";
+  const usdSig  = (n) => n == null ? "\u2014" : (n >= 0 ? "+$" : "-$") + fmtN(Math.abs(n), 0);
+
+  // ── Era view ───────────────────────────────────────────────────────
+  // The headline figures measure the CURRENT system — from the configured
+  // baseline date forward. Inception is never hidden: it rides along in the
+  // subtitle of every era tile. When no era is configured (or no baseline
+  // snapshot exists) E is null and every tile falls back to inception, which
+  // is exactly the pre-era behavior.
+  const E     = M.era || null;
+  const eraOn = !!E;
+  const eraTag = eraOn ? "since " + E.baseline_date : "";
+  const eraLbl = (base) => eraOn ? base + " \u00b7 current system" : base;
+  const eraVal = (eKey, mKey) => eraOn ? E[eKey] : M[mKey];
+
+  // ── Era caption ────────────────────────────────────────────────────
+  (function renderEraNote() {
+    const el = document.getElementById("era-note");
+    if (!el) return;
+    if (!eraOn) { el.className = "era-note hidden"; return; }
+    const usedOther = E.baseline_actual && E.baseline_actual !== E.baseline_date
+      ? ` (nearest snapshot: ${E.baseline_actual})` : "";
+    const src = E.baseline_source ? ` ${E.baseline_source}.` : "";
+    el.innerHTML =
+      `Headline metrics measure the <b>current system</b> \u2014 ${eraTag}`
+      + `${usedOther}, from a baseline of $${fmtN(E.baseline_value, 0)}.${src}`
+      + (E.baseline_note ? ` ${E.baseline_note}.` : "")
+      + ` Since-inception figures are kept on each tile below the headline;`
+      + ` the monthly table shows the full history.`;
+  })();
 
   // ── Metric cards ───────────────────────────────────────────────────
   const cardDefs = [
     {
-      label: "Total Return",
-      val:   () => fmtPct(M.total_return_pct),
-      sub:   () => fmtSign(M.total_return_usd, 0).replace(/^([+-])/, "$1$") + " net P&L",
-      color: () => colClass(M.total_return_pct),
-      accent:() => accentOf(M.total_return_pct),
+      label: eraLbl("Total Return"),
+      val:   () => fmtPct(eraVal("total_return_pct", "total_return_pct")),
+      sub:   () => eraOn
+        ? usdSig(E.total_return_usd) + " " + eraTag
+          + " \u00b7 inception: " + fmtPct(M.total_return_pct)
+        : usdSig(M.total_return_usd) + " net P&L",
+      color: () => colClass(eraVal("total_return_pct", "total_return_pct")),
+      accent:() => accentOf(eraVal("total_return_pct", "total_return_pct")),
     },
     {
-      label: "Annualized Return",
-      val:   () => fmtPct(M.annualized_return),
-      sub:   () => M.annualized_return == null ? "Insufficient data (<7 days)" : "from " + M.days_running + " day" + (M.days_running !== 1 ? "s" : "") + " of data",
-      color: () => colClass(M.annualized_return),
-      accent:() => accentOf(M.annualized_return),
+      label: eraLbl("Annualized Return"),
+      val:   () => fmtPct(eraVal("annualized_return", "annualized_return")),
+      sub:   () => {
+        if (!eraOn) {
+          return M.annualized_return == null ? "Insufficient data (<7 days)"
+            : "from " + M.days_running + " day" + (M.days_running !== 1 ? "s" : "") + " of data";
+        }
+        const era = E.annualized_return == null
+          ? "Insufficient era data (<7 days)"
+          : "from " + E.days + " day" + (E.days !== 1 ? "s" : "") + " " + eraTag;
+        return era + " \u00b7 inception: " + fmtPct(M.annualized_return);
+      },
+      color: () => colClass(eraVal("annualized_return", "annualized_return")),
+      accent:() => accentOf(eraVal("annualized_return", "annualized_return")),
     },
     {
-      label: "vs Advisor (14.4%)",
-      val:   () => fmtPct(M.vs_advisor),
-      sub:   () => M.vs_advisor >= 0 ? "\u25b2 Ahead of benchmark" : "\u25bc Behind benchmark",
-      color: () => colClass(M.vs_advisor),
-      accent:() => accentOf(M.vs_advisor),
+      label: eraLbl("vs Advisor (14.4%)"),
+      val:   () => fmtPct(eraVal("vs_advisor", "vs_advisor")),
+      sub:   () => {
+        const v = eraVal("vs_advisor", "vs_advisor");
+        const verdict = v == null ? "No annualized figure yet"
+          : (v >= 0 ? "\u25b2 Ahead of benchmark" : "\u25bc Behind benchmark");
+        return eraOn ? verdict + " \u00b7 inception: " + fmtPct(M.vs_advisor) : verdict;
+      },
+      color: () => colClass(eraVal("vs_advisor", "vs_advisor")),
+      accent:() => accentOf(eraVal("vs_advisor", "vs_advisor")),
     },
     {
-      label: "vs Target (29.0%)",
-      val:   () => fmtPct(M.vs_target),
-      sub:   () => M.vs_target >= 0 ? "\u25b2 On track to double" : "\u25bc Gap to close",
-      color: () => colClass(M.vs_target),
-      accent:() => accentOf(M.vs_target),
+      label: eraLbl("vs Target (29.0%)"),
+      val:   () => fmtPct(eraVal("vs_target", "vs_target")),
+      sub:   () => {
+        const v = eraVal("vs_target", "vs_target");
+        const verdict = v == null ? "No annualized figure yet"
+          : (v >= 0 ? "\u25b2 On track to double" : "\u25bc Gap to close");
+        return eraOn ? verdict + " \u00b7 inception: " + fmtPct(M.vs_target) : verdict;
+      },
+      color: () => colClass(eraVal("vs_target", "vs_target")),
+      accent:() => accentOf(eraVal("vs_target", "vs_target")),
     },
     {
       label: "Portfolio Value",
@@ -2892,17 +3083,32 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       accent:() => "c-white",
     },
     {
-      label: "Win Rate",
-      val:   () => M.win_rate != null ? fmtN(M.win_rate, 1) + "%" : "\u2014",
+      label: eraLbl("Win Rate"),
+      val:   () => {
+        const wr = eraOn ? E.win_rate : M.win_rate;
+        return wr != null ? fmtN(wr, 1) + "%" : "\u2014";
+      },
       sub:   () => {
         const n = M.closed_trades || 0;
-        if (M.win_rate == null) return n + " closed trades (no exits yet)";
-        return M.trade_stats_source === "ml"
-          ? n + " attributable closed trades (ML ledger)"
-          : n + " closed trade" + (n !== 1 ? "s" : "") + " (legacy lots — ML ledger unavailable)";
+        if (!eraOn) {
+          if (M.win_rate == null) return n + " closed trades (no exits yet)";
+          return M.trade_stats_source === "ml"
+            ? n + " attributable closed trades (ML ledger)"
+            : n + " closed trade" + (n !== 1 ? "s" : "") + " (legacy lots — ML ledger unavailable)";
+        }
+        const eN  = E.closed_trades == null ? 0 : E.closed_trades;
+        const inc = M.win_rate == null ? "\u2014" : fmtN(M.win_rate, 1) + "%";
+        return eN + " closed " + eraTag + " \u00b7 inception: " + inc
+             + " of " + n + " trades";
       },
-      color: () => M.win_rate != null && M.win_rate >= 50 ? "green" : M.win_rate != null && M.win_rate > 0 ? "amber" : "white",
-      accent:() => M.win_rate != null && M.win_rate >= 50 ? "c-green" : M.win_rate != null && M.win_rate > 0 ? "c-amber" : "c-white",
+      color: () => {
+        const wr = eraOn ? E.win_rate : M.win_rate;
+        return wr != null && wr >= 50 ? "green" : wr != null && wr > 0 ? "amber" : "white";
+      },
+      accent:() => {
+        const wr = eraOn ? E.win_rate : M.win_rate;
+        return wr != null && wr >= 50 ? "c-green" : wr != null && wr > 0 ? "c-amber" : "c-white";
+      },
     },
     {
       label: "Total Trades",
@@ -2914,7 +3120,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     {
       label: "Days Running",
       val:   () => String(M.days_running),
-      sub:   () => "Since " + (DATA.start_date || "\u2014"),
+      sub:   () => "Since " + (DATA.start_date || "\u2014")
+                 + (eraOn ? " \u00b7 " + E.days + " in current era" : ""),
       color: () => "purple",
       accent:() => "c-purple",
     },

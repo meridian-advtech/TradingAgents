@@ -732,5 +732,9 @@
     "per_run_cap": 0.15,
     "min_sample": 20,
     "weight_bound": 1.0
+  },
+  "performance": {
+    "baseline_date": "2026-07-01",
+    "baseline_note": "Current-system era: post sizing-fix (6/29), exit_timing weight (6/30), target-armed trail (7/2)"
   }
 }
