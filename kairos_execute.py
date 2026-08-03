@@ -364,6 +364,24 @@ def check_guardrails(
     if not ok:
         failures.append(reason)
 
+    # 2b. SHADOW ONLY — record what this same check would decide using real
+    # sectors (security_master) instead of universe screening buckets. The
+    # verdict above is NOT touched: lookup_sector returns size/style cohorts,
+    # so the live threshold was calibrated against a number that understates
+    # true sector exposure, and swapping the measurement without re-deciding
+    # the limit would silently tighten the gate. Evidence first, then J sets
+    # the limit that belongs with real sectors. Failure here is swallowed —
+    # observation must never be able to block a trade.
+    try:
+        from kairos_sector_shadow import log_shadow_decision
+        note = log_shadow_decision(
+            ticker, proposed_spend, portfolio, guardrails,
+            bucket_passed=ok, bucket_sector=sector)
+        if note:
+            print(f"    {note}")
+    except Exception:
+        pass
+
     # 3. Single position
     current_pos_val = portfolio["positions"].get(ticker, {}).get("market_value", 0)
     ok, reason = check_single_position(ticker, current_pos_val, proposed_spend, nlv, guardrails)
