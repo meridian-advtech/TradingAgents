@@ -227,7 +227,7 @@
         "trail_pct": 8.0
       },
       "_target_armed_note": "TARGET-ARMED trail (backtest-verified, +31.6pts over flat tiers on n=49): no trail arms until peak_gain_pct reaches the position's own logged thesis target (predicted_return_pct from thesis_predictions); THEN a flat trail_pct trail arms, harvesting only the give-back on the SURPLUS above what the thesis promised. Falls back to the flat tiers above for any ticker with no logged target. enabled=false ships as a no-op; J flips true after reviewing dry-run output.",
-      "profit_floor_pp": 1.0,
+      "profit_floor_pp": 1.1552,
       "_profit_floor_note": "Once ANY trail is armed, allowed retreat is capped at (peak - profit_floor_pp) so an armed winner can never exit below ~breakeven+floor. Added 2026-07-02 after giveback analysis: target-armed positions with single-digit peaks had backstops wider than their peaks (guaranteed-loss exits). 0 disables."
     },
     "tax_gate": {

@@ -57,6 +57,8 @@ PID_FILE = "/tmp/kairos_commander.pid"
 IBKR_CLIENT_ID = 10
 COMMAND_CHANNEL_KEY = "commands"
 COMMAND_CHANNEL_NAME = "kairos-commands"
+ARBITER_CHANNEL_KEY = "arbiter"
+ARBITER_CHANNEL_NAME = "#kairos-arbiter"   # matches kairos_arbiter.ARBITER_CHANNEL
 CYCLE_COOLDOWN_SECONDS = 10 * 60  # !run / !dry-run guard
 
 # ── Logging ──────────────────────────────────────────────────────────
@@ -101,6 +103,18 @@ def get_commands_channel_id() -> Optional[str]:
     channels = cfg.get("slack", {}).get("channels", {}) if isinstance(cfg.get("slack"), dict) else {}
     cid = channels.get(COMMAND_CHANNEL_KEY)
     return cid or None
+
+
+def get_arbiter_channel() -> str:
+    """Channel that approval cards live in — where !pending re-posts them.
+
+    Prefers the configured channel ID; falls back to the literal name
+    kairos_arbiter.py posts to, so a re-post lands in the same conversation as
+    the daily/weekly cards rather than a second thread.
+    """
+    cfg = load_config()
+    channels = cfg.get("slack", {}).get("channels", {}) if isinstance(cfg.get("slack"), dict) else {}
+    return channels.get(ARBITER_CHANNEL_KEY) or ARBITER_CHANNEL_NAME
 
 
 # ── Pause flag persistence ───────────────────────────────────────────
@@ -273,6 +287,7 @@ def cmd_help() -> str:
         "  !ipo            IPO watchlist status + recent S-1 matches\n"
         "  !chain          AI value-chain Tier 1 movers + HOT-CHAIN signals\n"
         "  !watchlist ...  add TICKER | remove TICKER | list (Tier C)\n"
+        "  !pending        Re-post pending approval cards (tap from your phone)\n"
         "  !help           This list\n"
         "```"
     )
@@ -733,6 +748,54 @@ def cmd_resume() -> str:
     return ":arrow_forward: *Pipeline resumed.* New BUY orders re-enabled."
 
 
+def cmd_pending(say) -> None:
+    """Re-post every pending proposal as a fresh tappable approval card.
+
+    The daily/weekly arbiter run posts cards as proposals are created; this
+    pulls them back up on demand, so a proposal buried under later messages can
+    be actioned from a phone without an SSH session. Reads through
+    kairos_slack_cards — this command never touches proposal state itself.
+
+    Takes `say` (not returning a string like the other cmd_*) because it emits a
+    count first and then posts N cards to the arbiter channel.
+    """
+    try:
+        from kairos_slack_cards import list_pending_proposals, post_proposal_card
+    except Exception as exc:
+        log.exception("!pending: kairos_slack_cards import failed")
+        say(text=f":x: `!pending` unavailable — card module import failed: `{exc}`")
+        return
+
+    try:
+        proposals = list_pending_proposals()
+    except Exception as exc:
+        log.exception("!pending: list_pending_proposals failed")
+        say(text=f":x: `!pending` could not read proposals: `{exc}`")
+        return
+
+    if not proposals:
+        say(text=":inbox_tray: No pending proposals right now.")
+        return
+
+    channel = get_arbiter_channel()
+    say(text=f":inbox_tray: {len(proposals)} pending proposal(s) — re-posting "
+             f"tappable card(s) to {channel}…")
+
+    posted = 0
+    for prop in proposals:
+        try:
+            if post_proposal_card(prop, channel):
+                posted += 1
+        except Exception:
+            log.exception("!pending: post_proposal_card failed for proposal %s",
+                          prop.get("id"))
+    log.info("!pending re-posted %d/%d card(s) to %s",
+             posted, len(proposals), channel)
+    if posted < len(proposals):
+        say(text=f":warning: Posted {posted}/{len(proposals)} card(s) — see "
+                 f"kairos_commander.log for the rest.")
+
+
 def _run_cycle_subprocess(extra_args: list[str]) -> tuple[int, str]:
     """Spawn `python kairos_run.py --cycle ...` and capture tail of output."""
     python_exe = sys.executable
@@ -825,7 +888,7 @@ def parse_command(text: str) -> Optional[tuple[str, str]]:
     if first in {
         "status", "positions", "performance", "why", "run",
         "dry-run", "dryrun", "pause", "resume", "regime", "ipo", "chain",
-        "watchlist", "help",
+        "watchlist", "pending", "help",
     }:
         return first, rest
     return None
@@ -876,6 +939,8 @@ def handle_message(text: str, say, thread_ts: Optional[str]) -> None:
             say(text=cmd_chain(), thread_ts=thread_ts)
         elif cmd_norm == "watchlist":
             say(text=cmd_watchlist(args), thread_ts=thread_ts)
+        elif cmd_norm == "pending":
+            cmd_pending(say)
         elif cmd_norm == "pause":
             say(text=cmd_pause(), thread_ts=thread_ts)
         elif cmd_norm == "resume":
@@ -986,6 +1051,157 @@ def release_lock() -> None:
         pass
 
 
+# ── Socket Mode: interactive Approve/Reject listener ─────────────────
+# ADDITIVE to the curl poller — it does not replace the command router. The
+# websocket receives button clicks only; the resulting card update goes back out
+# over curl (chat.update), which is the transport that works on this host. If
+# SLACK_APP_TOKEN is unset or slack_bolt is missing, this is skipped with a loud
+# log line and the poller plus every !command runs exactly as before.
+
+
+def _handle_decision(ack, body: dict, decision: str, token: str) -> None:
+    """Apply one Approve/Reject click, then rewrite the card in place.
+
+    Order matters: ack() first (Slack gives 3 seconds before it retries the
+    click, and a retry would double-apply), then resolve, then apply, then
+    update. Every failure path is swallowed and logged — a bad click must never
+    take the listener thread down with it.
+
+    kairos_axis_weights.apply_decision is the ONLY thing that may change a
+    weight or a param. This function re-checks nothing: bounds, the whitelist,
+    the 25% cap, and the already-decided guard all live inside that call's own
+    transaction. We only report what it did.
+    """
+    try:
+        ack()
+    except Exception:
+        log.exception("ack() failed on %s click (continuing)", decision)
+
+    try:
+        from kairos_slack_cards import (load_proposal, slack_user_display,
+                                        update_proposal_message)
+        from kairos_axis_weights import apply_decision
+
+        action = (body.get("actions") or [{}])[0]
+        raw_value = action.get("value")
+        # container.* is the documented fallback when the payload omits the
+        # top-level channel/message (thread and ephemeral variants).
+        container = body.get("container") or {}
+        channel = (body.get("channel") or {}).get("id") or container.get("channel_id")
+        ts = (body.get("message") or {}).get("ts") or container.get("message_ts")
+
+        user = body.get("user") or {}
+        fallback = user.get("username") or user.get("name") or user.get("id") or "unknown"
+        decided_by = slack_user_display(token, user.get("id"), fallback)
+
+        try:
+            history_id = int(raw_value)
+        except (TypeError, ValueError):
+            log.warning("%s click carried a non-numeric value %r — ignored",
+                        decision, raw_value)
+            return
+
+        proposal = load_proposal(history_id)
+        if proposal is None:
+            log.warning("%s click for proposal %s — no such row", decision, history_id)
+            if channel and ts:
+                update_proposal_message(token, channel, ts, {"id": history_id},
+                                        warn=f"proposal {history_id} not found")
+            return
+
+        try:
+            outcome = apply_decision(history_id, decision, decided_by)
+        except ValueError as exc:
+            # Already decided / superseded / not in 'proposed'. This is the
+            # auto-supersede guardrail working, NOT an error: the card gets a
+            # ⚠️ line and the underlying value is left untouched.
+            log.info("proposal %s not applied (%s) — card marked already handled",
+                     history_id, exc)
+            update_proposal_message(token, channel, ts, proposal, warn=str(exc))
+            return
+        except Exception as exc:
+            log.exception("apply_decision raised for proposal %s", history_id)
+            update_proposal_message(token, channel, ts, proposal,
+                                    warn=f"apply failed: {exc}")
+            return
+
+        update_proposal_message(token, channel, ts, proposal, decision=decision,
+                                decided_by=decided_by, outcome=outcome)
+        log.info("proposal %s %s by %s → %s", history_id, decision, decided_by,
+                 outcome if isinstance(outcome, dict) else "applied")
+    except Exception:
+        log.exception("%s handler crashed (suppressed — listener stays up)", decision)
+
+
+def _register_action_handlers(app, token: str) -> None:
+    """Bind the two button action_ids emitted by kairos_slack_cards."""
+    from kairos_slack_cards import ACTION_APPROVE, ACTION_REJECT
+
+    @app.action(ACTION_APPROVE)
+    def _on_approve(ack, body, logger):  # noqa: ANN001 — bolt supplies these
+        _handle_decision(ack, body, "approve", token)
+
+    @app.action(ACTION_REJECT)
+    def _on_reject(ack, body, logger):  # noqa: ANN001
+        _handle_decision(ack, body, "reject", token)
+
+    log.info("Socket Mode handlers registered: %s / %s", ACTION_APPROVE, ACTION_REJECT)
+
+
+def _socket_mode_thread(handler) -> None:
+    """Thread body: handler.start() blocks maintaining the websocket."""
+    try:
+        handler.start()
+    except Exception:
+        log.exception("Socket Mode handler exited — poller unaffected, but "
+                      "Approve/Reject buttons are now dead until restart.")
+
+
+def start_socket_mode(token: str):
+    """Start the Bolt Socket Mode listener on a daemon thread.
+
+    Returns the thread, or None when it could not start (missing app token or
+    missing slack_bolt). Never raises: the caller's poll loop must run either
+    way. A None return is always accompanied by a log line saying why.
+    """
+    app_token = (os.environ.get("SLACK_APP_TOKEN") or "").strip()
+    if not app_token:
+        log.warning("SLACK_APP_TOKEN unset — Socket Mode disabled. Approve/"
+                    "Reject buttons will not respond; !pending still re-posts "
+                    "cards and every other command is unaffected. Set "
+                    "SLACK_APP_TOKEN (xapp-…) in ~/.zshrc or the launchd plist.")
+        return None
+
+    try:
+        from slack_bolt import App
+        from slack_bolt.adapter.socket_mode import SocketModeHandler
+    except ImportError as exc:
+        # Reported loudly rather than degraded silently: the buttons look live
+        # in Slack but nothing would receive the click.
+        msg = (f"slack_bolt is NOT installed ({exc}) — Socket Mode cannot start "
+               f"and Approve/Reject buttons will do nothing. Install it into "
+               f"the interpreter running this process: "
+               f"{sys.executable} -m pip install slack_bolt")
+        log.error(msg)
+        print(f"  ERROR: {msg}", file=sys.stderr)
+        return None
+
+    try:
+        app = App(token=token)
+        _register_action_handlers(app, token)
+        handler = SocketModeHandler(app, app_token)
+        thread = threading.Thread(target=_socket_mode_thread, args=(handler,),
+                                  name="kairos-socket-mode", daemon=True)
+        thread.start()
+        log.info("Socket Mode listener started in background thread "
+                 "(interactive Approve/Reject enabled).")
+        return thread
+    except Exception as exc:
+        log.exception("Socket Mode init failed (%s) — poller continues without "
+                      "interactive approvals.", exc)
+        return None
+
+
 def main():
     """curl long-poll commander — checks #kairos-commands every few seconds.
 
@@ -1012,6 +1228,10 @@ def main():
         sys.exit(1)
 
     say = _make_say(token, channel_id)
+
+    # Additive: if the app token is unset or slack_bolt is missing this returns
+    # None after logging why, and the poll loop below runs exactly as before.
+    start_socket_mode(token)
 
     log.info("Kairos Commander starting (curl long-poll, paused=%s)…",
              get_paused())

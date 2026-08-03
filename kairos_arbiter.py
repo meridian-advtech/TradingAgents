@@ -1107,6 +1107,57 @@ def persist_findings(run_id: str, mode: str, findings: dict) -> int:
 
 # ── Main ─────────────────────────────────────────────────────────────
 
+def _refresh_proposals_and_post_cards(run_id: str) -> None:
+    """Refresh axis-weight + exit-param proposals, then post interactive Approve/
+    Reject cards for the newly-'proposed', actionable rows. Same human gate as the
+    weekly path: writes 'proposed' rows ONLY, never approves, never edits a live
+    weight or kairos_config.json. Fully guarded — a failure here must never affect
+    the Arbiter run. Shared by the daily and weekly branches.
+
+    Auto-supersede: propose_update / propose_param_update each supersede the prior
+    'proposed' row for their OWN axis string — weight axes by name, param axes by
+    'param:<dotted.path>' (kairos_axis_weights.py:750). So re-running daily can
+    never stack duplicate proposals or duplicate cards for the same axis/param.
+    """
+    proposals: list = []
+    try:
+        from kairos_axis_weights import propose_all
+        ap = propose_all(run_id=run_id)
+        proposals += ap.get("proposals", [])
+        print(f"  Auto-proposed axis weights: {len(ap['proposals'])} proposal(s), "
+              f"{len(ap['errors'])} error(s) (run_id={ap['run_id']})")
+    except Exception as exc:
+        print(f"  WARNING: axis-weight auto-propose failed: {exc}", file=sys.stderr)
+
+    try:
+        from kairos_axis_weights import propose_all_params
+        pp = propose_all_params(run_id=run_id)
+        proposals += pp.get("proposals", [])
+        print(f"  Auto-proposed exit params: {len(pp['proposals'])} proposal(s), "
+              f"{len(pp['errors'])} error(s) (run_id={pp['run_id']})")
+    except Exception as exc:
+        print(f"  WARNING: exit-param auto-propose failed: {exc}", file=sys.stderr)
+
+    # Only actionable proposals get a tappable card: gated / zero-Δ rows are still
+    # written 'proposed' (auditable) but an Approve card for a no-op is noise.
+    # Report the skip count so nothing is silently dropped.
+    actionable, skipped = [], 0
+    for p in proposals:
+        if p.get("gated") or abs(p.get("proposed_delta") or 0.0) < 1e-9:
+            skipped += 1
+        else:
+            actionable.append(p)
+
+    try:
+        from kairos_slack_cards import post_proposal_card
+        posted = sum(1 for p in actionable
+                     if post_proposal_card(p, ARBITER_CHANNEL))
+        print(f"  Interactive approval cards: posted {posted}/{len(actionable)} "
+              f"(skipped {skipped} gated/no-op proposal(s))")
+    except Exception as exc:
+        print(f"  WARNING: posting proposal cards failed: {exc}", file=sys.stderr)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Kairos Arbiter — retrospective trade analysis")
     parser.add_argument("--mode", choices=["daily", "weekly"], required=True,
@@ -1187,6 +1238,10 @@ def main() -> int:
         write_report(mode, today, SYSTEM_PROMPT, user_prompt,
                      closed, open_pos, stats, mistral_response=None, error=None)
         print("  No closed trades today — posted brief note.")
+        # Still refresh proposals daily: they derive from the cumulative ML
+        # outcomes, not just today's closes, so a no-trade day should not skip
+        # the learning-loop refresh + interactive cards.
+        _refresh_proposals_and_post_cards(run_id=f"{today}_daily")
         return 0
 
     # ── API key ─────────────────────────────────────────────────────
@@ -1238,34 +1293,14 @@ def main() -> int:
     posted = post_to_slack(ARBITER_CHANNEL, slack_text)
     print(f"  Slack post to {ARBITER_CHANNEL}: {'OK' if posted else 'FAILED'}")
 
-    # ── Weekly only: auto-propose fresh axis weights ────────────────
-    # After the weekly analysis post, refresh the axis-weight proposals so the
-    # learning loop keeps pace with closing trades. This writes 'proposed' rows
-    # and posts a combined Slack summary ONLY — it never approves or changes a
-    # live weight (the human gate is untouched). Fully guarded: a propose failure
-    # must NEVER affect the Arbiter run. The daily path does not touch this.
-    if mode == "weekly":
-        try:
-            from kairos_axis_weights import propose_all
-            ap = propose_all()
-            print(f"  Auto-proposed axis weights: {len(ap['proposals'])} proposal(s), "
-                  f"{len(ap['errors'])} error(s) (run_id={ap['run_id']})")
-        except Exception as exc:
-            print(f"  WARNING: weekly axis-weight auto-propose failed: {exc}",
-                  file=sys.stderr)
-
-        # Exit-engine PARAM proposals (param:<dotted.config.path>), same human
-        # gate. Writes 'proposed' rows + one combined Slack note only — never
-        # approves or edits kairos_config.json. Separately guarded so a param
-        # failure cannot affect the weight proposals or the Arbiter run.
-        try:
-            from kairos_axis_weights import propose_all_params
-            pp = propose_all_params()
-            print(f"  Auto-proposed exit params: {len(pp['proposals'])} proposal(s), "
-                  f"{len(pp['errors'])} error(s) (run_id={pp['run_id']})")
-        except Exception as exc:
-            print(f"  WARNING: weekly exit-param auto-propose failed: {exc}",
-                  file=sys.stderr)
+    # ── Auto-propose fresh axis weights + exit params (daily & weekly) ──
+    # After the analysis post, refresh the proposals so the learning loop keeps
+    # pace with closing trades, and post interactive Approve/Reject cards. This
+    # writes 'proposed' rows + a combined Slack summary ONLY — it never approves
+    # or changes a live weight / kairos_config.json (the human gate is untouched).
+    # Fully guarded: a propose failure must NEVER affect the Arbiter run. The
+    # daily branch was added so approvals can be actioned every trading day.
+    _refresh_proposals_and_post_cards(run_id=run_id)
 
     return 0
 
