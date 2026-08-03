@@ -33,11 +33,12 @@ not injected, until Phase C.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ML_DB_PATH = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
@@ -88,8 +89,19 @@ PARAM_WHITELIST = {
 }
 PARAM_MIN_SAMPLE = 10          # min TRAILING-STOP closes before a param is proposed
 PARAM_MAX_CHANGE_FRAC = 0.25   # an approved proposal may move a value at most ±25%
-# Give-back (pp) that maps to a full-strength (100% of the allowed ±25%) nudge.
+# Net error (pp) that maps to a full-strength (100% of the allowed ±25%) nudge.
 PARAM_GIVEBACK_REF = 15.0
+
+# ── Ratchet guards (2026-07-11 postmortem) ───────────────────────────
+# The ratchet compounded trail_pct 8.0 → 4.0 across three days because each
+# day's proposal was legal in isolation: every step was within ±25% of the
+# value the PREVIOUS step had just written. A cumulative band anchored at the
+# value in force at the start of a rolling window bounds the drift no matter
+# how many individually-legal steps are taken inside it. Enforced at BOTH
+# compute (clamp) and apply (refuse) — the apply side is what actually holds,
+# since a proposal can sit pending while other changes land.
+PARAM_CUMULATIVE_WINDOW_DAYS = 7
+PARAM_CUMULATIVE_BAND_FRAC = 0.40
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -138,6 +150,28 @@ def _ml_connect_ro() -> sqlite3.Connection:
 
 
 # ── Compute: conviction_calibration statistic ────────────────────────
+
+def _current_axis_weight(axis: str):
+    """Live weight for an axis from kairos.db, or None if unreadable.
+
+    None means "regime cannot be established", which callers treat as
+    excluding every row rather than admitting all of them.
+    """
+    try:
+        from kairos_log_db import get_connection
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                "SELECT weight FROM axis_weights WHERE axis = ?", (axis,)
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is not None and row["weight"] is not None:
+            return float(row["weight"])
+    except Exception:
+        pass
+    return None
+
 
 def compute_conviction_calibration() -> dict:
     """Measure conviction→P&L calibration from closed trades.
@@ -246,15 +280,24 @@ def compute_exit_timing() -> dict:
     exit_timing.positive_means); negative ⇒ too EARLY (correction: hold longer).
     """
     sql = """
-        SELECT trade_id, give_back_pct, post_exit_peak_pct
+        SELECT trade_id, give_back_pct, post_exit_peak_pct, exit_params_snapshot
         FROM trade_outcomes
         WHERE timestamp_exit IS NOT NULL
     """
     conn = _ml_connect_ro()
     try:
-        rows = [dict(r) for r in conn.execute(sql).fetchall()]
+        all_rows = [dict(r) for r in conn.execute(sql).fetchall()]
     finally:
         conn.close()
+
+    # ── Regime window ────────────────────────────────────────────────
+    # A trade that closed while exit_timing carried a different weight was
+    # produced by a different system. Scoring the current weight on it is the
+    # same category error the param loop made, one level up.
+    current_weight = _current_axis_weight("exit_timing")
+    rows = [r for r in all_rows
+            if _in_regime(r.get("exit_params_snapshot"), "axis_weights",
+                          "exit_timing", current_weight)]
 
     # Matured set: both poles present. post_exit_peak_pct is NULL until the
     # post-exit window matures — a feature-filled trade still missing it counts
@@ -286,6 +329,10 @@ def compute_exit_timing() -> dict:
         "mean_post_exit_peak_pp": round(mean_post_exit_peak, 6),
         "n_matured": n,
         "n_pending": n_pending,
+        "n_in_regime": len(rows),
+        "n_total_closed": len(all_rows),
+        "n_excluded_out_of_regime": len(all_rows) - len(rows),
+        "current_weight": current_weight,
         "trade_ids": trade_ids,
     }
     return {
@@ -627,6 +674,114 @@ def _current_param_value(path: str) -> float | None:
     return float(val)
 
 
+# ── Regime windowing + evidence freshness ────────────────────────────
+# The ratchet ran on FROZEN evidence: 28 of 30 mfe_pct values were NULL, so
+# every "average" was computed from 2 trades while n reported 30, and the same
+# stale numbers re-proposed a fresh tightening every day. Three fixes live
+# here, and every one of them is a REDUCTION in what counts as evidence:
+#
+#   regime window — a trade closed under trail_pct=8 tells you nothing about
+#                   whether trail_pct=4 is right. Only trades whose recorded
+#                   exit_params_snapshot matches the CURRENT value count.
+#   contributing  — a row counts only if it carries every field the objective
+#                   consumes. A NULL is not a zero.
+#   freshness     — if the contributing set is byte-identical to the one that
+#                   produced the standing proposal, there is nothing new to
+#                   say, and re-proposing is how a ratchet compounds.
+
+
+def _snapshot_value(snapshot_json, kind: str, key: str):
+    """Read params[key] / axis_weights[key] out of an exit_params_snapshot.
+
+    Returns None when the snapshot is absent, unparseable, or does not carry
+    the key — all of which mean "cannot attribute this trade to a regime", and
+    the caller must therefore EXCLUDE the row rather than assume it matches.
+    """
+    if not snapshot_json:
+        return None
+    try:
+        snap = json.loads(snapshot_json)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(snap, dict):
+        return None
+    section = snap.get(kind)
+    if not isinstance(section, dict):
+        return None
+    val = section.get(key)
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        return None
+    return float(val)
+
+
+def _in_regime(snapshot_json, kind: str, key: str, current, tol: float = 1e-6) -> bool:
+    """True iff this trade closed under the value currently in force."""
+    if current is None:
+        return False
+    val = _snapshot_value(snapshot_json, kind, key)
+    return val is not None and abs(val - float(current)) <= tol
+
+
+def _evidence_hash(trade_ids, current, proposed) -> str:
+    """Stable fingerprint of what a proposal is based on.
+
+    Covers the identity of every contributing trade plus both endpoints of the
+    proposed move, so adding a trade, losing one, or landing on a different
+    value all read as fresh evidence — and re-running on an unchanged corpus
+    does not.
+    """
+    payload = json.dumps({
+        "trade_ids": sorted(str(t) for t in trade_ids),
+        "current": None if current is None else round(float(current), 6),
+        "proposed": None if proposed is None else round(float(proposed), 6),
+    }, sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def _cumulative_band(axis: str, current) -> dict:
+    """Rolling-window bounds for a param, anchored at the window's opening value.
+
+    base_7d is the prior_weight of the EARLIEST approved change inside the
+    window — i.e. what the parameter was before the window's first step. With
+    no approved change in the window, the current value is itself the anchor.
+    Degrades to an unbounded-but-reported band if the history table cannot be
+    read, so a DB problem never silently removes the guard's visibility.
+    """
+    base = None if current is None else float(current)
+    try:
+        from kairos_log_db import get_connection
+        cutoff = (datetime.now(timezone.utc)
+                  - timedelta(days=PARAM_CUMULATIVE_WINDOW_DAYS)
+                  ).strftime("%Y-%m-%d %H:%M:%S UTC")
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                "SELECT prior_weight FROM axis_weight_history "
+                "WHERE axis = ? AND status = 'approved' AND decided_at IS NOT NULL "
+                "  AND decided_at >= ? "
+                "ORDER BY decided_at ASC LIMIT 1",
+                (axis, cutoff),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is not None and row["prior_weight"] is not None:
+            base = float(row["prior_weight"])
+    except Exception:
+        pass
+
+    if base is None:
+        return {"base_7d": None, "lo": None, "hi": None,
+                "window_days": PARAM_CUMULATIVE_WINDOW_DAYS,
+                "band_frac": PARAM_CUMULATIVE_BAND_FRAC}
+    return {
+        "base_7d": round(base, 6),
+        "lo": round(base * (1.0 - PARAM_CUMULATIVE_BAND_FRAC), 6),
+        "hi": round(base * (1.0 + PARAM_CUMULATIVE_BAND_FRAC), 6),
+        "window_days": PARAM_CUMULATIVE_WINDOW_DAYS,
+        "band_frac": PARAM_CUMULATIVE_BAND_FRAC,
+    }
+
+
 # ── Compute: exit-parameter statistic ────────────────────────────────
 
 def compute_param(path: str) -> dict:
@@ -650,70 +805,137 @@ def compute_param(path: str) -> dict:
     if path not in PARAM_WHITELIST:
         raise ValueError(f"param path {path!r} is not whitelisted")
 
+    axis = PARAM_PREFIX + path
+    lo, hi = PARAM_WHITELIST[path]
+    current = _current_param_value(path)
+
     sql = """
-        SELECT pnl_pct, mfe_pct, give_back_pct
+        SELECT trade_id, pnl_pct, mfe_pct, give_back_pct, forgone_gain_5d_pct,
+               exit_params_snapshot
         FROM trade_outcomes
         WHERE exit_reason LIKE 'TRAILING-STOP%'
           AND timestamp_exit IS NOT NULL
     """
     conn = _ml_connect_ro()
     try:
-        rows = [dict(r) for r in conn.execute(sql).fetchall()]
+        all_rows = [dict(r) for r in conn.execute(sql).fetchall()]
     finally:
         conn.close()
 
+    # ── Regime window ────────────────────────────────────────────────
+    in_regime = [r for r in all_rows
+                 if _in_regime(r.get("exit_params_snapshot"), "params", path, current)]
+
+    # ── Contributing rows ────────────────────────────────────────────
+    # Both poles of the objective must be present. A trade missing either one
+    # cannot say which way we were wrong, and averaging over its absence is
+    # exactly what let 2 trades masquerade as 30.
+    def _contributes(r) -> bool:
+        return (r.get("mfe_pct") is not None
+                and r.get("pnl_pct") is not None
+                and r.get("forgone_gain_5d_pct") is not None)
+
+    rows = [r for r in in_regime if _contributes(r)]
     n = len(rows)
 
     def _avg(key):
-        vals = [r[key] for r in rows if r[key] is not None]
+        vals = [r[key] for r in rows if r.get(key) is not None]
         return (sum(vals) / len(vals)) if vals else 0.0
 
-    avg_mfe = _avg("mfe_pct")
-    avg_pnl = _avg("pnl_pct")
-    avg_gb = _avg("give_back_pct")
+    # ── Two-sided objective ──────────────────────────────────────────
+    # give_back  — edge surrendered by exiting too LATE  (+ ⇒ tighten)
+    # forgone    — edge left behind by exiting too EARLY (+ ⇒ loosen)
+    # The old objective measured give-back ONLY, so its error term could never
+    # be negative and every proposal it could physically emit was a tightening.
+    # That is the ratchet, in one line of arithmetic. Netting the two poles is
+    # what makes loosening representable at all.
+    givebacks, forgones, errors = [], [], []
+    for r in rows:
+        gb = r["give_back_pct"]
+        if gb is None:
+            gb = r["mfe_pct"] - r["pnl_pct"]
+        fg = r["forgone_gain_5d_pct"]
+        givebacks.append(gb)
+        forgones.append(fg)
+        errors.append(gb - fg)
+
+    mean_error = (sum(errors) / n) if n else 0.0
+    avg_gb = (sum(givebacks) / n) if n else 0.0
+    avg_fg = (sum(forgones) / n) if n else 0.0
+
     round_trips = sum(
         1 for r in rows
         if r["mfe_pct"] is not None and r["mfe_pct"] > 2.0
         and r["pnl_pct"] is not None and r["pnl_pct"] <= 0.0
     )
 
-    lo, hi = PARAM_WHITELIST[path]
-    current = _current_param_value(path)
-    gated = n < PARAM_MIN_SAMPLE or current is None
+    # ── Gate ─────────────────────────────────────────────────────────
+    gate_reason = None
+    if current is None:
+        gate_reason = f"current value unavailable at config path {path!r}"
+    elif n < PARAM_MIN_SAMPLE:
+        gate_reason = (
+            f"insufficient fresh evidence: {n} contributing in-regime trade(s) "
+            f"< {PARAM_MIN_SAMPLE} required "
+            f"({len(in_regime)} in regime of {len(all_rows)} trailing-stop closes)")
+    gated = gate_reason is not None
 
-    # Give-back severity in [0,1], blended with the round-trip rate. High severity
-    # ⇒ we are surrendering gains ⇒ tighten profit capture.
-    roundtrip_rate = (round_trips / n) if n else 0.0
-    severity = _clamp(avg_gb / PARAM_GIVEBACK_REF, 0.0, 1.0)
-    severity = _clamp(0.7 * severity + 0.3 * roundtrip_rate, 0.0, 1.0)
+    # Magnitude from the size of the net error; sign from which pole dominates.
+    severity = _clamp(abs(mean_error) / PARAM_GIVEBACK_REF, 0.0, 1.0)
+    if mean_error > 0:
+        direction_label = "tighten"
+    elif mean_error < 0:
+        direction_label = "loosen"
+    else:
+        direction_label = "hold"
 
-    # Direction: for both whitelisted params, surrendering gains ⇒ tighter capture.
-    #   trail_pct       ↓ (narrow the trail)   → direction −1
-    #   profit_floor_pp ↑ (lock in more)       → direction +1
-    direction = -1.0 if path.endswith("trail_pct") else +1.0
-    computed_score = round(direction * severity, 6)
+    # Role sign: which way must THIS parameter move in order to tighten profit
+    # capture?  trail_pct narrows (−), profit_floor_pp rises (+).
+    role_sign = -1.0 if path.endswith("trail_pct") else +1.0
+    error_sign = 1.0 if mean_error > 0 else (-1.0 if mean_error < 0 else 0.0)
+    computed_score = round(role_sign * error_sign * severity, 6)
+
+    band = _cumulative_band(axis, current)
 
     if gated or current is None:
         proposed_value = current
     else:
         max_step = PARAM_MAX_CHANGE_FRAC * abs(current)
-        change = _clamp(direction * severity * max_step, -max_step, max_step)
-        proposed_value = round(_clamp(current + change, lo, hi), 4)
+        change = _clamp(role_sign * error_sign * severity * max_step,
+                        -max_step, max_step)
+        proposed = current + change
+        # Hard whitelist bounds, then the cumulative window band.
+        proposed = _clamp(proposed, lo, hi)
+        if band["lo"] is not None and band["hi"] is not None:
+            proposed = _clamp(proposed, band["lo"], band["hi"])
+        proposed_value = round(proposed, 4)
 
     evidence = {
         "n": n,
-        "avg_mfe_pct": round(avg_mfe, 4),
-        "avg_pnl_pct": round(avg_pnl, 4),
+        "n_in_regime": len(in_regime),
+        "n_total_trailing_stop": len(all_rows),
+        "n_excluded_out_of_regime": len(all_rows) - len(in_regime),
+        "n_excluded_non_contributing": len(in_regime) - n,
+        "avg_mfe_pct": round(_avg("mfe_pct"), 4),
+        "avg_pnl_pct": round(_avg("pnl_pct"), 4),
         "avg_give_back_pct": round(avg_gb, 4),
+        "avg_forgone_gain_pct": round(avg_fg, 4),
+        "mean_error_pp": round(mean_error, 4),
+        "direction": direction_label,
         "round_trips": round_trips,
-        "roundtrip_rate": round(roundtrip_rate, 4),
+        "roundtrip_rate": round((round_trips / n) if n else 0.0, 4),
         "severity": round(severity, 4),
         "bounds": [lo, hi],
+        "cumulative_band": band,
         "current_value": current,
         "max_change_frac": PARAM_MAX_CHANGE_FRAC,
+        "gate_reason": gate_reason,
+        "evidence_hash": _evidence_hash(
+            [r["trade_id"] for r in rows], current,
+            current if gated else proposed_value),
     }
     return {
-        "axis": PARAM_PREFIX + path,
+        "axis": axis,
         "path": path,
         "computed_score": computed_score,
         "sample_size": n,
@@ -721,6 +943,7 @@ def compute_param(path: str) -> dict:
         "current_value": current,
         "proposed_value": proposed_value,
         "gated": gated,
+        "gate_reason": gate_reason,
     }
 
 
@@ -747,6 +970,40 @@ def propose_param_update(path: str, run_id: str | None = None) -> dict:
     current = result["current_value"]
     proposed = result["proposed_value"]
     gated = result["gated"]
+
+    # ── Freshness gate ───────────────────────────────────────────────
+    # If the contributing corpus and both endpoints are identical to the most
+    # recent recorded proposal, there is no new information — writing another
+    # row would just re-arm the same change against a human who has already
+    # seen it. Checked BEFORE the supersede below so a standing proposal is
+    # left intact rather than replaced by its own twin.
+    new_hash = result["evidence"].get("evidence_hash")
+    try:
+        from kairos_log_db import get_connection as _gc
+        _c = _gc()
+        try:
+            prev = _c.execute(
+                "SELECT evidence FROM axis_weight_history WHERE axis = ? "
+                "ORDER BY id DESC LIMIT 1", (axis,)).fetchone()
+        finally:
+            _c.close()
+        if prev is not None and prev["evidence"]:
+            prev_hash = (json.loads(prev["evidence"]) or {}).get("evidence_hash")
+            if prev_hash and new_hash and prev_hash == new_hash:
+                return {
+                    "history_id": None,
+                    "skipped": "no new evidence",
+                    "axis": axis,
+                    "path": path,
+                    "run_id": run_id,
+                    "evidence_hash": new_hash,
+                    "sample_size": result["sample_size"],
+                    "gated": gated,
+                }
+    except Exception:
+        # A freshness check that cannot run must not block proposing; the
+        # human gate and the cumulative band are the load-bearing guards.
+        pass
 
     if gated or current is None or proposed is None:
         prior_weight = current if current is not None else 0.0
@@ -886,6 +1143,18 @@ def _apply_param_to_config(path: str, value: float) -> str:
             raise ValueError(
                 f"{path}: change {current} → {value} exceeds "
                 f"{PARAM_MAX_CHANGE_FRAC:.0%} of the current value — refusing to apply")
+
+    # Cumulative window band. This is the guard the ratchet defeated: each of
+    # its three steps was inside ±25% of the value the step before had written,
+    # so the per-step check passed every time while the parameter halved. The
+    # band is anchored at the value in force when the window opened, so no
+    # sequence of individually-legal steps can drift past it.
+    band = _cumulative_band(PARAM_PREFIX + path, current)
+    if band["lo"] is not None and not (band["lo"] - 1e-9 <= value <= band["hi"] + 1e-9):
+        raise ValueError(
+            f"{path}={value} violates the cumulative {PARAM_CUMULATIVE_WINDOW_DAYS}-day "
+            f"band [{band['lo']}, {band['hi']}] anchored at {band['base_7d']} "
+            f"(±{PARAM_CUMULATIVE_BAND_FRAC:.0%}) — refusing to apply")
 
     # Timestamped backup of the exact current file BEFORE any write.
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
