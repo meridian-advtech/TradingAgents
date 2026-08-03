@@ -105,12 +105,30 @@ review (once daily), letting it dominate exits and recycle positions mid-thesis 
 Gates 2.5/2.6 were added.
 
 **Recent addition:** target-armed trailing stop — arms only after a position's own thesis target is
-reached (backtested +31.6 pts over actual on 49 clean trades). An invalidation-exit mechanism
-(price-level thesis invalidation) was also backtested (2026-07-02) with promising results but is
-**not deploy-ready** — needs day-1 grace-period refinement (fixes an MDB-style whipsaw), a larger
-sample, and a clean read on the trailing-stop + exit_timing axis weight interaction before adding a
-third concurrent live exit change. *(Surface this to J whenever he asks an open-ended "anything else
-to work on?" — it's a known pending item.)*
+reached (backtested +31.6 pts over actual on 49 clean trades).
+
+5. **Price-level thesis invalidation** (`kairos_exits.price_invalidation_exit`, condition 1.5 — after
+   the hard stop, before the trailing stop). Shipped 2026-08-03, **`enabled: false`**. Exits when the
+   last N consecutive daily CLOSES are all at or below a price level parsed from the position's own
+   logged `thesis_predictions.invalidation_conditions`. Reason is prefixed `PRICE-INVALIDATION:` and
+   tagged `[price-invalid]`, with its own `_log_sell` trigger — deliberately **distinct from the
+   reasoning-driven `THESIS-INVALID`** exit (the LLM thesis-review path), so per-mechanism attribution
+   stays separable. Backtest n=56: +12.7 pts, fired 15/56, 9 helped / 4 hurt.
+   *Constraint worth knowing before relying on it:* it can only act on theses that name a number, and
+   at ship time only 37% did — the Council prompt's own worked example contained no price at all. The
+   prompt now REQUIRES the first invalidation bullet to read `closes below $N`, so coverage should
+   climb for new theses; existing positions are out of scope by design. Zero of 56 live positions
+   would have fired at ship time.
+
+**Never-oversell guard (long-only enforcement).** `kairos_sell_guard.clamp_sell_quantity` sits at both
+order-submission choke points — `kairos_execute.execute_order` and `kairos_stoploss._place_market_sell`
+(which covers stop-loss, the exit engine, thesis review, tax harvest, and the reallocation SELL leg).
+It clamps any SELL to the shares actually held, aborts at held ≤ 0, and alerts `#kairos-alerts` either
+way. It fails OPEN only when broker *and* DB are both unreadable — blocking every stop-loss is the
+larger risk — and says so loudly when it does. Aborted sells return `oversell_blocked` so callers skip
+close logging; no phantom rows. Entry guardrails (cash reserve / sector concentration / single
+position) now run on **BUY only** — all three model `proposed_spend` as capital being *added*, so
+applying them to a SELL could block an exit.
 
 ## The Arbiter (Feedback / Learning Loop)
 
@@ -131,10 +149,26 @@ from 2 trades while `n` counted 30) with a **one-sided objective** (only measure
 forgone-gain term) and no regime memory. This let `trail_pct` compound 8.0 → 4.0 and `profit_floor_pp`
 1.0 → 1.906 across three days, producing a wave of premature exits. Remediated with:
 - `PROPOSALS_FROZEN` guard in both `propose_all` and `propose_all_params`
-- Full evidence redesign: regime-windowed evidence, two-sided objective (giveback vs. forgone gain),
-  freshness gate via evidence hash, `mfe`/`forgone_gain_5d_pct` backfill, exit_params_snapshot regime
+- Data layer (landed earlier): `mfe`/`forgone_gain_5d_pct` backfill, `exit_params_snapshot` regime
   tagging, Arbiter ghost-position fix
-- 26/26 selftests passing before `PROPOSALS_FROZEN` was set back to `False`
+- Logic layer (landed **2026-08-03** — `kairos_axis_weights` had still been the pre-redesign version,
+  which is why the committed 26-assertion selftest was red): two-sided objective, regime window,
+  contributing-row filter, cumulative 7-day ±40% band, freshness gate via evidence hash. **26/26 green.**
+
+*The ratchet in one line:* the old objective's error term was give-back, which is never negative — so
+every proposal it was physically capable of emitting was a tightening. Netting give-back against
+forgone gain is what makes "loosen" representable at all. On live evidence the two objectives disagree
+in **direction**: the old one would have ratcheted `profit_floor_pp` UP (1.155 → 1.373) on evidence
+that, measured two-sidedly, says loosen. The cumulative band is the guard the ratchet defeated — each
+of its three steps was legally within ±25% of what the previous step had just written, so the band is
+anchored at the value in force when the window opened. Replaying the ratchet now halts at 4.8 (−40%)
+instead of 4.0 (−50%).
+
+**`PROPOSALS_FROZEN` is currently STILL SET** (`kairos_axis_weights.py`, a truthy string). The loop
+therefore proposes nothing. Unfreezing (set it to `False`) is J's call and should follow a review of
+the live dry-run, not be done as a side effect of other work. Note on unfreeze: `profit_floor_pp` is
+currently *gated* (5 contributing in-regime trades < the 10 required), so only `trail_pct` would
+propose — that is the regime window working, not a bug.
 
 **Known contamination issue (unresolved):** the `signals_fired` field in `trade_outcomes` is populated
 from five sources including rationale-text reconstruction in `kairos_execute.py`. This means per-signal
@@ -193,14 +227,27 @@ API keys belong in environment variables, never in `kairos_config.json` or other
   or a number is fake/misleading (e.g. a dashboard stat computed from a broken source), say so plainly
   rather than softening it.
 
-## Known Open Items (as of Aug 2026)
+## Known Open Items (as of 2026-08-03)
 
+- **Short positions to flatten** (long-only violation): CARR -104, EME -8, ETN -16, KARD -301. Cover
+  with `python kairos_cover_shorts.py` (dry run) then `--execute`, during regular hours — the tool
+  refuses quotes more than 10% off the last daily close, because a 06:00 ET read returned a $32.99 ask
+  on KARD against a $20.82 close. The root cause is fixed; these are the residue.
+- **`PROPOSALS_FROZEN` unfreeze decision** — logic is repaired and 26/26 green; flipping it is J's call
+  (see the Arbiter section).
 - Signal attribution contamination in `signals_fired` — needs a clean fix before per-signal P&L or
-  Arbiter learning can be trusted
+  Arbiter *axis-weight* learning can be trusted. Note the **param** loop (`trail_pct`,
+  `profit_floor_pp`) is NOT affected: it learns from `exit_reason` + mfe/give-back/forgone, not from
+  `signals_fired`. Sequence the param loop first — it is the piece that caused the ratchet and it is
+  unblocked.
+- Invalidation-level coverage: only 37% of logged theses named a parseable price. The Council prompt is
+  fixed going forward; worth re-measuring coverage after a few weeks of new theses before judging the
+  price-invalidation mechanism's value.
 - Split/data-integrity scan: a CRWD pre-split-vs-post-split yfinance mismatch created a backtest
   anomaly; a full 727-ticker scan for split adjustments during the paper-trading window is warranted
 - Conviction dispersion root cause investigation (before any calibration weight changes)
-- Invalidation-exit mechanism: promising backtest, not deploy-ready (see Exit Logic section above)
+- Price-invalidation exit: shipped `enabled: false` — review a dry-run with real fire candidates
+  before flipping it on (same deployment pattern as target-armed)
 - Tier 0 pre-filter (`skip_tier0: true`) validated in dry-run (603/622 pass, 21.5s) but not yet
   reactivated in production — deferred pending router validation sequencing
 - Fundamentals/valuation blind spot: Kairos has no point-in-time fundamentals source, making every
