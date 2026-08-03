@@ -39,7 +39,7 @@ Launch Agent (persistent process, 10s poll)
     <key>ProgramArguments</key>
     <array>
       <string>/Users/jelmore/Kairos-env/bin/python3</string>
-      <string>/Users/jelmore/TradingAgents/kairos_arbiter_commander.py</string>
+      <string>/Users/jelmore/Kairos/kairos_arbiter_commander.py</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
@@ -53,11 +53,11 @@ Launch Agent (persistent process, 10s poll)
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/jelmore/TradingAgents/kairos_arbiter_commander.log</string>
+    <string>/Users/jelmore/Kairos/kairos_arbiter_commander.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/jelmore/TradingAgents/kairos_arbiter_commander.log</string>
+    <string>/Users/jelmore/Kairos/kairos_arbiter_commander.log</string>
     <key>WorkingDirectory</key>
-    <string>/Users/jelmore/TradingAgents</string>
+    <string>/Users/jelmore/Kairos</string>
   </dict>
   </plist>
 
@@ -81,7 +81,7 @@ from typing import Optional
 import requests
 
 # ── Absolute paths (matches kairos_commander.py convention) ──────────
-SCRIPT_DIR = "/Users/jelmore/TradingAgents"
+SCRIPT_DIR = "/Users/jelmore/Kairos"
 sys.path.insert(0, SCRIPT_DIR)
 
 from kairos_arbiter import (  # noqa: E402  (path inserted above)

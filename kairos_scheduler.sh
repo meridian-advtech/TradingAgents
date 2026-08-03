@@ -27,12 +27,12 @@ TIME=$((10#$HOUR * 100 + 10#$MIN))
 # All output is logged to kairos_scheduler.log.
 #
 # Usage (manual test):
-#   bash /Users/jelmore/TradingAgents/kairos_scheduler.sh
+#   bash /Users/jelmore/Kairos/kairos_scheduler.sh
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
 
-KAIROS_DIR="/Users/jelmore/TradingAgents"
+KAIROS_DIR="/Users/jelmore/Kairos"
 VENV_ACTIVATE="/Users/jelmore/Kairos-env/bin/activate"
 SCHEDULER_LOG="${KAIROS_DIR}/kairos_scheduler.log"
 

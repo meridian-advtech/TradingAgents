@@ -23,7 +23,7 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-SCRIPT_DIR = "/Users/jelmore/TradingAgents"
+SCRIPT_DIR = "/Users/jelmore/Kairos"
 
 CACHE_FILE = os.path.join(SCRIPT_DIR, "kairos_ipo_cache.json")
 UNIVERSE_FILE = os.path.join(SCRIPT_DIR, "kairos_universe.json")

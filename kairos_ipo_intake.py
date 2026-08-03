@@ -33,7 +33,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-SCRIPT_DIR = "/Users/jelmore/TradingAgents"
+SCRIPT_DIR = "/Users/jelmore/Kairos"
 sys.path.insert(0, SCRIPT_DIR)
 
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "kairos_config.json")

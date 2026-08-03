@@ -23,7 +23,7 @@ alternative below which the project isn't worth the operational cost and stress.
 
 - Runs on **Prometheus** (MacBook Air M5, 32GB RAM), lid-closed, plugged in permanently. Production
   target **Olympus** (Mac Studio M5 Ultra, 256GB RAM) arriving mid-to-late 2026.
-- Codebase: `/Users/jelmore/TradingAgents`. Python 3.11 venv at `~/Kairos-env` — always
+- Codebase: `/Users/jelmore/Kairos`. Python 3.11 venv at `~/Kairos-env` — always
   `source ~/Kairos-env/bin/activate` before running Kairos scripts directly (not needed inside Claude
   Code sessions using its own tool execution, but relevant when shelling out).
 - IB Gateway on port 7497 (paper). Replaced TWS entirely — TWS updates silently reset the "Enable

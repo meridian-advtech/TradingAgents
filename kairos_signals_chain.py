@@ -34,7 +34,7 @@ import os
 from datetime import datetime
 from typing import Optional
 
-SCRIPT_DIR = "/Users/jelmore/TradingAgents"
+SCRIPT_DIR = "/Users/jelmore/Kairos"
 
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "kairos_config.json")
 CACHE_FILE = os.path.join(SCRIPT_DIR, "kairos_ipo_cache.json")

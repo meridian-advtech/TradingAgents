@@ -103,7 +103,7 @@ print("\n" + "=" * 60)
 print("TASK 4: Logging Transaction")
 print("=" * 60)
 
-log_path = '/Users/jelmore/TradingAgents/kairos_log.txt'
+log_path = '/Users/jelmore/Kairos/kairos_log.txt'
 timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
 fill_str = f"${fill_price:.2f}" if fill_price else "N/A"
 log_entry = (

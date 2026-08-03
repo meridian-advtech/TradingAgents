@@ -33,7 +33,7 @@ launchd scheduling (do NOT create these yet — wire up after testing)
     <key>ProgramArguments</key>
     <array>
       <string>/usr/bin/python3</string>
-      <string>/Users/jelmore/TradingAgents/kairos_arbiter.py</string>
+      <string>/Users/jelmore/Kairos/kairos_arbiter.py</string>
       <string>--mode</string>
       <string>daily</string>
     </array>
@@ -51,7 +51,7 @@ launchd scheduling (do NOT create these yet — wire up after testing)
     <key>ProgramArguments</key>
     <array>
       <string>/usr/bin/python3</string>
-      <string>/Users/jelmore/TradingAgents/kairos_arbiter.py</string>
+      <string>/Users/jelmore/Kairos/kairos_arbiter.py</string>
       <string>--mode</string>
       <string>weekly</string>
     </array>

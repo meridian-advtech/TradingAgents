@@ -35,7 +35,7 @@ import os
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
-SCRIPT_DIR = "/Users/jelmore/TradingAgents"
+SCRIPT_DIR = "/Users/jelmore/Kairos"
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "kairos_config.json")
 EVENT_CACHE_FILE = os.path.join(SCRIPT_DIR, "kairos_ipo_cache.json")
 

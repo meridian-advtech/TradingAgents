@@ -2311,7 +2311,7 @@ def run_scheduled_cycle(args) -> None:
                 _dry = True
                 try:
                     import json as _json
-                    with open("/Users/jelmore/TradingAgents/kairos_config.json") as _f:
+                    with open("/Users/jelmore/Kairos/kairos_config.json") as _f:
                         _dry = bool(_json.load(_f).get("hot_ipo", {}).get("dry_run", True))
                 except Exception:
                     pass
@@ -2350,7 +2350,7 @@ def run_scheduled_cycle(args) -> None:
                 _ipo_dry = True
                 try:
                     import json as _json
-                    with open("/Users/jelmore/TradingAgents/kairos_config.json") as _f:
+                    with open("/Users/jelmore/Kairos/kairos_config.json") as _f:
                         _ipo_dry = bool(_json.load(_f).get("hot_ipo", {}).get("dry_run", True))
                 except Exception:
                     pass
@@ -2402,7 +2402,7 @@ def run_scheduled_cycle(args) -> None:
                 _lk_dry = True
                 try:
                     import json as _json
-                    with open("/Users/jelmore/TradingAgents/kairos_config.json") as _f:
+                    with open("/Users/jelmore/Kairos/kairos_config.json") as _f:
                         _lk_dry = bool(_json.load(_f).get("hot_ipo", {}).get("dry_run", True))
                 except Exception:
                     pass
@@ -2430,7 +2430,7 @@ def run_scheduled_cycle(args) -> None:
                 _div_dry = False
                 try:
                     import json as _json
-                    with open("/Users/jelmore/TradingAgents/kairos_config.json") as _f:
+                    with open("/Users/jelmore/Kairos/kairos_config.json") as _f:
                         _div_dry = bool(_json.load(_f).get("dividend", {}).get("dry_run", False))
                 except Exception:
                     pass
