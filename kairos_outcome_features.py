@@ -235,7 +235,8 @@ def fill_features(window_days: int = 5, only_missing: bool = True,
     Returns a summary dict. With dry_run=True, prints each trade's computed
     features and writes nothing.
     """
-    from kairos_ml_outcomes import init_db, get_connection
+    from kairos_ml_outcomes import (init_db, get_connection,
+                                    FORGONE_HORIZONS, forgone_column)
     init_db()  # ensure the feature columns exist (idempotent)
 
     now = datetime.now(timezone.utc)
@@ -263,7 +264,6 @@ def fill_features(window_days: int = 5, only_missing: bool = True,
         # The download must reach past the LONGEST forgone horizon, not just
         # window_days — otherwise the 60d peak is silently computed from a
         # truncated series and understates forgone gain.
-        from kairos_ml_outcomes import FORGONE_HORIZONS
         _span = max(window_days, max(FORGONE_HORIZONS))
         start = (min(entry_dts) - timedelta(days=2)).strftime("%Y-%m-%d")
         end = (max(exit_dts) + timedelta(days=_span + 3)).strftime("%Y-%m-%d")
@@ -313,7 +313,6 @@ def fill_features(window_days: int = 5, only_missing: bool = True,
             # Forgone horizons are written with COALESCE semantics in reverse:
             # a horizon that has not yet matured is None and must NOT overwrite
             # a value already stored, so only non-None horizons are updated.
-            from kairos_ml_outcomes import FORGONE_HORIZONS, forgone_column
             fg_cols, fg_vals = [], []
             for h in FORGONE_HORIZONS:
                 col = forgone_column(h)
