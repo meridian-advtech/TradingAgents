@@ -583,7 +583,8 @@ def _invoke_claude_reasoning(prompt_file: str, cfg: dict) -> dict | None:
         '"conviction":N,"rationale":"...",'
         '"predicted_direction":"UP|DOWN|NEUTRAL",'
         '"predicted_timeframe_days":N,"predicted_return_pct":F,'
-        '"key_conditions":"...","invalidation_conditions":"..."},...],'
+        '"key_conditions":"...",'
+        '"invalidation_conditions":"- closes below $N\\n- ...\\n- ..."},...],'
         '"tickers_evaluated":[...],"skipped":"..."}\n'
     )
 

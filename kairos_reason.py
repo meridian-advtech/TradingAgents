@@ -1397,7 +1397,15 @@ For every BUY, include a thesis block so we can track prediction accuracy:
   - key_conditions:  2–3 short bullets (one string, newline-separated) describing
                      what must remain true for the thesis to hold
   - invalidation_conditions:  2–3 short bullets describing what would PROVE the
-                              thesis wrong (e.g. "earnings miss", "breaks $X support")
+                              thesis wrong. The FIRST bullet MUST be a concrete
+                              price level written EXACTLY as "closes below $N" with
+                              a real number — e.g. "closes below $172.50". This one
+                              line is read mechanically by the exit engine, so
+                              "closes below recent support", "below the 50-day MA",
+                              or an approximate "(~$320)" are all unusable: name the
+                              number. Put it where the setup is genuinely broken,
+                              normally 3–15% under the current price. The remaining
+                              bullets are free text (catalyst / fundamental risks).
 
 {{
   "trades": [
@@ -1411,7 +1419,7 @@ For every BUY, include a thesis block so we can track prediction accuracy:
       "predicted_timeframe_days": 7,
       "predicted_return_pct": 5.0,
       "key_conditions": "- macro stays risk-on\\n- sector flows positive\\n- no negative earnings revision",
-      "invalidation_conditions": "- closes below 50-day MA\\n- earnings miss\\n- sector rotation against"
+      "invalidation_conditions": "- closes below $172.50\\n- earnings miss\\n- sector rotation against"
     }},
     ...more trades if warranted...
   ],
