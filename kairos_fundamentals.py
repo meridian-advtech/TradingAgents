@@ -99,13 +99,22 @@ CREATE TABLE IF NOT EXISTS fundamentals_facts (
     fp          TEXT,
     unit        TEXT,
     value       REAL,
+    period_start TEXT NOT NULL, -- '' for instant (balance-sheet) facts
     period_end  TEXT,          -- 'end' of the reported period
     filed       TEXT NOT NULL, -- FILING date: what makes this point-in-time
     form        TEXT,
     accession   TEXT,
-    -- tag is part of the key: one filing can report two tags for the same
-    -- logical field, and collapsing them would drop one arbitrarily.
-    PRIMARY KEY (ticker, field, tag, accession, period_end)
+    -- tag is in the key: one filing can report two tags for the same logical
+    -- field, and collapsing them would drop one arbitrarily.
+    -- period_start is in the key for a sharper reason: a single 10-Q reports
+    -- BOTH the quarter and the year-to-date figure under the SAME accession
+    -- and the SAME end date (AAPL's Q3 FY26 filing carries 109.4B for 90 days
+    -- and 364.4B for 272 days, both ending 2026-06-27). Keying without it
+    -- silently kept one and destroyed the other, which broke TTM by removing
+    -- exactly the cumulative facts the fiscal-year anchor depends on.
+    -- '' rather than NULL because SQLite treats NULLs in a PRIMARY KEY as
+    -- distinct, which would defeat the uniqueness this key exists to provide.
+    PRIMARY KEY (ticker, field, tag, accession, period_start, period_end)
 );
 CREATE INDEX IF NOT EXISTS idx_fund_lookup
     ON fundamentals_facts (ticker, field, filed);
@@ -230,7 +239,13 @@ def extract_facts(ticker: str, payload: dict) -> list[dict]:
                         "ticker": ticker, "field": field, "tag": tag,
                         "tag_rank": rank,
                         "fy": it.get("fy"), "fp": it.get("fp"), "unit": unit,
-                        "value": it.get("val"), "period_end": it.get("end"),
+                        "value": it.get("val"),
+                        # Duration facts carry 'start'; instant (balance-sheet)
+                        # facts do not. That distinction is what separates flow
+                        # fields needing TTM from stock fields that do not.
+                        # '' (not None) for instants — see the PK note above.
+                        "period_start": it.get("start") or "",
+                        "period_end": it.get("end"),
                         "filed": filed, "form": it.get("form"),
                         "accession": it.get("accn") or "",
                     })
@@ -244,10 +259,10 @@ def store_facts(rows: list[dict]) -> int:
     try:
         conn.executemany(
             "INSERT OR REPLACE INTO fundamentals_facts "
-            "(ticker, field, tag, tag_rank, fy, fp, unit, value, period_end, "
-            " filed, form, accession) "
+            "(ticker, field, tag, tag_rank, fy, fp, unit, value, period_start, "
+            " period_end, filed, form, accession) "
             "VALUES (:ticker,:field,:tag,:tag_rank,:fy,:fp,:unit,:value,"
-            ":period_end,:filed,:form,:accession)",
+            ":period_start,:period_end,:filed,:form,:accession)",
             rows)
         conn.commit()
     finally:
@@ -328,6 +343,173 @@ def get_fundamentals(ticker: str, as_of: str | None = None) -> dict:
     return out
 
 
+# ── TTM roll-up for flow fields ──────────────────────────────────────
+# Flow fields are reported as-filed, alternating between annual (10-K) and
+# quarterly / year-to-date (10-Q) periods. A ratio built from a mix of those is
+# meaningless, so every flow field must be rolled to trailing twelve months.
+#
+# THE TRAP: "sum the four most recent quarterly facts" is wrong, and wrong
+# silently. Most US filers publish no standalone Q4 — the 10-K covers it — so
+# the four most recent quarterly FACTS are not four CONSECUTIVE quarters. For
+# AAPL as of 2026-08-03 that approach reaches back past the missing Q4 FY25 to
+# Q3 FY25, double-counting one quarter and omitting another: 458.4B against a
+# true 466.9B. The error is small here and need not be for a company whose Q4
+# differs sharply from the quarter it wrongly repeats.
+#
+# THE METHOD: the fiscal-year anchor, which uses the cumulative facts EDGAR
+# already publishes and never requires a quarter the filer did not report:
+#
+#     TTM = FY + YTD_current − YTD_prior_year_of_equal_length
+#
+# For AAPL: 416.2 + 364.4 − 313.7 = 466.9B. When the latest annual figure IS
+# the last twelve months (we are at fiscal year end with nothing filed since),
+# TTM is just FY.
+
+FLOW_FIELDS = ("revenue", "net_income", "eps_diluted", "operating_cash_flow")
+STOCK_FIELDS = ("cash", "total_debt", "equity", "shares_diluted")
+
+_ANNUAL_MIN, _ANNUAL_MAX = 330, 400      # days — a fiscal year
+_PERIOD_TOL = 20                         # days of slack matching prior-year spans
+
+
+def _days(a: str, b: str) -> int:
+    from datetime import date
+    return (date.fromisoformat(b) - date.fromisoformat(a)).days
+
+
+def _duration_facts(conn, ticker: str, field: str, as_of: str) -> list[dict]:
+    """Deduped duration facts for a flow field, known as of `as_of`.
+
+    Restatements are collapsed by (start, end) keeping the latest FILED value —
+    the most recent statement of a period is the one that was believed on
+    `as_of`.
+    """
+    rows = conn.execute(
+        "SELECT value, period_start, period_end, filed, form, unit, fp "
+        "FROM fundamentals_facts "
+        "WHERE ticker = ? AND field = ? AND filed <= ? "
+        "  AND value IS NOT NULL AND period_start IS NOT NULL "
+        "  AND period_start != '' "
+        "ORDER BY filed ASC",
+        (ticker.upper(), field, as_of)).fetchall()
+    dedup: dict = {}
+    for r in rows:
+        dedup[(r["period_start"], r["period_end"])] = dict(r)   # later filed wins
+    return sorted(dedup.values(), key=lambda x: x["period_end"])
+
+
+def compute_ttm(conn, ticker: str, field: str, as_of: str) -> dict | None:
+    """Trailing-twelve-month value for one flow field, or None.
+
+    Returns {value, method, period_end, filed, components}. `method` is
+    'fy_plus_ytd_delta' (the full anchor), 'annual_only' (fiscal year end, or
+    no interim data), or 'four_quarters' (fallback for filers with no annual
+    fact yet, e.g. a recent IPO). None when nothing usable exists.
+    """
+    facts = _duration_facts(conn, ticker, field, as_of)
+    if not facts:
+        return None
+
+    annuals = [f for f in facts
+               if _ANNUAL_MIN <= _days(f["period_start"], f["period_end"]) <= _ANNUAL_MAX]
+
+    if annuals:
+        fy = max(annuals, key=lambda f: f["period_end"])
+        # Interim cumulative facts filed since that fiscal year ended. Take the
+        # LONGEST (most complete YTD) rather than the most recent quarter.
+        ytd = [f for f in facts
+               if f["period_start"] > fy["period_end"]
+               and _days(f["period_start"], f["period_end"]) < _ANNUAL_MIN]
+        if not ytd:
+            return {"value": fy["value"], "method": "annual_only",
+                    "period_end": fy["period_end"], "filed": fy["filed"],
+                    "unit": fy["unit"], "components": {"fy": fy["value"]}}
+
+        cur = max(ytd, key=lambda f: (_days(f["period_start"], f["period_end"]),
+                                      f["period_end"]))
+        cur_len = _days(cur["period_start"], cur["period_end"])
+
+        # Prior-year span of the same length, ending ~365 days earlier. Without
+        # it we cannot subtract the part of FY the YTD replaces, so we do not
+        # guess — we fall back and say so.
+        prior = None
+        for f in facts:
+            if abs(_days(f["period_start"], f["period_end"]) - cur_len) > _PERIOD_TOL:
+                continue
+            if abs(_days(f["period_end"], cur["period_end"]) - 365) <= _PERIOD_TOL:
+                prior = f
+                break
+        if prior is not None:
+            return {
+                "value": fy["value"] + cur["value"] - prior["value"],
+                "method": "fy_plus_ytd_delta",
+                "period_end": cur["period_end"],
+                "filed": max(fy["filed"], cur["filed"], prior["filed"]),
+                "unit": cur["unit"],
+                "components": {"fy": fy["value"], "ytd_current": cur["value"],
+                               "ytd_prior": prior["value"],
+                               "fy_period_end": fy["period_end"],
+                               "ytd_days": cur_len},
+            }
+        return {"value": fy["value"], "method": "annual_only",
+                "period_end": fy["period_end"], "filed": fy["filed"],
+                "unit": fy["unit"],
+                "components": {"fy": fy["value"],
+                               "note": "no prior-year span to net the YTD against"}}
+
+    # No annual fact at all (e.g. a recent IPO). Sum four CONSECUTIVE quarters,
+    # verifying contiguity rather than assuming it.
+    quarters = [f for f in facts if 75 <= _days(f["period_start"], f["period_end"]) <= 105]
+    if len(quarters) >= 4:
+        chain = [quarters[-1]]
+        for f in reversed(quarters[:-1]):
+            if abs(_days(f["period_end"], chain[-1]["period_start"])) <= 5:
+                chain.append(f)
+            if len(chain) == 4:
+                break
+        if len(chain) == 4:
+            span = _days(chain[-1]["period_start"], chain[0]["period_end"])
+            if _ANNUAL_MIN <= span <= _ANNUAL_MAX:
+                return {"value": sum(f["value"] for f in chain),
+                        "method": "four_quarters",
+                        "period_end": chain[0]["period_end"],
+                        "filed": max(f["filed"] for f in chain),
+                        "unit": chain[0]["unit"],
+                        "components": {"quarters": [f["value"] for f in chain],
+                                       "span_days": span}}
+    return None
+
+
+def get_fundamentals_ttm(ticker: str, as_of: str | None = None) -> dict:
+    """Point-in-time fundamentals with flow fields rolled to TTM.
+
+    Flow fields (see FLOW_FIELDS) come back as trailing-twelve-month figures
+    carrying the `method` used. Stock fields are balance-sheet instants and are
+    passed through unchanged. This is the function valuation ratios should use;
+    get_fundamentals returns raw as-filed values and will mix annual with
+    quarterly.
+    """
+    as_of = str(as_of or datetime.now(timezone.utc).strftime("%Y-%m-%d"))[:10]
+    out: dict = {}
+    try:
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            for field in FLOW_FIELDS:
+                ttm = compute_ttm(conn, ticker, field, as_of)
+                if ttm is not None:
+                    out[field] = ttm
+            raw = get_fundamentals(ticker, as_of)
+            for field in STOCK_FIELDS:
+                if field in raw:
+                    out[field] = {**raw[field], "method": "instant"}
+        finally:
+            conn.close()
+    except Exception:
+        return {}
+    return out
+
+
 def coverage_report(tickers: list[str] | None = None) -> dict:
     """What fraction of the universe has usable stored fundamentals."""
     tickers = tickers or load_universe()
@@ -356,6 +538,9 @@ def main() -> int:
     ap.add_argument("--ticker", action="append", help="fetch/inspect specific ticker(s)")
     ap.add_argument("--coverage", action="store_true", help="coverage report")
     ap.add_argument("--as-of", help="point-in-time date for --ticker reads (YYYY-MM-DD)")
+    ap.add_argument("--ttm", action="store_true",
+                    help="roll flow fields to trailing twelve months (use this "
+                         "for anything valuation-related)")
     ap.add_argument("--limit", type=int, help="cap tickers synced (for a trial run)")
     args = ap.parse_args()
 
@@ -378,7 +563,17 @@ def main() -> int:
                 print(f"  {sync_ticker(t)}")
                 stored = get_fundamentals(t, args.as_of)
             label = f" as of {args.as_of}" if args.as_of else ""
-            print(f"\n{t}{label}:")
+            if args.ttm:
+                stored = get_fundamentals_ttm(t, args.as_of)
+                print(f"\n{t}{label} — TTM:")
+                if not stored:
+                    print("  (no facts)")
+                for f, v in sorted(stored.items()):
+                    print(f"  {f:<20} {v['value']:>18,.2f}  [{v['unit']}] "
+                          f"through {v['period_end']}  ({v['method']})")
+                continue
+            print(f"\n{t}{label} — RAW as-filed (mixes annual and quarterly; "
+                  f"use --ttm for ratios):")
             if not stored:
                 print("  (no facts)")
             for f, v in sorted(stored.items()):
