@@ -85,6 +85,65 @@ def _reference_price(ib, ticker: str) -> float | None:
         return None
 
 
+def _working_buy_qty(ib, only: set | None = None) -> dict:
+    """{ticker: shares} already working as unfilled BUY orders at the broker.
+
+    THE DOUBLE-COVER HAZARD: a working BUY has not reduced the short position
+    yet, so a naive re-run reads the ticker as still fully short and places a
+    SECOND order for the same shares. If both then fill, the account flips from
+    short to LONG — the mirror image of the oversell this tool exists to undo.
+    Orders are counted across ALL client ids via reqAllOpenOrders(), because
+    the original order was placed on a different clientId than this run.
+    """
+    working: dict = {}
+    try:
+        ib.reqAllOpenOrders()
+        ib.sleep(1.5)
+        active = {"ApiPending", "PendingSubmit", "PreSubmitted", "Submitted",
+                  "PendingCancel"}
+        for t in ib.openTrades():
+            try:
+                if not t.orderStatus or t.orderStatus.status not in active:
+                    continue
+                if (t.order.action or "").upper() != "BUY":
+                    continue
+                sym = getattr(t.contract, "symbol", None)
+                if not sym or (only and sym not in only):
+                    continue
+                filled = float(getattr(t.orderStatus, "filled", 0) or 0)
+                remaining = float(t.order.totalQuantity) - filled
+                if remaining > 0:
+                    working[sym] = working.get(sym, 0.0) + remaining
+            except Exception:
+                continue
+    except Exception as exc:
+        # Cannot prove there are no working orders -> refuse to guess. The
+        # caller treats an unreadable order book as "assume in flight".
+        print(f"  WARNING: could not read open orders ({exc}) — "
+              f"treating all tickers as having orders in flight")
+        return {"__unreadable__": 1.0}
+    return working
+
+
+def _cancel_working_buys(ib, ticker: str) -> int:
+    """Cancel working BUY orders for one ticker. Returns how many were cancelled."""
+    n = 0
+    try:
+        for t in ib.openTrades():
+            if (getattr(t.contract, "symbol", None) == ticker
+                    and (t.order.action or "").upper() == "BUY"
+                    and t.orderStatus
+                    and t.orderStatus.status in ("PreSubmitted", "Submitted",
+                                                 "PendingSubmit", "ApiPending")):
+                ib.cancelOrder(t.order)
+                n += 1
+        if n:
+            ib.sleep(2)
+    except Exception as exc:
+        print(f"    WARNING: cancel failed for {ticker}: {exc}")
+    return n
+
+
 def _prev_close(ticker: str) -> float | None:
     """Last confirmed daily close, as an independent check on the IBKR quote."""
     try:
@@ -138,6 +197,10 @@ def main() -> int:
                     help="actually place orders (default is a dry run)")
     ap.add_argument("--ticker", action="append",
                     help="limit to specific ticker(s); repeatable")
+    ap.add_argument("--replace", action="store_true",
+                    help="cancel any working BUY orders for these tickers and "
+                         "re-price at the current market (use when a previous "
+                         "run's limits are stranded away from the market)")
     ap.add_argument("--allow-wide", action="store_true",
                     help="override the quote-sanity refusal (use only if you have "
                          "independently confirmed the price is real)")
@@ -190,6 +253,15 @@ def main() -> int:
                   "pre-market reading looks like. Orders for\n    these tickers "
                   "are REFUSED unless --allow-wide is passed.\n")
 
+        working = _working_buy_qty(ib, {s["ticker"] for s in shorts})
+        if working and "__unreadable__" not in working:
+            print("  ⓘ WORKING BUY ORDERS already at the broker:")
+            for k, v in sorted(working.items()):
+                print(f"      {k}: {v:g} share(s) unfilled")
+            print("    These have NOT yet reduced the short. Placing more without "
+                  "cancelling\n    them risks over-covering into a LONG position, so "
+                  "they are skipped\n    unless --replace is passed.\n")
+
         if not args.execute:
             print("DRY RUN — no orders placed. Re-run with --execute to cover.")
             if suspect:
@@ -228,6 +300,26 @@ def main() -> int:
             if qty <= 0:
                 print("    no longer short — SKIPPED")
                 continue
+
+            # Net off anything already working, or cancel it with --replace.
+            wk = _working_buy_qty(ib, {ticker})
+            pending = wk.get(ticker, 0.0) or (
+                qty if "__unreadable__" in wk else 0.0)
+            if pending > 0:
+                if args.replace:
+                    n = _cancel_working_buys(ib, ticker)
+                    print(f"    cancelled {n} working BUY order(s) before re-pricing")
+                    live = {d["ticker"]: d["qty_short"] for d in _short_positions(ib)}
+                    qty = live.get(ticker, 0)
+                    if qty <= 0:
+                        print("    no longer short after cancel — SKIPPED")
+                        continue
+                else:
+                    print(f"    {pending:g} share(s) already working as an unfilled "
+                          f"BUY — SKIPPED to avoid double-covering")
+                    print("    (let it fill or expire, or re-run with --replace "
+                          "to cancel and re-price)")
+                    continue
             if qty != s["qty_short"]:
                 print(f"    position changed ({s['qty_short']} -> {qty}) — "
                       f"covering {qty}")
