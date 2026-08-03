@@ -36,10 +36,19 @@ FILL_TIMEOUT_S = 45
 MAX_QUOTE_DIVERGENCE_PCT = 10.0
 
 
-def _connect():
+def _connect(master: bool = False):
+    """Connect to IB Gateway.
+
+    master=True uses clientId 0, which is the ONLY client permitted to cancel
+    orders placed by a different clientId. Without it, cancelOrder() on someone
+    else's order fails with "Error 10147: OrderId N that needs to be cancelled
+    is not found" — and, worse, ib_insync raises nothing, so the caller can
+    believe a cancel succeeded when the order is still live at the broker.
+    """
     from ib_insync import IB
     ib = IB()
-    ib.connect("127.0.0.1", 7497, clientId=random.randint(90, 99), timeout=10)
+    ib.connect("127.0.0.1", 7497,
+               clientId=0 if master else random.randint(90, 99), timeout=10)
     return ib
 
 
@@ -126,22 +135,151 @@ def _working_buy_qty(ib, only: set | None = None) -> dict:
 
 
 def _cancel_working_buys(ib, ticker: str) -> int:
-    """Cancel working BUY orders for one ticker. Returns how many were cancelled."""
-    n = 0
+    """Cancel working BUY orders for one ticker. Returns how many actually died.
+
+    VERIFIES the cancel rather than trusting it. A cancel request for an order
+    owned by another clientId fails at the broker with error 10147 while
+    ib_insync raises nothing, so counting requests SENT reports success while
+    the order is still live — which is how a "cancelled" order can later fill
+    and flip a flat account long.
+    """
+    active = ("PreSubmitted", "Submitted", "PendingSubmit", "ApiPending")
+    targets = []
     try:
         for t in ib.openTrades():
             if (getattr(t.contract, "symbol", None) == ticker
                     and (t.order.action or "").upper() == "BUY"
-                    and t.orderStatus
-                    and t.orderStatus.status in ("PreSubmitted", "Submitted",
-                                                 "PendingSubmit", "ApiPending")):
+                    and t.orderStatus and t.orderStatus.status in active):
+                targets.append(t)
                 ib.cancelOrder(t.order)
-                n += 1
-        if n:
-            ib.sleep(2)
+        if not targets:
+            return 0
+        ib.sleep(3)
+
+        # Re-read from the broker and count what is genuinely gone.
+        ib.reqAllOpenOrders()
+        ib.sleep(1.5)
+        still = {t.order.orderId for t in ib.openTrades()
+                 if getattr(t.contract, "symbol", None) == ticker
+                 and t.orderStatus and t.orderStatus.status in active}
+        killed = [t for t in targets if t.order.orderId not in still]
+        survived = [t for t in targets if t.order.orderId in still]
+        if survived:
+            ids = ", ".join(str(t.order.orderId) for t in survived)
+            print(f"    *** CANCEL FAILED for {ticker} order(s) {ids} — they are "
+                  f"STILL LIVE at the broker.")
+            print(f"    They were placed by another clientId; only clientId 0 may "
+                  f"cancel those.\n    Re-run with --cancel-stale, or cancel them "
+                  f"in the IB Gateway UI.")
+        return len(killed)
     except Exception as exc:
         print(f"    WARNING: cancel failed for {ticker}: {exc}")
-    return n
+        return 0
+
+
+_ACTIVE_STATES = ("PreSubmitted", "Submitted", "PendingSubmit", "ApiPending")
+
+
+def _list_working_buys(ib, tickers: set | None = None) -> list:
+    ib.reqAllOpenOrders()
+    ib.sleep(2)
+    return [t for t in ib.openTrades()
+            if (t.order.action or "").upper() == "BUY"
+            and t.orderStatus and t.orderStatus.status in _ACTIVE_STATES
+            and (not tickers or getattr(t.contract, "symbol", None) in tickers)]
+
+
+def cancel_stale_buys(tickers: set | None = None, allow_global: bool = False) -> int:
+    """Cancel working BUY orders. Places no orders — only withdraws instructions.
+
+    IBKR will not let one client cancel another client's order. Neither a
+    random clientId nor clientId 0 is sufficient: Gateway's master client must
+    be CONFIGURED for 0 to have that power, and it is not here. What does work
+    is reconnecting as the clientId that actually placed the order, which each
+    order carries. That is precise — it touches only the intended orders.
+
+    reqGlobalCancel() is the last resort behind --allow-global, because it
+    cancels EVERY open order in the account, including any the trading engine
+    has legitimately working.
+    """
+    ib = _connect()
+    try:
+        targets = _list_working_buys(ib, tickers)
+        if not targets:
+            print("  No working BUY orders to cancel.")
+            return 0
+        by_client: dict = {}
+        for t in targets:
+            print(f"  found {t.contract.symbol} BUY {t.order.totalQuantity:g} "
+                  f"@ {t.order.lmtPrice} (order {t.order.orderId}, "
+                  f"placed by clientId {t.order.clientId})")
+            by_client.setdefault(int(t.order.clientId), []).append(t)
+        want = {t.order.orderId for t in targets}
+    finally:
+        try:
+            ib.disconnect()
+        except Exception:
+            pass
+
+    # Reconnect as each owning client and cancel its own orders.
+    for cid, trades in by_client.items():
+        print(f"\n  reconnecting as clientId {cid} to cancel its {len(trades)} order(s)…")
+        try:
+            from ib_insync import IB
+            owner = IB()
+            owner.connect("127.0.0.1", 7497, clientId=cid, timeout=10)
+        except Exception as exc:
+            print(f"    could not connect as clientId {cid}: {exc}")
+            continue
+        try:
+            owner.reqAllOpenOrders()
+            owner.sleep(1.5)
+            ids = {t.order.orderId for t in trades}
+            for t in owner.openTrades():
+                if t.order.orderId in ids and t.orderStatus.status in _ACTIVE_STATES:
+                    owner.cancelOrder(t.order)
+            owner.sleep(3)
+        finally:
+            try:
+                owner.disconnect()
+            except Exception:
+                pass
+
+    # Verify against the broker from a fresh connection.
+    ib = _connect()
+    try:
+        still = [(t.contract.symbol, t.order.orderId)
+                 for t in _list_working_buys(ib, tickers) if t.order.orderId in want]
+        if not still:
+            print(f"\n  ✅ all {len(want)} order(s) cancelled and verified gone.")
+            return len(want)
+        print(f"\n  *** STILL LIVE: {still}")
+        if not allow_global:
+            print("  Per-client cancel did not take. Re-run with --allow-global to "
+                  "use\n  reqGlobalCancel(), which cancels EVERY open order in the "
+                  "account.")
+            return 0
+        others = [t for t in _list_working_buys(ib) if t.order.orderId not in want]
+        if others:
+            print(f"  NOTE: global cancel will ALSO kill {len(others)} unrelated "
+                  f"order(s): "
+                  f"{[(t.contract.symbol, t.order.orderId) for t in others]}")
+        print("  issuing reqGlobalCancel()…")
+        ib.reqGlobalCancel()
+        ib.sleep(4)
+        left = [(t.contract.symbol, t.order.orderId)
+                for t in _list_working_buys(ib, tickers) if t.order.orderId in want]
+        if left:
+            print(f"  *** STILL LIVE after global cancel: {left} — cancel from the "
+                  f"IBKR Client Portal or mobile app.")
+            return 0
+        print("  ✅ cancelled and verified gone via global cancel.")
+        return len(want)
+    finally:
+        try:
+            ib.disconnect()
+        except Exception:
+            pass
 
 
 def _prev_close(ticker: str) -> float | None:
@@ -197,6 +335,13 @@ def main() -> int:
                     help="actually place orders (default is a dry run)")
     ap.add_argument("--ticker", action="append",
                     help="limit to specific ticker(s); repeatable")
+    ap.add_argument("--cancel-stale", action="store_true",
+                    help="cancel working BUY orders (as clientId 0, so it can "
+                         "reach orders placed by any client) and exit. Places "
+                         "no orders.")
+    ap.add_argument("--allow-global", action="store_true",
+                    help="with --cancel-stale: fall back to reqGlobalCancel(), "
+                         "which cancels EVERY open order in the account")
     ap.add_argument("--replace", action="store_true",
                     help="cancel any working BUY orders for these tickers and "
                          "re-price at the current market (use when a previous "
@@ -207,6 +352,14 @@ def main() -> int:
     args = ap.parse_args()
 
     only = set(args.ticker) if args.ticker else None
+
+    if args.cancel_stale:
+        try:
+            cancel_stale_buys(only, allow_global=args.allow_global)
+        except Exception as exc:
+            print(f"IBKR connection failed: {exc}")
+            return 1
+        return 0
 
     try:
         ib = _connect()
