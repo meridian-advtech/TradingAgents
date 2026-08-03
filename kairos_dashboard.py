@@ -2652,18 +2652,6 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       position: relative;
       overflow: hidden;
     }
-    .mcard::after {
-      content: "";
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 2px;
-    }
-    .mcard.c-cyan::after   { background: var(--cyan); }
-    .mcard.c-green::after  { background: var(--green); }
-    .mcard.c-amber::after  { background: var(--amber); }
-    .mcard.c-red::after    { background: var(--red); }
-    .mcard.c-purple::after { background: var(--purple); }
-    .mcard.c-white::after  { background: var(--border2); }
     .mlabel { font-size: 11.5px; color: var(--dim); margin-bottom: 7px; font-weight: 500; }
     .mval { font-size: 22px; font-weight: 700; line-height: 1; margin-bottom: 4px; }
     .mval.cyan   { color: var(--cyan); }
@@ -2887,6 +2875,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       gap: 10px;
     }
     .section-hdr::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+    .hdrnote { font-size: 11.5px; font-weight: 450; color: var(--dim); }
     /* ── Charts ── */
     .chart-h280 { position: relative; height: 280px; }
     .chart-h340 { position: relative; height: 340px; }
@@ -3272,13 +3261,13 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 
 <!-- ── Positions ── -->
 <div class="card">
-  <div class="section-hdr">Current Positions</div>
+  <div class="section-hdr">Open positions</div>
   <div id="positions-wrap"></div>
 </div>
 
 <!-- ── Closed Positions ── -->
 <div class="card">
-  <div class="section-hdr">Closed Positions</div>
+  <div class="section-hdr">Closed positions</div>
   <div class="cl-filters" id="cl-filters">
     <div class="cl-filter-controls">
       <select class="cl-select" id="f-signal" aria-label="Filter by entry signal"></select>
@@ -3308,18 +3297,18 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 
 <!-- ── Decision Log ── -->
 <div class="card">
-  <div class="section-hdr">Decision Log &mdash; Recent 20</div>
+  <div class="section-hdr">Decision log <span class="hdrnote">recent 20</span></div>
   <div id="decisions-wrap"></div>
 </div>
 
 <!-- ── Trading Lessons + Screening Stats ── -->
 <div class="charts-2col">
   <div class="card">
-    <div class="section-hdr">Trading Lessons &mdash; kairos_ledger.txt</div>
+    <div class="section-hdr">Trading lessons <span class="hdrnote">kairos_ledger.txt</span></div>
     <div id="ledger-wrap"></div>
   </div>
   <div class="card">
-    <div class="section-hdr">Screening Stats &mdash; Last Run</div>
+    <div class="section-hdr">Screening stats <span class="hdrnote">last run</span></div>
     <div id="screen-wrap"></div>
   </div>
 </div>
@@ -4585,7 +4574,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     ];
     miniCards.forEach(mc => {
       shtml += `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px 12px;text-align:center">
-        <div style="font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);margin-bottom:5px">${mc.label}</div>
+        <div style="font-size:11.5px;color:var(--dim);margin-bottom:5px">${mc.label}</div>
         <div style="font-size:20px;font-weight:700;color:${mc.color}">${mc.val}</div>
       </div>`;
     });
@@ -4597,7 +4586,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     const coldPct = scr.universe_size > 0 ? (scr.cold_count / scr.universe_size * 100) : 0;
 
     shtml += '<div style="margin-bottom:14px">';
-    shtml += '<div style="font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);margin-bottom:6px">Score Distribution</div>';
+    shtml += '<div style="font-size:11.5px;color:var(--dim);margin-bottom:6px">Score distribution</div>';
     shtml += '<div style="display:flex;height:24px;border-radius:4px;overflow:hidden;border:1px solid var(--border)">';
     if (hotPct > 0) shtml += `<div style="width:${Math.max(hotPct,2)}%;background:var(--red);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff" title="HOT: ${scr.hot_count}">${scr.hot_count} HOT</div>`;
     if (warmPct > 0) shtml += `<div style="width:${Math.max(warmPct,3)}%;background:var(--amber);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#000" title="WARM: ${scr.warm_count}">${scr.warm_count} WARM</div>`;
@@ -4606,13 +4595,13 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 
     // HOT tickers
     shtml += '<div style="margin-bottom:10px">';
-    shtml += '<div style="font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);margin-bottom:5px">HOT Tickers</div>';
+    shtml += '<div style="font-size:11.5px;color:var(--dim);margin-bottom:5px">HOT Tickers</div>';
     shtml += '<div style="font-size:13px;color:var(--red);font-weight:700">' + (hotStr) + '</div>';
     shtml += "</div>";
 
     // Shortlist table with Tier column
     shtml += '<div style="margin-bottom:8px">';
-    shtml += '<div style="font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);margin-bottom:5px">Tier 2 Shortlist</div>';
+    shtml += '<div style="font-size:11.5px;color:var(--dim);margin-bottom:5px">Tier 2 Shortlist</div>';
     const srcTiers = scr.source_tiers || {};
     if (scr.shortlist && scr.shortlist.length > 0) {
       shtml += '<div class="tbl-wrap"><table style="font-size:12px"><thead><tr>' +
