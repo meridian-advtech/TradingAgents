@@ -2717,6 +2717,30 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     .tbar i { display: block; height: 100%; border-radius: 2px; background: var(--cyan); }
     .tmeta { display: flex; justify-content: space-between; gap: 8px;
              font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+    /* ── Positions table ── */
+    .postbl th.r, .postbl td.r { text-align: right; }
+    .postbl td { white-space: nowrap; }
+    .postbl td.tkr { font-weight: 640; color: var(--cyan); }
+    .postbl td.tkr.crypto { color: var(--purple); }
+    .postbl td.nm {
+      color: var(--dim); max-width: 200px;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .postbl td.sec { color: var(--dim); font-size: 11.5px; }
+    .dimval { color: var(--muted); }
+    .wcell { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+    .wbar { display: inline-block; width: 52px; height: 4px; border-radius: 2px;
+            background: var(--border2); flex: none; }
+    .wbar i { display: block; height: 100%; border-radius: 2px; background: var(--cyan); }
+    /* Totals row sticks to the bottom of the scroll box so it stays readable
+       while the book scrolls behind it. */
+    .postbl tfoot td {
+      position: sticky; bottom: 0; background: var(--surface2);
+      border-top: 1px solid var(--border2); border-bottom: 0;
+      font-weight: 640; z-index: 1;
+    }
+    .postbl tfoot td.nm { color: var(--dim); font-weight: 450; }
+    .postbl tfoot .wbar { background: transparent; }
     /* ── Two-column section, cards sized to content ── */
     .cols2 {
       display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2919,11 +2943,39 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     #closed-list .cl-days { color: var(--text); }
     #closed-list td, #closed-list th { white-space: nowrap; }
     /* ── Signal analytics table ── */
-    #signal-analytics td, #signal-analytics th { white-space: nowrap; }
-    #signal-analytics th.sortable { cursor: pointer; user-select: none; }
-    #signal-analytics th.sortable:hover { color: var(--text); }
-    #signal-analytics th .arrow { color: var(--cyan); font-size: 9px; margin-left: 3px; }
-    #signal-analytics tbody tr:hover td { background: var(--hover); }
+    /* ── Diverging bar list — bars grow left/right from a centre baseline ── */
+    .dvrow {
+      display: grid; grid-template-columns: 150px 150px minmax(0, 1fr) 100px;
+      align-items: center; gap: 12px; padding: 7px 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    .dvrow:last-child { border-bottom: 0; }
+    .dvrow:not(.dvhead):hover { background: var(--hover); }
+    .dvlabel {
+      font-size: 12px; font-weight: 620; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    /* Fixed tracks, right-aligned: space-between sizes each cell to its own
+       text, so a 6-char header drifts off the 2-char figure below it. */
+    .dvmeta {
+      display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;
+      font-size: 11px; color: var(--dim); text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .dvtrack { position: relative; height: 14px; }
+    .dvaxis { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--border2); }
+    .dvbar { position: absolute; top: 3px; height: 8px; border-radius: 3px; }
+    /* 2px gap at the baseline so a bar never touches the axis rule. */
+    .dvbar.p { left: calc(50% + 2px); background: var(--green); }
+    .dvbar.n { right: calc(50% + 2px); background: var(--red); }
+    .dvval { font-size: 12px; font-weight: 600; text-align: right;
+             font-variant-numeric: tabular-nums; }
+    .dvhead { background: var(--surface2); border-bottom: 1px solid var(--border2); }
+    .dvhead .dvmeta span, .dvhead .dvval { font-size: 11px; font-weight: 600; color: var(--dim); }
+    .caveat {
+      font-size: 11px; color: var(--amber); line-height: 1.5;
+      padding: 10px 4px 2px; border-top: 1px solid var(--border); margin-top: 8px;
+    }
     .sig-pill {
       display: inline-flex; align-items: center; gap: 6px;
       font-weight: 700; color: var(--text); font-size: 11px;
@@ -3873,109 +3925,95 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     apply();
   })();
 
-  // ── Signal Performance Analytics (per-signal breakdown) ────────────
-  (function renderSignalAnalytics() {
+  // ── Signal attribution ─────────────────────────────────────────────
+  // Realized P&L by entry signal is a magnitude above/below a zero baseline —
+  // the diverging case. A diverging bar reads the sign at a glance in a way a
+  // column of signed numbers does not, and it breaks up a page that is
+  // otherwise all tables. Green/red here is polarity, not series identity.
+  (function renderSignalAttribution() {
     const wrap = document.getElementById("signal-analytics");
     if (!wrap) return;
     const ALL = DATA.closed_trades || [];
     if (!ALL.length) {
-      wrap.innerHTML = `<div class="no-data">No closed trades to analyze yet</div>`;
+      wrap.innerHTML = '<div class="no-data">No closed trades to analyze yet</div>';
       return;
     }
 
-    const NO_SIGNAL = "__none__";
-    const esc = (s) => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-    const money = (n) => n == null ? "—" : (n >= 0 ? "+$" : "−$") + Math.abs(n).toLocaleString("en-US", {maximumFractionDigits:0});
-    const pctSig = (n) => n == null ? "—" : fmtSign(n, 1) + "%";
-
-    // Group trades by signal — a trade counts toward EVERY signal it carries;
-    // signal-less trades fall into the "No signal" bucket.
-    const buckets = {};
-    ALL.forEach(t => {
-      const sigs = (t.entry_signals || []);
-      const keys = sigs.length ? sigs : [NO_SIGNAL];
-      keys.forEach(k => { (buckets[k] = buckets[k] || []).push(t); });
+    const NO_SIGNAL = "(unattributed)";
+    const groups = {};
+    ALL.forEach(function (t) {
+      const sigs = (t.entry_signals && t.entry_signals.length)
+        ? t.entry_signals : [NO_SIGNAL];
+      sigs.forEach(function (sig) {
+        (groups[sig] = groups[sig] || []).push(t);
+      });
     });
 
-    // One aggregated row per signal, reusing the shared computeSummary().
-    let rows = Object.keys(buckets).map(sig => {
-      const C = computeSummary(buckets[sig]);
+    const stats = Object.keys(groups).map(function (sig) {
+      const ts = groups[sig];
+      let pnl = 0, wins = 0, sumPct = 0, holdN = 0, holdSum = 0;
+      ts.forEach(function (t) {
+        pnl += t.realized_pnl_usd || 0;
+        if ((t.realized_pnl_pct || 0) > 0) wins++;
+        sumPct += t.realized_pnl_pct || 0;
+        if (t.days_held != null) { holdSum += t.days_held; holdN++; }
+      });
       return {
-        signal: sig,
-        is_none: sig === NO_SIGNAL,
-        trades: C.n,
-        win_rate: C.win_rate,
-        avg_win: C.avg_win_pct,
-        avg_loss: C.avg_loss_pct,
-        total_pnl: C.total_pnl_usd,
-        avg_days: C.avg_days,
+        name: sig, n: ts.length, pnl: pnl,
+        win: wins / ts.length * 100,
+        avg: sumPct / ts.length,
+        hold: holdN ? holdSum / holdN : null,
       };
+    }).sort(function (a, b) { return b.pnl - a.pnl; });
+
+    const max = Math.max.apply(null, stats.map(function (r) {
+      return Math.abs(r.pnl); })) || 1;
+
+    // Column headers sit directly above the figures they name; a legend
+    // stranded in the panel header leaves four unlabelled numbers per row.
+    let html = '<div class="dv"><div class="dvrow dvhead"><div></div>'
+      + '<div class="dvmeta"><span>Trades</span><span>Win</span>'
+      + '<span>Avg</span><span>Hold</span></div>'
+      + '<div class="dvtrack"></div><div class="dvval">Realized</div></div>';
+
+    html += stats.map(function (r) {
+      const side = r.pnl >= 0 ? "p" : "n";
+      const w = 50 * Math.abs(r.pnl) / max;
+      return '<div class="dvrow">'
+        + '<div class="dvlabel">' + esc(r.name) + '</div>'
+        + '<div class="dvmeta"><span>' + r.n + '</span>'
+        + '<span>' + fmtN(r.win, 0) + '%</span>'
+        + '<span class="' + (r.avg >= 0 ? "pnl-pos" : "pnl-neg") + '">'
+        + (r.avg >= 0 ? "+" : "") + fmtN(r.avg, 1) + '%</span>'
+        + '<span>' + (r.hold == null ? "—" : fmtN(r.hold, 0) + "d") + '</span></div>'
+        + '<div class="dvtrack"><div class="dvaxis"></div>'
+        + '<div class="dvbar ' + side + '" style="width:' + w.toFixed(1) + '%"></div></div>'
+        + '<div class="dvval ' + (r.pnl >= 0 ? "pnl-pos" : "pnl-neg") + '">'
+        + usdSig(r.pnl) + '</div></div>';
+    }).join("");
+
+    html += '</div>';
+
+    // The chart is persuasive and the underlying attribution is not clean —
+    // say so next to it, with the real recency so it does not read as a
+    // closed historical gap.
+    const unattr = ALL.filter(function (t) {
+      return !(t.entry_signals && t.entry_signals.length); });
+    let last = null;
+    unattr.forEach(function (t) {
+      const d = String(t.entry_date || "").slice(0, 10);
+      if (d && (!last || d > last)) last = d;
     });
-
-    const COLS = [
-      {key: "signal",    label: "Signal",    sortable: false, align: "left"},
-      {key: "trades",    label: "Trades",    sortable: true},
-      {key: "win_rate",  label: "Win Rate",  sortable: true},
-      {key: "avg_win",   label: "Avg Win",   sortable: false},
-      {key: "avg_loss",  label: "Avg Loss",  sortable: false},
-      {key: "total_pnl", label: "Total P&L", sortable: true},
-      {key: "avg_days",  label: "Avg Hold",  sortable: true},
-    ];
-    let sortKey = "total_pnl", sortDir = -1;   // default: Total P&L descending
-
-    function sortRows() {
-      rows.sort((a, b) => {
-        const av = a[sortKey], bv = b[sortKey];
-        if (av == null && bv == null) return 0;
-        if (av == null) return 1;            // nulls last
-        if (bv == null) return -1;
-        return (av - bv) * sortDir;
-      });
+    if (unattr.length) {
+      html += '<div class="caveat">Attribution is reconstructed partly from '
+        + 'rationale text, so confluence trades count under every signal that '
+        + 'fired — the bars sum to more than the book. ' + unattr.length
+        + ' trades carry no entry signal at all'
+        + (last ? ', the most recent entered ' + esc(last) : "")
+        + ', so this is not a closed historical gap. Directional only.</div>';
     }
 
-    function render() {
-      sortRows();
-      let head = "<tr>";
-      COLS.forEach(c => {
-        const active = c.sortable && c.key === sortKey;
-        const arrow = active ? `<span class="arrow">${sortDir < 0 ? "▾" : "▴"}</span>` : "";
-        const cls = c.sortable ? "sortable" : "";
-        const style = c.align === "left" ? "" : ' style="text-align:right"';
-        head += `<th class="${cls}"${style} data-key="${c.key}">${c.label}${arrow}</th>`;
-      });
-      head += "</tr>";
-
-      let body = "";
-      rows.forEach(r => {
-        const pnlCls = r.total_pnl == null ? "" : (r.total_pnl >= 0 ? "pnl-pos" : "pnl-neg");
-        const wr = r.win_rate == null ? "—" : fmtN(r.win_rate, 1) + "%";
-        const wrColor = r.win_rate != null && r.win_rate >= 50 ? "pnl-pos" : "";
-        const sigCell = r.is_none
-          ? `<span class="sig-pill muted"><span class="dot"></span>No signal</span>`
-          : `<span class="sig-pill"><span class="dot"></span>${esc(r.signal)}</span>`;
-        const rt = ' style="text-align:right"';
-        body += `<tr>
-          <td>${sigCell}</td>
-          <td${rt}>${r.trades}</td>
-          <td${rt} class="${wrColor}">${wr}</td>
-          <td${rt} class="pnl-pos">${pctSig(r.avg_win)}</td>
-          <td${rt} class="pnl-neg">${pctSig(r.avg_loss)}</td>
-          <td${rt} class="${pnlCls}">${money(r.total_pnl)}</td>
-          <td${rt}>${r.avg_days != null ? Math.round(r.avg_days) + "d" : "—"}</td>
-        </tr>`;
-      });
-
-      wrap.innerHTML = `<div class="tbl-wrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
-      wrap.querySelectorAll("th.sortable").forEach(th => {
-        th.addEventListener("click", () => {
-          const k = th.dataset.key;
-          if (k === sortKey) { sortDir = -sortDir; }
-          else { sortKey = k; sortDir = -1; }   // new column starts descending
-          render();
-        });
-      });
-    }
-    render();
+    wrap.innerHTML = html;
   })();
 
   // ── Chart defaults ─────────────────────────────────────────────────
@@ -4283,39 +4321,72 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
   })();
 
   // ── Positions table ────────────────────────────────────────────────
+  // Sorted A-Z: the book is a reference list you scan for a known name, not a
+  // ranking. Weight bars still scale off the largest holding, so relative size
+  // survives the reorder. A sticky totals row closes the table — without it
+  // the reader has to trust that 56 rows add up to the headline.
   const posWrap = document.getElementById("positions-wrap");
   if (positions.length === 0) {
-    posWrap.innerHTML = \'<div class="no-data">No open positions (or IBKR offline)</div>\';
+    posWrap.innerHTML = '<div class="no-data">No open positions (or IBKR offline)</div>';
   } else {
-    let html = \'<div class="tbl-wrap"><table><thead><tr>\' +
-      \'<th>Symbol</th><th>Name</th><th>Class</th><th>Sector</th><th>Qty</th><th>Avg Cost</th><th>Market Value</th><th>Unreal P&amp;L</th><th>P&L %</th>\' +
-      \'</tr></thead><tbody>\';
-    positions.forEach(p => {
-      const isSim = p.symbol.includes("(SIM)");
-      const cls = p.assetClass === "crypto" ? "purple" : "cyan";
-      const upnl = p.unrealized_pnl;
-    const costBasis = (p.avg_cost || 0) * (p.quantity || 0);
-    const upnlPct = (costBasis > 0 && upnl != null) ? (upnl / costBasis * 100) : null;
-    const upnlPctStr = upnlPct != null
-      ? `<span class="${upnlPct >= 0 ? 'pnl-pos' : 'pnl-neg'}">${upnlPct >= 0 ? '+' : ''}${upnlPct.toFixed(2)}%</span>`
-      : '<span style="color:var(--muted)">—</span>';
-      const upnlStr = upnl != null
-        ? `<span class="${upnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${upnl >= 0 ? '+' : ''}$${Math.abs(upnl).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>`
-        : \'<span style="color:var(--muted)">\u2014</span>\';
-      const rawTkr = p.symbol.split(" ")[0];
-      html += `<tr data-ticker="${rawTkr}" onclick="openPanel('${rawTkr}')">
-        <td style="color:var(--${cls});font-weight:700">${p.symbol}</td>
-        <td style="color:var(--dim);font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name || ""}</td>
-        <td style="color:var(--dim);text-transform:uppercase;font-size:10px">${p.assetClass}</td>
-        <td style="color:var(--dim);font-size:11px">${p.sector || "\u2014"}</td>
-        <td>${p.quantity.toLocaleString()}</td>
-        <td>$${p.avg_cost.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
-        <td>$${p.market_value.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
-        <td>${upnlStr}</td>
-    <td>${upnlPctStr}</td>
-      </tr>`;
+    const nlvBase = M.current_value > 0 ? M.current_value : 1;
+    const rows = positions.slice().sort(function (a, b) {
+      return String(a.symbol).localeCompare(String(b.symbol));
     });
-    html += "</tbody></table></div>";
+    const weightOf = (p) => (p.market_value || 0) / nlvBase * 100;
+    const maxW = Math.max.apply(null, rows.map(weightOf)) || 1;
+
+    let totMV = 0, totPnl = 0, totBasis = 0;
+    rows.forEach(function (p) {
+      totMV    += p.market_value || 0;
+      totPnl   += p.unrealized_pnl || 0;
+      totBasis += (p.avg_cost || 0) * (p.quantity || 0);
+    });
+    const totPct = totBasis > 0 ? (totPnl / totBasis * 100) : null;
+
+    const pnlCell = (v, isPct) => {
+      if (v == null) return '<span class="dimval">—</span>';
+      const c = v >= 0 ? "pnl-pos" : "pnl-neg";
+      const t = isPct ? (v >= 0 ? "+" : "") + fmtN(v, 2) + "%" : usdSig(v);
+      return '<span class="' + c + '">' + t + '</span>';
+    };
+
+    let html = '<div class="tbl-wrap"><table class="postbl"><thead><tr>'
+      + '<th>Ticker</th><th>Name</th><th>Sector</th><th class="r">Qty</th>'
+      + '<th class="r">Avg cost</th><th class="r">Market value</th>'
+      + '<th class="r">Unrealized</th><th class="r">Return</th>'
+      + '<th class="r">Weight</th></tr></thead><tbody>';
+
+    rows.forEach(function (p) {
+      const upnl = p.unrealized_pnl;
+      const basis = (p.avg_cost || 0) * (p.quantity || 0);
+      const pct = (basis > 0 && upnl != null) ? (upnl / basis * 100) : null;
+      const w = weightOf(p);
+      const rawTkr = String(p.symbol).split(" ")[0];
+      const isCrypto = p.assetClass === "crypto";
+      html += `<tr data-ticker="${esc(rawTkr)}" onclick="openPanel('${esc(rawTkr)}')">`
+        + '<td class="tkr' + (isCrypto ? " crypto" : "") + '">' + esc(p.symbol) + '</td>'
+        + '<td class="nm">' + esc(p.name || "") + '</td>'
+        + '<td class="sec">' + esc(p.sector || "—") + '</td>'
+        + '<td class="r">' + (p.quantity || 0).toLocaleString() + '</td>'
+        + '<td class="r">$' + fmtN(p.avg_cost, 2) + '</td>'
+        + '<td class="r">' + fmtUSD(p.market_value) + '</td>'
+        + '<td class="r">' + pnlCell(upnl, false) + '</td>'
+        + '<td class="r">' + pnlCell(pct, true) + '</td>'
+        + '<td class="r wcell"><span>' + fmtN(w, 2) + '%</span>'
+        + '<span class="wbar"><i style="width:' + (w / maxW * 100).toFixed(0) + '%"></i></span></td>'
+        + '</tr>';
+    });
+
+    html += '</tbody><tfoot><tr>'
+      + '<td class="tkr">TOTAL</td>'
+      + '<td class="nm">' + rows.length + ' positions</td><td></td><td></td><td></td>'
+      + '<td class="r">' + fmtUSD(totMV) + '</td>'
+      + '<td class="r">' + pnlCell(totPnl, false) + '</td>'
+      + '<td class="r">' + pnlCell(totPct, true) + '</td>'
+      + '<td class="r wcell"><span>' + fmtN(totMV / nlvBase * 100, 2) + '%</span>'
+      + '<span class="wbar"></span></td>'
+      + '</tr></tfoot></table></div>';
     posWrap.innerHTML = html;
   }
 
