@@ -2999,6 +2999,13 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       font-size: 11px; color: var(--amber); line-height: 1.5;
       padding: 10px 4px 2px; border-top: 1px solid var(--border); margin-top: 8px;
     }
+    /* A coverage note is context, not a warning — it must not compete with the
+       attribution caveat, which flags data you genuinely cannot trust. */
+    .caveat.neutral { color: var(--dim); padding: 10px 14px 12px; margin-top: 0; }
+    .exitbl th { font-size: 11.5px; }
+    .exitbl th.r, .exitbl td.r { text-align: right; }
+    .exitbl td { padding: 7px 14px; }
+    .exitbl .wcell { justify-content: flex-end; }
     .sig-pill {
       display: inline-flex; align-items: center; gap: 6px;
       font-weight: 700; color: var(--text); font-size: 11px;
@@ -3022,8 +3029,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     .cl-more-btn {
       background: var(--surface2); color: var(--dim);
       border: 1px solid var(--border); border-radius: 6px;
-      padding: 8px 20px; font-family: inherit; font-size: 11px;
-      letter-spacing: 1px; text-transform: uppercase; cursor: pointer;
+      padding: 8px 20px; font-family: inherit; font-size: 12px; cursor: pointer;
       transition: color 0.12s, border-color 0.12s;
     }
     .cl-more-btn:hover { color: var(--cyan); border-color: var(--cyan); }
@@ -3072,11 +3078,11 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       display: flex; align-items: center; justify-content: center; transition: all 0.18s;
     }
     .so-close:hover { color: var(--text); border-color: var(--red); background: var(--red-dim); }
-    .so-sym { font-size: 26px; font-weight: 700; letter-spacing: 1px; }
+    .so-sym { font-size: 26px; font-weight: 660; letter-spacing: -0.5px; font-variant-numeric: proportional-nums; }
     .so-sym.equity { color: var(--cyan); }
     .so-sym.crypto { color: var(--purple); }
     .so-class {
-      font-size: 8.5px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim);
+      font-size: 11px; color: var(--dim);
       border: 1px solid var(--border2); border-radius: 4px; padding: 2px 7px; margin-left: 10px;
       vertical-align: middle;
     }
@@ -3088,18 +3094,18 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     /* Sections */
     .so-sec { margin-top: 26px; }
     .so-sec-hdr {
-      font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--dim);
+      font-size: 12.5px; font-weight: 620; color: var(--text);
       margin-bottom: 14px; display: flex; align-items: center; gap: 10px;
     }
     .so-sec-hdr::after { content: ""; flex: 1; height: 1px; background: var(--border); }
     /* Facts grid */
     .so-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 22px; }
-    .so-fact-label { font-size: 8.5px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--dim); margin-bottom: 5px; }
+    .so-fact-label { font-size: 11.5px; color: var(--dim); margin-bottom: 5px; }
     .so-fact-val { font-size: 15px; font-weight: 700; color: var(--text); }
     /* Pills */
     .so-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
     .so-pill {
-      font-size: 10px; font-weight: 700; letter-spacing: 0.5px; padding: 5px 11px; border-radius: 20px;
+      font-size: 11px; font-weight: 600; padding: 5px 11px; border-radius: 20px;
       background: var(--cyan-dim); color: var(--cyan); border: 1px solid var(--cyan);
     }
     .so-pill.rev { background: var(--purple-dim); color: var(--purple); border-color: var(--purple); }
@@ -3117,7 +3123,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     .so-bar-meta { display: flex; justify-content: space-between; font-size: 11px; margin: 9px 0 5px; }
     .so-bar-detail { font-size: 10.5px; color: var(--dim); margin-top: 6px; line-height: 1.4; }
     .so-kv-row { display: flex; gap: 26px; margin-bottom: 16px; flex-wrap: wrap; }
-    .so-kv-label { font-size: 8.5px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--dim); margin-bottom: 4px; }
+    .so-kv-label { font-size: 11.5px; color: var(--dim); margin-bottom: 4px; }
     .so-kv-val { font-size: 16px; font-weight: 700; }
     /* Expandable all-conditions */
     .so-expand { margin-top: 14px; }
@@ -3134,13 +3140,12 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border);
     }
     .so-cond:last-child { border-bottom: none; }
-    .so-cond-name { font-size: 11.5px; font-weight: 700; color: var(--text); width: 150px; flex-shrink: 0; }
+    .so-cond-name { font-size: 12px; font-weight: 620; color: var(--text); width: 150px; flex-shrink: 0; }
     .so-cond-detail { font-size: 10px; color: var(--dim); line-height: 1.35; flex: 1; }
     .so-cond-prox { font-size: 11px; font-weight: 700; width: 42px; text-align: right; flex-shrink: 0; }
     /* Conviction status chip */
     .so-chip {
-      font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
-      padding: 3px 9px; border-radius: 4px;
+      font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 4px;
     }
     .so-chip.fresh { background: var(--green-dim); color: var(--green); }
     .so-chip.decaying { background: var(--amber-dim); color: var(--amber); }
@@ -3259,10 +3264,16 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
   <div id="closed-list"></div>
 </div>
 
-<!-- ── Signal Performance Analytics ── -->
-<div class="card">
-  <div class="section-hdr">Signal Performance Analytics</div>
-  <div id="signal-analytics"></div>
+<!-- ── Attribution: why we entered, how we exited ── -->
+<div class="cols2">
+  <div class="card np">
+    <div class="ph">Signal attribution <span class="phn">realized P&amp;L by entry signal</span></div>
+    <div id="signal-analytics" style="padding:4px 14px 12px"></div>
+  </div>
+  <div class="card np">
+    <div class="ph">Exit distribution <span class="phn" id="exit-phn">how positions closed</span></div>
+    <div id="exit-distribution"></div>
+  </div>
 </div>
 
 <!-- ── Decision Log ── -->
@@ -4037,6 +4048,71 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     }
 
     wrap.innerHTML = html;
+  })();
+
+  // ── Exit distribution ──────────────────────────────────────────────
+  // Share is computed over trades that carry a recorded reason, not over every
+  // closed trade. Exit-reason capture did not exist for the earliest trades;
+  // "Not recorded" is an absence of data, not a way of exiting, and leaving
+  // those trades in the denominator understated every real exit type by ~1.25x
+  // (Trailing Stop read 23.5% where it is actually 37.3%).
+  (function renderExitDistribution() {
+    const host = document.getElementById("exit-distribution");
+    if (!host) return;
+    const ALL = DATA.closed_trades || [];
+    const cov = DATA.exit_coverage || {};
+    const pool = ALL.filter(function (t) { return t.exit_reason; });
+
+    if (!pool.length) {
+      host.innerHTML = '<div class="no-data">No exit reasons recorded yet</div>';
+      return;
+    }
+
+    const groups = {};
+    pool.forEach(function (t) {
+      const k = t.exit_type || "Unlabelled rationale";
+      (groups[k] = groups[k] || []).push(t);
+    });
+    const rows = Object.keys(groups).map(function (k) {
+      const ts = groups[k];
+      let pnl = 0, sumPct = 0;
+      ts.forEach(function (t) {
+        pnl += t.realized_pnl_usd || 0;
+        sumPct += t.realized_pnl_pct || 0;
+      });
+      return { name: k, n: ts.length, pnl: pnl, avg: sumPct / ts.length };
+    }).sort(function (a, b) { return b.n - a.n; });
+
+    const maxN = rows[0].n || 1;
+    let html = '<table class="exp exitbl"><thead><tr><th>Exit type</th>'
+      + '<th class="r">Trades</th><th class="r">Share</th>'
+      + '<th class="r">Avg return</th><th class="r">Realized</th></tr></thead><tbody>';
+    html += rows.map(function (r) {
+      return '<tr><td>' + esc(r.name) + '</td>'
+        + '<td class="r wcell"><span>' + r.n + '</span>'
+        + '<span class="wbar"><i style="width:' + (r.n / maxN * 100).toFixed(0) + '%"></i></span></td>'
+        + '<td class="p">' + fmtN(r.n / pool.length * 100, 1) + '%</td>'
+        + '<td class="r ' + (r.avg >= 0 ? "pnl-pos" : "pnl-neg") + '">'
+        + (r.avg >= 0 ? "+" : "") + fmtN(r.avg, 2) + '%</td>'
+        + '<td class="r ' + (r.pnl >= 0 ? "pnl-pos" : "pnl-neg") + '">'
+        + usdSig(r.pnl) + '</td></tr>';
+    }).join("");
+    html += '</tbody></table>';
+
+    const missing = cov.unrecorded != null ? cov.unrecorded : (ALL.length - pool.length);
+    if (missing > 0) {
+      html += '<div class="caveat neutral">Share is of the ' + pool.length
+        + ' trades that carry a recorded exit reason ('
+        + fmtN(pool.length / ALL.length * 100, 0) + '% of ' + ALL.length
+        + (cov.capture_from ? '; capture began ' + esc(cov.capture_from) : "")
+        + '). The other ' + missing + ' closed before the instrumentation '
+        + 'existed and cannot carry a type — counting them would understate '
+        + 'every real exit reason.</div>';
+    }
+
+    host.innerHTML = html;
+    const phn = document.getElementById("exit-phn");
+    if (phn) phn.textContent = pool.length + " of " + ALL.length + " closed trades";
   })();
 
   // ── Chart defaults ─────────────────────────────────────────────────
