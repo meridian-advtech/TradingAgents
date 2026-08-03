@@ -139,7 +139,26 @@ _TRADE_OUTCOMES_EXTRA_COLUMNS = [
     ("post_exit_window_days", "INTEGER"),
     ("exit_reason", "TEXT"),             # trigger, copied from kairos.db position_exits
     ("features_filled_at", "TEXT"),      # NULL until features computed
+    # Provenance of signals_fired — how the attribution was determined, which
+    # is the difference between "this signal drove the trade" and "this signal
+    # happened to be firing for this ticker that day". See ATTRIBUTION_SOURCES.
+    ("signal_attribution_source", "TEXT"),
 ]
+
+# Provenance values for signal_attribution_source, ordered most → least
+# trustworthy. Anything below 'confluence' is CONTEXT, not causation, and
+# per-signal P&L should say so rather than quietly averaging them together.
+ATTRIBUTION_SOURCES = (
+    "explicit",        # the entry path named its own trigger — trade-level truth
+    "confluence",      # confluence tags captured during sizing — trade-level
+    "ticker_context",  # signals firing for the TICKER that day — not causation
+    "rationale_text",  # tags parsed out of prose — a guess, last resort
+    "none",            # nothing known anywhere; deliberately not fabricated
+    "legacy_mixed",    # pre-2026-08-03 rows: union of ALL sources, unseparable
+)
+
+# Sources that support a causal claim about why a trade was entered.
+TRUSTED_ATTRIBUTION_SOURCES = ("explicit", "confluence")
 
 # Columns to ensure exist on thesis_checkpoints (idempotent ALTER TABLE).
 _THESIS_CHECKPOINTS_EXTRA_COLUMNS = [
@@ -211,6 +230,7 @@ def write_trade_open(
     sector: Optional[str] = None,
     trade_id: Optional[str] = None,
     entry_price_provisional: bool = False,
+    signal_attribution_source: Optional[str] = None,
 ) -> str:
     """Record a new trade at open. Returns the trade_id (UUID).
 
@@ -233,8 +253,9 @@ def write_trade_open(
             council_member_1_rec, council_member_1_confidence,
             council_member_2_rec, council_member_2_confidence,
             council_agreement, arbiter_invoked, arbiter_rec,
-            market_regime, sector, entry_price_provisional)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            market_regime, sector, entry_price_provisional,
+            signal_attribution_source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             trade_id, timestamp_entry, ticker, action, quantity, price_entry,
             signals_json, confluence_score,
@@ -242,6 +263,7 @@ def write_trade_open(
             council_member_2_rec, council_member_2_confidence,
             council_agreement, arbiter_invoked, arbiter_rec,
             market_regime, sector, 1 if entry_price_provisional else 0,
+            signal_attribution_source,
         ),
     )
     conn.commit()

@@ -595,7 +595,8 @@ def log_execution(decision: dict, trade: dict, execution: dict,
                 # screener. Recovers reversion/score-route entries (HOT-REVERSION,
                 # HOT-IPO, reversion-route HOT-CATALYST) that get_ticker_signals
                 # alone returns [] for.
-                ml_signals = _derive_entry_signals(trade, ticker)
+                ml_signals, ml_attr_source = _derive_entry_signals_with_source(
+                    trade, ticker)
 
                 # Confluence: prefer the score computed during sizing; if that is
                 # 0/None (reversion route never scored from these tags), recompute
@@ -625,9 +626,11 @@ def log_execution(decision: dict, trade: dict, execution: dict,
                         confluence_score=ml_confluence,
                         sector=ml_sector,
                         entry_price_provisional=price_provisional,
+                        signal_attribution_source=ml_attr_source,
                     )
                     print(f"    ML Outcomes: trade open {ml_trade_id[:8]}... "
                           f"(signals={ml_signals or 'none'}, "
+                          f"source={ml_attr_source}, "
                           f"confluence={ml_confluence})")
                 except Exception as ml_exc:
                     _alert_ml_log_failure(
@@ -770,83 +773,117 @@ _KNOWN_RATIONALE_TAGS = (
 )
 
 
-def _derive_entry_signals(trade: dict, ticker: str) -> list[str]:
-    """Reconstruct the signals that actually triggered THIS trade, for the ML
-    ledger. Priority (first non-empty source wins, then all are de-duplicated):
+def _derive_entry_signals_with_source(trade: dict, ticker: str) -> tuple[list[str], str]:
+    """Signals that actually triggered THIS trade, plus how we know.
 
-      1. Explicit signal context on the trade dict (signals_fired / signals /
-         signal_tags) — set by score-based / reversion entry paths that know
-         their own trigger.
-      2. The confluence signals already attached in the main loop
-         (trade["_confluence"]["signals"]).
-      3. get_ticker_signals(ticker) — kairos_signal_summary.json (the screener
-         route; what the old code used exclusively).
-      4. kairos_screen_result.json — its per-ticker signal_tags map AND the
-         route lists (hot_reversion / hot_earnings / ...). This is where the
-         reversion / score-based route lives, so it recovers IBM/FICO/META/GD.
-      5. Tags mentioned in the trade's rationale text (last resort).
+    Returns (tags, source) where source is one of ATTRIBUTION_SOURCES.
 
-    Returns a de-duplicated, upper-cased tag list (may be empty if nothing is
-    known anywhere — a genuinely context-free trade, which we do NOT fabricate).
+    The sources are NOT equivalent, and treating them as though they were is
+    what contaminated per-signal P&L. They fall into three tiers, and the FIRST
+    tier that yields anything wins outright — later tiers are not merged in:
+
+      TIER A — trade-level, causal. What triggered *this trade*.
+        1. Explicit signal context on the trade dict (signals_fired / signals /
+           signal_tags), set by entry paths that know their own trigger.
+        2. Confluence tags attached during sizing (trade["_confluence"]).
+
+      TIER B — ticker-level, CONTEXTUAL. What was firing for *this ticker*
+        that day, which is not the same claim at all.
+        3. get_ticker_signals(ticker) — kairos_signal_summary.json.
+        4. kairos_screen_result.json per-ticker tags + route-list membership
+           (recovers the reversion / score-based route).
+
+      TIER C — inferred from prose. A guess.
+        5. Tags mentioned in the trade's rationale text.
+
+    The previous implementation documented this priority but did not implement
+    it: every source was unioned unconditionally, so a reversion trade in a
+    ticker that also had congressional activity was recorded as a HOT-CONGRESS
+    trade too. 38% of the corpus carries multiple tags as a result, and
+    HOT-CONGRESS's population became mostly trades it never drove. Attribution
+    is now single-tier, and the tier is recorded so downstream consumers can
+    tell causation from coincidence.
+
+    Tags are de-duplicated and upper-cased. An empty list with source "none" is
+    a real answer — a genuinely context-free trade, which we do NOT fabricate.
     """
-    tags: list[str] = []
-
-    def _add(seq):
+    def _norm(seq) -> list[str]:
+        out: list[str] = []
         for s in (seq or []):
             t = str(s).strip().upper()
-            if t and t not in tags:
-                tags.append(t)
+            if t and t not in out:
+                out.append(t)
+        return out
 
-    # 1. Explicit on the trade dict (any of the plausible key names).
+    # ── TIER A.1: explicit on the trade dict ─────────────────────────
+    explicit: list[str] = []
     for key in ("signals_fired", "signals", "signal_tags"):
         val = trade.get(key)
         if isinstance(val, str):
             val = [val]
-        _add(val)
+        for t in _norm(val):
+            if t not in explicit:
+                explicit.append(t)
+    if explicit:
+        return _finalize_attribution(explicit, "explicit", ticker)
 
-    # 2. Confluence signals captured during sizing.
-    conf = trade.get("_confluence") or {}
-    _add(conf.get("signals"))
+    # ── TIER A.2: confluence captured during sizing ──────────────────
+    conf_tags = _norm((trade.get("_confluence") or {}).get("signals"))
+    if conf_tags:
+        return _finalize_attribution(conf_tags, "confluence", ticker)
 
-    # 3. signal_summary.json route.
+    # ── TIER B: ticker-level context (signal_summary + screen_result) ─
+    ctx: list[str] = []
     try:
         from kairos_confluence import get_ticker_signals
-        _add(get_ticker_signals(ticker))
+        ctx.extend(t for t in _norm(get_ticker_signals(ticker)) if t not in ctx)
     except Exception:
         pass
-
-    # 4. screen_result.json — richer per-ticker tags + route-list membership.
     try:
         screen_file = os.path.join(SCRIPT_DIR, "kairos_screen_result.json")
         if os.path.exists(screen_file):
             with open(screen_file) as f:
                 screen = json.load(f)
-            _add((screen.get("signal_tags") or {}).get(ticker))
+            for t in _norm((screen.get("signal_tags") or {}).get(ticker)):
+                if t not in ctx:
+                    ctx.append(t)
             for route, tag in _SCREEN_ROUTE_TAGS.items():
-                members = screen.get(route) or []
-                if ticker in members:
-                    _add([tag])
+                if ticker in (screen.get(route) or []) and tag not in ctx:
+                    ctx.append(tag)
     except Exception:
         pass
+    if ctx:
+        return _finalize_attribution(ctx, "ticker_context", ticker)
 
-    # 5. Rationale text (e.g. "REVERSION play — ...").
+    # ── TIER C: parsed out of the rationale prose ────────────────────
     rationale = (trade.get("rationale") or "").upper()
+    inferred: list[str] = []
     if rationale:
         for tag in _KNOWN_RATIONALE_TAGS:
-            if tag in rationale:
-                _add([tag])
+            if tag in rationale and tag not in inferred:
+                inferred.append(tag)
         # Bare keyword without the HOT- prefix (the reasoning layer often writes
-        # just "REVERSION play").
-        if "HOT-REVERSION" not in tags and "REVERSION" in rationale:
-            _add(["HOT-REVERSION"])
+        # just "REVERSION play"). Deliberately last, and only when nothing
+        # structured exists anywhere — substring matching cannot see negation,
+        # so "not a reversion setup" would read as HOT-REVERSION.
+        if "HOT-REVERSION" not in inferred and "REVERSION" in rationale:
+            inferred.append("HOT-REVERSION")
+    if inferred:
+        return _finalize_attribution(inferred, "rationale_text", ticker)
 
-    # HARD-pause attribution strip (point 4 of the pause-mode design). A
-    # hard-killed signal must never be written to trade_outcomes.signals_fired,
-    # so it can't distort the dashboard or the Arbiter's per-signal analysis
-    # going forward. This is FORWARD-ONLY (existing rows are left intact) and
-    # strips ONLY tags whose mode is exactly 'hard' — co-firing healthy signals
-    # and soft-paused confirmers are preserved, so a confluence trade driven by
-    # a healthy signal keeps its honest attribution.
+    return [], "none"
+
+
+def _finalize_attribution(tags: list[str], source: str, ticker: str) -> tuple[list[str], str]:
+    """Apply the HARD-pause attribution strip to a resolved tag list.
+
+    A hard-killed signal must never reach trade_outcomes.signals_fired, so it
+    cannot distort the dashboard or the Arbiter's per-signal analysis going
+    forward. FORWARD-ONLY (existing rows are left intact) and strips ONLY tags
+    whose mode is exactly 'hard' — co-firing healthy signals and soft-paused
+    confirmers are preserved, so a confluence trade driven by a healthy signal
+    keeps its honest attribution.
+    """
     try:
         from kairos_signals import signal_pause_mode
         stripped = [t for t in tags if signal_pause_mode(t) == "hard"]
@@ -856,8 +893,12 @@ def _derive_entry_signals(trade: dict, ticker: str) -> list[str]:
                   f"from ML attribution (kept: {tags or 'none'})")
     except Exception:
         pass
+    return tags, ("none" if not tags else source)
 
-    return tags
+
+def _derive_entry_signals(trade: dict, ticker: str) -> list[str]:
+    """Tag list only — see _derive_entry_signals_with_source for provenance."""
+    return _derive_entry_signals_with_source(trade, ticker)[0]
 
 
 def _alert_ml_log_failure(ticker: str, qty, detail: str) -> None:
