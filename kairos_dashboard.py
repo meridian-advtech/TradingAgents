@@ -2728,7 +2728,41 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     .tbar i { display: block; height: 100%; border-radius: 2px; background: var(--cyan); }
     .tmeta { display: flex; justify-content: space-between; gap: 8px;
              font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
-    /* ── Positions table ── */
+    /* ── Positions table ──────────────────────────────────────────────
+       The book is unbounded — 56 today, more if the system gets active — so
+       the table scrolls inside its own pane rather than pushing every section
+       below it off the page. Height is viewport-relative rather than a fixed
+       row count: at ~30px a row this lands around 25 rows on a laptop and ~50
+       on a tall display, so the pane earns the space a screen actually has
+       instead of assuming one.                                              */
+    /* Rows are tightened from the global 10px to 6px so a useful number fit
+       without the pane swallowing the viewport. At ~29px a row the clamp
+       below lands on ~25 rows at laptop height and ~50 on a tall display. */
+    .postbl td { padding: 6px 12px; }
+    .postbl-scroll {
+      max-height: clamp(800px, 75vh, 1510px);
+      overflow-y: auto; overflow-x: auto;
+      border-radius: 8px; border: 1px solid var(--border);
+    }
+    /* On a phone the floor would take ~95% of the viewport, and a nested
+       scroll pane that tall fights the page scroll under a thumb. Bound it
+       relative to the screen instead — fewer rows, but usable. */
+    @media(max-width: 700px) {
+      .postbl-scroll { max-height: 65vh; }
+    }
+    .postbl-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+    .postbl-scroll::-webkit-scrollbar-thumb {
+      background: var(--border2); border-radius: 5px;
+      border: 2px solid var(--surface);
+    }
+    .postbl-scroll::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+    .postbl-scroll::-webkit-scrollbar-track { background: transparent; }
+    /* Header and totals both pin so the columns stay identified and the book
+       always adds up, however far down you are. */
+    .postbl thead th {
+      position: sticky; top: 0; z-index: 2;
+      background: var(--surface2); border-bottom: 1px solid var(--border2);
+    }
     .postbl th.r, .postbl td.r { text-align: right; }
     .postbl td { white-space: nowrap; }
     .postbl td.tkr { font-weight: 640; color: var(--cyan); }
@@ -2752,6 +2786,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     }
     .postbl tfoot td.nm { color: var(--dim); font-weight: 450; }
     .postbl tfoot .wbar { background: transparent; }
+    .postbl tfoot td { z-index: 2; }
     /* ── Stat list: label left, value right ── */
     .stats { padding: 2px 0; }
     .st {
@@ -3261,7 +3296,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 
 <!-- ── Positions ── -->
 <div class="card">
-  <div class="section-hdr">Open positions</div>
+  <div class="section-hdr">Open positions <span class="hdrnote" id="pos-note"></span></div>
   <div id="positions-wrap"></div>
 </div>
 
@@ -4431,7 +4466,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       return '<span class="' + c + '">' + t + '</span>';
     };
 
-    let html = '<div class="tbl-wrap"><table class="postbl"><thead><tr>'
+    let html = '<div class="tbl-wrap postbl-scroll"><table class="postbl"><thead><tr>'
       + '<th>Ticker</th><th>Name</th><th>Sector</th><th class="r">Qty</th>'
       + '<th class="r">Avg cost</th><th class="r">Market value</th>'
       + '<th class="r">Unrealized</th><th class="r">Return</th>'
@@ -4468,6 +4503,28 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       + '<span class="wbar"></span></td>'
       + '</tr></tfoot></table></div>';
     posWrap.innerHTML = html;
+
+    // Say how many rows the pane holds versus how many exist, so a scrolled
+    // pane never reads as the whole book.
+    const note = document.getElementById("pos-note");
+    if (note) {
+      const scroller = posWrap.querySelector(".postbl-scroll");
+      const label = rows.length + " holdings · " + fmtUSD(totMV);
+      if (scroller && scroller.scrollHeight > scroller.clientHeight + 4) {
+        const body = scroller.querySelector("tbody");
+        const rowH = body && body.rows.length
+          ? body.rows[0].getBoundingClientRect().height : 30;
+        const head = scroller.querySelector("thead");
+        const foot = scroller.querySelector("tfoot");
+        const chrome = (head ? head.getBoundingClientRect().height : 0)
+                     + (foot ? foot.getBoundingClientRect().height : 0);
+        const visible = Math.max(1, Math.floor(
+          (scroller.clientHeight - chrome) / (rowH || 30)));
+        note.textContent = label + " · showing " + visible + " at a time, scroll for the rest";
+      } else {
+        note.textContent = label;
+      }
+    }
   }
 
   // ── Decisions table ────────────────────────────────────────────────
