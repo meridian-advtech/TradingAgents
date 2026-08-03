@@ -380,6 +380,17 @@ def execute_order(ib: IB, ticker: str, action: str, qty: int) -> dict:
     if action == "HOLD" or qty == 0:
         return {"status": "Skipped", "reason": "HOLD decision"}
 
+    # ── Never-oversell guard (long-only) ──────────────────────────
+    # Last line of defence before submission: no SELL may exceed the shares
+    # actually held. See kairos_sell_guard for the contract.
+    if action == "SELL":
+        from kairos_sell_guard import clamp_sell_quantity
+        qty, clamp_note = clamp_sell_quantity(ticker, qty, ib,
+                                              context="execute_order")
+        if qty <= 0:
+            return {"status": "Cancelled", "oversell_blocked": True,
+                    "reason": clamp_note or "oversell prevented"}
+
     contract = Stock(ticker, "SMART", "USD")
     ib.qualifyContracts(contract)
     ib.reqMarketDataType(4)
@@ -1393,6 +1404,32 @@ def reconcile_positions_against_broker(dry_run: bool = True) -> dict:
         summary["broker_positions"] = len(broker)
         print(f"  Broker STK positions: {len(broker)}")
 
+        # ── Long-only sanity check: NEGATIVE broker positions ─────────
+        # Distinct from the drift checks below, which validate DB↔broker SYNC.
+        # A short STK position is never valid for Kairos regardless of whether
+        # the DB agrees with it (on 2026-07-29 DB and broker agreed on ETN -16
+        # / EME -8, so drift reconciliation stayed silent). This fires every
+        # run until the position is flat. It never auto-trades — flattening is
+        # a human decision.
+        shorts = {sym: q for sym, (q, _c) in broker.items() if q < 0}
+        summary["short_positions"] = shorts
+        if shorts:
+            detail = ", ".join(f"{s} {q:g}" for s, q in sorted(shorts.items()))
+            print(f"  *** LONG-ONLY VIOLATION: negative broker position(s): {detail}")
+            summary["errors"].append(f"negative broker position(s): {detail}")
+            try:
+                from kairos_alerts import post_message
+                lines = "\n".join(
+                    f"• *{s}*: {q:g} shares short" for s, q in sorted(shorts.items()))
+                post_message("alerts",
+                    f":rotating_light: *LONG-ONLY VIOLATION — short position at broker*\n"
+                    f"{lines}\n"
+                    f"Kairos is long-only. Buy-to-cover to flatten; this alert "
+                    f"repeats every reconciliation run until the position is flat. "
+                    f"No automatic action has been taken.")
+            except Exception as exc:
+                print(f"  short-position alert failed: {exc}")
+
         # In-flight-order guard: a ticker with a working order at IBKR has a
         # quantity that is legitimately mid-change (partial fill in progress).
         # Reconciling it would "true-up" to a transient qty and create fresh
@@ -1999,7 +2036,45 @@ def main():
         # are unaffected. This makes sizing consistent with the logging path.
         signal_tags = _derive_entry_signals(trade, ticker)
         confluence = compute_confluence(signal_tags)
-        qty = compute_position_size(confluence, nlv, ref_price)
+
+        # ── ROOT SIZING: entry sizing is for ENTRIES only ────────────
+        # compute_position_size() answers "how much should we BUY" — it is a
+        # function of confluence tier x NLV x price and knows nothing about
+        # what is held. Applying it to a SELL is a category error, and it
+        # produced both failure modes seen live:
+        #   • oversell — 2026-07-29 ETN sold 44 vs 28 held, EME 23 vs 15
+        #     (1.5% NLV / price), leaving the long-only account SHORT;
+        #   • dropped exits — 10 Council SELLs sized to 0 shares (confluence 0)
+        #     and were skipped as "Quantity rounds to 0", so the exit never ran.
+        # A Council SELL is a full exit of the CURRENT position, which is what
+        # every other exit path in the system already does (total_qty).
+        if action == "SELL":
+            from kairos_sell_guard import get_held_quantity
+            held, held_source = get_held_quantity(ticker, ib)
+            if held is None:
+                print(f"    SKIP: cannot determine held quantity for {ticker} "
+                      f"— SELL not sized")
+                skipped_count += 1
+                skip_reasons.append({"ticker": ticker,
+                                     "reason": "held quantity unavailable"})
+                log_execution(decision, trade, {
+                    "status": "Skipped",
+                    "reason": "held quantity unavailable",
+                })
+                continue
+            qty = int(held)
+            print(f"    SELL sizing: full exit of {qty} held shares "
+                  f"(source: {held_source})")
+            if qty < 1:
+                # Nothing held — never fall through to Mode C (a BUY path).
+                reason = f"SELL skipped: no open position in {ticker} (held {held:g})"
+                print(f"    SKIP: {reason}")
+                skipped_count += 1
+                skip_reasons.append({"ticker": ticker, "reason": reason})
+                log_execution(decision, trade, {"status": "Skipped", "reason": reason})
+                continue
+        else:
+            qty = compute_position_size(confluence, nlv, ref_price)
 
         # ── Re-entry guard (BUY only) ─────────────────────────────
         # Don't re-buy a ticker ABOVE its last exit price unless a genuinely
@@ -2184,7 +2259,17 @@ def main():
         # Refresh portfolio state before each order
         portfolio = fetch_portfolio_state(ib)
 
-        passed, failures = check_guardrails(ticker, proposed_spend, portfolio)
+        # check_guardrails is an ENTRY gate: all three checks model
+        # proposed_spend as capital being ADDED (cash reserve after spending,
+        # current sector value + spend, current position value + spend). A SELL
+        # frees capital and shrinks the position, so those checks are backwards
+        # for it. This was latent while SELLs carried a small entry-sized
+        # spend; now that a SELL is sized at the full held position, running
+        # them would let a concentration limit BLOCK an exit. Entry gates apply
+        # to entries only.
+        passed, failures = True, []
+        if action == "BUY":
+            passed, failures = check_guardrails(ticker, proposed_spend, portfolio)
 
         if not passed:
             print(f"    GUARDRAIL BREACH — skipping {ticker}:")

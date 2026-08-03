@@ -719,6 +719,10 @@ def run_exit_engine(ib=None, regime: str | None = None, dry_run: bool = False) -
         # ── Execute the exit ─────────────────────────────────────────
         print(f"    {ticker}: {gain_pct:+.1f}% → SELL {total_qty} — {reason}")
         execution = _place_market_sell(ib, ticker, total_qty)
+        if execution.get("oversell_blocked"):
+            # No order was sent — do not log a close.
+            print(f"    {ticker}: exit NOT sent — {execution.get('reason')}")
+            continue
         sell_price = execution.get("fill_price") or current_price
 
         # sell_holdings (inside _log_sell) records the exit reason + signals to

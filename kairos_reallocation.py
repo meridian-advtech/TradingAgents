@@ -685,6 +685,12 @@ def execute_reallocation(
                    f"{new_ticker} (conviction delta: +{realloc['conviction_delta']})")
 
     sell_execution = _place_market_sell(ib, exit_ticker, exit_qty)
+    if sell_execution.get("oversell_blocked"):
+        # Guard refused the SELL — no order was sent, so the atomic invariant
+        # holds: abort the whole swap before the buy leg, log nothing.
+        _alert_realloc_abort(exit_ticker, new_ticker, exit_qty, exit_price,
+                             sell_execution.get("reason", "oversell prevented"))
+        return None, None
     sell_price = sell_execution.get("fill_price", realloc["exit_price"])
     if sell_price is None:
         sell_price = realloc["exit_price"]

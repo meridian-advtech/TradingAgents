@@ -79,8 +79,23 @@ def _get_ibkr_price(ib, ticker: str) -> float | None:
 
 
 def _place_market_sell(ib, ticker: str, qty: int) -> dict:
-    """Place an immediate market SELL order."""
+    """Place an immediate market SELL order.
+
+    Shared executor for stop-loss, the exit engine, thesis review, tax-loss
+    harvest and the reallocation SELL leg — so the never-oversell guard sits
+    here, covering all of them at the submission boundary.
+    """
     from ib_insync import Stock, MarketOrder
+    from kairos_sell_guard import clamp_sell_quantity
+
+    qty, clamp_note = clamp_sell_quantity(ticker, qty, ib,
+                                          context="_place_market_sell")
+    if qty <= 0:
+        # oversell_blocked tells callers NOT to log a close — no order was sent,
+        # so nothing may be written to holdings / the ML ledger.
+        return {"status": "Cancelled", "oversell_blocked": True,
+                "reason": clamp_note or "oversell prevented"}
+
     try:
         contract = Stock(ticker, "SMART", "USD")
         ib.qualifyContracts(contract)
@@ -325,6 +340,10 @@ def run_stoploss(regime: str | None = None, ib=None) -> dict:
         print(f"    {ticker}: {drawdown_pct:.1f}% drawdown → SELL {total_qty} shares")
 
         execution = _place_market_sell(ib, ticker, total_qty)
+        if execution.get("oversell_blocked"):
+            # No order was sent — do not log a close.
+            print(f"    {ticker}: stop-loss NOT sent — {execution.get('reason')}")
+            continue
         sell_price = execution.get("fill_price", current_price)
         if sell_price is None:
             sell_price = current_price

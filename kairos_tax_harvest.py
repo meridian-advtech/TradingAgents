@@ -390,6 +390,10 @@ def execute_harvest(rec: dict, ib, dry_run: bool = False) -> dict | None:
 
     print(f"    SELLING {total_qty} {ticker} (TAX-HARVEST)")
     execution = _place_market_sell(ib, ticker, total_qty)
+    if execution.get("oversell_blocked"):
+        # No order was sent — do not log a close.
+        print(f"    {ticker}: harvest NOT sent — {execution.get('reason')}")
+        return None
     sell_price = execution.get("fill_price", current_price)
 
     # Log via the shared sell path

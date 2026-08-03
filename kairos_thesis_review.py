@@ -653,6 +653,10 @@ def run_thesis_review(dry_run: bool = False, no_claude: bool = False) -> dict:
             elif ib:
                 print(f"    SELLING {total_qty} {ticker}")
                 execution = _execute_sell(ib, ticker, total_qty)
+                if execution.get("oversell_blocked"):
+                    # No order was sent — do not log a close.
+                    print(f"    {ticker}: thesis exit NOT sent — {execution.get('reason')}")
+                    continue
                 sell_price = execution.get("fill_price", current_price)
                 _log_and_alert(ticker, total_qty, avg_cost, sell_price,
                               holding_days, sell_reason, execution)
