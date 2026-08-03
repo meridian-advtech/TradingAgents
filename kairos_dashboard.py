@@ -429,28 +429,142 @@ def _normalize_sector(raw: str, symbol: str = "") -> str:
     return raw.replace("_", " ").title()
 
 
-def _compute_sector_exposure(positions: list) -> dict[str, float]:
-    """Return {sector: total_market_value} for equity (non-crypto, non-sim) positions."""
-    try:
-        from kairos_confluence import lookup_sector
-    except ImportError:
-        return {}
+def _eligible_equity(positions: list):
+    """Yield (symbol, market_value) for equity positions that can carry exposure.
 
-    exposure: dict[str, float] = {}
+    Excludes sim rows, crypto, and non-positive values — a short cannot be a
+    slice of a part-to-whole breakdown.
+    """
     for p in positions:
         sym = p.get("symbol", "")
-        if "(SIM)" in sym:
+        if not sym or "(SIM)" in sym:
             continue
         if p.get("assetClass", "equity") == "crypto":
             continue
         mkt_val = float(p.get("market_value", 0) or 0)
         if mkt_val <= 0:
             continue
-        raw_sector = lookup_sector(sym)
-        sector = _normalize_sector(raw_sector, sym)
-        exposure[sector] = exposure.get(sector, 0.0) + mkt_val
+        yield sym, mkt_val
 
+
+def _compute_sector_exposure(positions: list) -> dict[str, float]:
+    """Return {sector: market_value} using REAL sectors from the security master.
+
+    kairos_confluence.lookup_sector() returns the universe *screening bucket*
+    ("large_cap", "value_dividend"), not a sector. Grouping exposure by it
+    scatters one real sector across several buckets and understates
+    concentration. Size/style is still a legitimate view — it is reported
+    separately by _compute_size_style_exposure(), not conflated with this one.
+
+    Falls back to the bucket labels if the security master is unavailable, so a
+    missing table degrades the breakdown rather than emptying the panel.
+    """
+    try:
+        import kairos_security_master as sm
+    except ImportError:
+        sm = None
+
+    exposure: dict[str, float] = {}
+
+    if sm is not None:
+        for sym, mkt_val in _eligible_equity(positions):
+            if sm.is_fund(sym):
+                continue          # funds carry no single sector
+            exposure[sm.get_sector(sym)] = exposure.get(sm.get_sector(sym), 0.0) + mkt_val
+        # An empty security_master table resolves everything to Unclassified;
+        # that is worse than the old behaviour, so fall through to it.
+        if exposure and set(exposure) != {sm.UNRESOLVED}:
+            return exposure
+        exposure = {}
+
+    try:
+        from kairos_confluence import lookup_sector
+    except ImportError:
+        return {}
+    for sym, mkt_val in _eligible_equity(positions):
+        sector = _normalize_sector(lookup_sector(sym), sym)
+        exposure[sector] = exposure.get(sector, 0.0) + mkt_val
     return exposure
+
+
+# Tier A universe categories → display labels. Anything not in here that comes
+# back from lookup_sector is a Tier B entry carrying its own sector string, not
+# a size/style cohort, so it is grouped rather than listed alongside them.
+_SIZE_STYLE_LABELS = {
+    "mega_cap":              "Mega cap",
+    "large_cap":             "Large cap",
+    "mid_cap_growth":        "Mid cap growth",
+    "value_dividend":        "Value & dividend",
+    "healthcare_biotech":    "Healthcare / biotech",
+    "financials":            "Financials",
+    "energy_materials":      "Energy & materials",
+    "reits_real_estate":     "REITs & real estate",
+    "industrials_transport": "Industrials & transport",
+    "consumer_tech":         "Consumer tech",
+}
+
+
+def _compute_size_style_exposure(positions: list) -> dict[str, float]:
+    """Return {bucket: market_value} — the universe screening axis.
+
+    This is what lookup_sector actually measures. Kept as its own dimension
+    because size/style exposure is worth seeing; it just is not a sector.
+    """
+    try:
+        from kairos_confluence import lookup_sector
+    except ImportError:
+        return {}
+
+    exposure: dict[str, float] = {}
+    for sym, mkt_val in _eligible_equity(positions):
+        raw = lookup_sector(sym)
+        if raw in _SIZE_STYLE_LABELS:
+            label = _SIZE_STYLE_LABELS[raw]
+        elif raw.startswith("etf_"):
+            label = "ETF"
+        else:
+            label = "Tier B / unbucketed"
+        exposure[label] = exposure.get(label, 0.0) + mkt_val
+    return exposure
+
+
+def _compute_exit_coverage(closed_trades: list) -> dict:
+    """Exit-reason coverage, so share-of-exits can use an honest denominator.
+
+    Reason capture did not exist for the earliest trades. Those trades cannot
+    carry a type, and leaving them in the denominator understates every real
+    exit reason — "Not recorded" is an absence of data, not a way of exiting.
+    A date cutoff is the wrong instrument here because capture ramped up rather
+    than switching on: any single date either readmits unrecorded trades or
+    discards recorded ones from the same window.
+    """
+    total = len(closed_trades)
+    recorded = [t for t in closed_trades if t.get("exit_reason")]
+    days = [str(t.get("sold_date") or "")[:10] for t in recorded if t.get("sold_date")]
+    return {
+        "total":          total,
+        "recorded":       len(recorded),
+        "unrecorded":     total - len(recorded),
+        "capture_from":   min(days) if days else None,
+        "pct":            round(len(recorded) / total * 100, 1) if total else 0.0,
+    }
+
+
+def _compute_short_positions(positions: list) -> list[dict]:
+    """Open shorts. Netted into totals correctly, but they cannot appear in a
+    part-to-whole breakdown, so surface them rather than silently dropping."""
+    out = []
+    for p in positions:
+        sym = p.get("symbol", "")
+        if not sym or "(SIM)" in sym:
+            continue
+        if float(p.get("quantity", 0) or 0) < 0:
+            out.append({
+                "symbol":       sym,
+                "quantity":     float(p.get("quantity", 0) or 0),
+                "market_value": float(p.get("market_value", 0) or 0),
+            })
+    return out
 
 
 # Donut buckets for the AI Value Chain Exposure chart. Order is fixed so the
@@ -1034,6 +1148,14 @@ _EXIT_TYPE_MAP = {
 }
 
 
+# A real exit type is a short label ("TRAILING-STOP", "HARD-STOP"). Anything
+# longer, or carrying sentence punctuation, is a free-text rationale that had no
+# "TYPE:" prefix — taking everything before the first colon then promotes an
+# entire paragraph to a category of its own. Six such paragraphs were each
+# appearing as a distinct exit type in the distribution and the filter dropdown.
+_MAX_EXIT_TYPE_LEN = 28
+
+
 def _parse_exit_type(reason: str) -> tuple[str, str]:
     """Map a raw exit_reason string to (friendly_label, color_key)."""
     if not reason:
@@ -1041,6 +1163,8 @@ def _parse_exit_type(reason: str) -> tuple[str, str]:
     prefix = str(reason).split(":", 1)[0].strip().upper()
     if prefix in _EXIT_TYPE_MAP:
         return _EXIT_TYPE_MAP[prefix]
+    if len(prefix) > _MAX_EXIT_TYPE_LEN or any(ch in prefix for ch in ".;("):
+        return ("Unlabelled rationale", "muted")
     return (prefix.replace("-", " ").title() or "Exit", "white")
 
 
@@ -2330,6 +2454,9 @@ def build_payload(perf: dict, db: dict, ibkr: dict) -> dict:
         "position_details": position_details,
         "closed_trades":  closed_trades,
         "sector_breakdown": _compute_sector_exposure(positions),
+        "size_style_breakdown": _compute_size_style_exposure(positions),
+        "short_positions": _compute_short_positions(positions),
+        "exit_coverage":  _compute_exit_coverage(closed_trades),
         "chain_tier_breakdown": compute_chain_tier_breakdown(price_map),
         "system_health":  build_system_health(ibkr),
         "ibkr_connected": ibkr.get("connected", False),
