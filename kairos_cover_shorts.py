@@ -29,6 +29,11 @@ import time
 CONFIRM_PHRASE = "COVER SHORTS"
 LIMIT_BUFFER = 1.005     # marketable buy limit: 0.5% through the offer
 FILL_TIMEOUT_S = 45
+# Outside regular hours the book is thin and IBKR's quote is routinely stale or
+# absurdly wide — a 2026-08-03 06:00 ET dry run returned a $32.99 ask on KARD
+# against a $20.82 close. Any quote this far from the last daily close is
+# treated as untrustworthy and refused rather than traded on.
+MAX_QUOTE_DIVERGENCE_PCT = 10.0
 
 
 def _connect():
@@ -80,6 +85,25 @@ def _reference_price(ib, ticker: str) -> float | None:
         return None
 
 
+def _prev_close(ticker: str) -> float | None:
+    """Last confirmed daily close, as an independent check on the IBKR quote."""
+    try:
+        import yfinance as yf
+        hist = yf.Ticker(ticker).history(period="5d", interval="1d")
+        if hist is None or hist.empty or "Close" not in hist:
+            return None
+        vals = [float(v) for v in hist["Close"] if v == v and v > 0]
+        return round(vals[-1], 2) if vals else None
+    except Exception:
+        return None
+
+
+def _divergence_pct(ref: float | None, prev: float | None) -> float | None:
+    if not ref or not prev:
+        return None
+    return (ref - prev) / prev * 100.0
+
+
 def _buy_to_cover(ib, ticker: str, qty: int, ref_price: float) -> dict:
     from ib_insync import Stock, LimitOrder
     contract = Stock(ticker, "SMART", "USD")
@@ -114,6 +138,9 @@ def main() -> int:
                     help="actually place orders (default is a dry run)")
     ap.add_argument("--ticker", action="append",
                     help="limit to specific ticker(s); repeatable")
+    ap.add_argument("--allow-wide", action="store_true",
+                    help="override the quote-sanity refusal (use only if you have "
+                         "independently confirmed the price is real)")
     args = ap.parse_args()
 
     only = set(args.ticker) if args.ticker else None
@@ -130,21 +157,44 @@ def main() -> int:
             print("No short STK positions at the broker — nothing to cover.")
             return 0
 
-        print(f"\n{'TICKER':<8}{'SHORT':>8}{'SOLD@':>11}{'REF':>11}{'EST COST':>13}")
-        print("-" * 51)
+        print(f"\n{'TICKER':<8}{'SHORT':>8}{'SOLD@':>11}{'REF':>11}"
+              f"{'PREV CLOSE':>12}{'DIVERGE':>10}{'EST COST':>13}")
+        print("-" * 73)
         total = 0.0
+        suspect = []
         for s in shorts:
             s["ref"] = _reference_price(ib, s["ticker"])
+            s["prev"] = _prev_close(s["ticker"])
+            s["div"] = _divergence_pct(s["ref"], s["prev"])
             est = (s["ref"] or 0) * s["qty_short"]
             total += est
             ref_txt = f"{s['ref']:,.2f}" if s["ref"] else "n/a"
+            prev_txt = f"{s['prev']:,.2f}" if s["prev"] else "n/a"
+            if s["div"] is None:
+                div_txt = "?"
+            else:
+                div_txt = f"{s['div']:+.1f}%"
+                if abs(s["div"]) > MAX_QUOTE_DIVERGENCE_PCT:
+                    div_txt += " !"
+                    suspect.append(s["ticker"])
             print(f"{s['ticker']:<8}{-s['qty_short']:>8}{s['avg_cost']:>11,.2f}"
-                  f"{ref_txt:>11}{est:>13,.2f}")
-        print("-" * 51)
-        print(f"{'TOTAL':<8}{'':>8}{'':>11}{'':>11}{total:>13,.2f}\n")
+                  f"{ref_txt:>11}{prev_txt:>12}{div_txt:>10}{est:>13,.2f}")
+        print("-" * 73)
+        print(f"{'TOTAL':<8}{'':>8}{'':>11}{'':>11}{'':>12}{'':>10}{total:>13,.2f}\n")
+
+        if suspect:
+            print(f"  ⚠ QUOTE SANITY: {', '.join(suspect)} diverge more than "
+                  f"{MAX_QUOTE_DIVERGENCE_PCT:.0f}% from the last daily close.")
+            print("    Outside regular hours the book is thin and the IBKR quote "
+                  "is often stale or\n    wildly wide — this is exactly what a "
+                  "pre-market reading looks like. Orders for\n    these tickers "
+                  "are REFUSED unless --allow-wide is passed.\n")
 
         if not args.execute:
             print("DRY RUN — no orders placed. Re-run with --execute to cover.")
+            if suspect:
+                print("Positions above are exact; the price columns are not "
+                      "trustworthy right now.")
             return 0
 
         print(f"About to BUY-TO-COVER {len(shorts)} position(s), ~${total:,.2f}.")
@@ -161,6 +211,14 @@ def main() -> int:
             print(f"\n  {ticker}:")
             if not s["ref"]:
                 print("    no reference price — SKIPPED")
+                continue
+            if (s["div"] is not None
+                    and abs(s["div"]) > MAX_QUOTE_DIVERGENCE_PCT
+                    and not args.allow_wide):
+                print(f"    quote ${s['ref']:,.2f} is {s['div']:+.1f}% from the "
+                      f"last close ${s['prev']:,.2f} — REFUSED")
+                print("    (stale or thin book; re-run once the market is open, "
+                      "or pass --allow-wide)")
                 continue
 
             # Re-read the broker immediately before sending: the position may
