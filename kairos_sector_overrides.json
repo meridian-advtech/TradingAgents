@@ -1,0 +1,64 @@
+{
+  "_comment": [
+    "Curated sector overrides — highest precedence in kairos_security_master's",
+    "resolution chain (override > yfinance > sec_sic > unresolved).",
+    "",
+    "Use this file for: funds (no single sector by construction), ADRs and",
+    "foreign listings upstream classifies inconsistently, and any ticker where",
+    "yfinance is demonstrably wrong. Every entry here is a deliberate human",
+    "decision and should be reviewable — prefer fixing the source over pinning",
+    "a value, and note why when you do pin one.",
+    "",
+    "Value may be a bare sector string, or an object with sector / industry /",
+    "asset_type. asset_type of ETF or MUTUALFUND excludes the ticker from",
+    "sector-concentration maths.",
+    "",
+    "Sector strings should come from the 11 GICS-style labels in",
+    "kairos_security_master.KNOWN_SECTORS, or 'Fund / ETF' for wrappers."
+  ],
+
+  "overrides": {
+    "SPY":  { "sector": "Fund / ETF", "industry": "US Large Cap Blend",        "asset_type": "ETF" },
+    "QQQ":  { "sector": "Fund / ETF", "industry": "Nasdaq-100",                "asset_type": "ETF" },
+    "IWM":  { "sector": "Fund / ETF", "industry": "US Small Cap Blend",        "asset_type": "ETF" },
+    "DIA":  { "sector": "Fund / ETF", "industry": "Dow Jones Industrial Avg",  "asset_type": "ETF" },
+    "VTI":  { "sector": "Fund / ETF", "industry": "US Total Market",           "asset_type": "ETF" },
+    "VOO":  { "sector": "Fund / ETF", "industry": "S&P 500",                   "asset_type": "ETF" },
+
+    "XLK":  { "sector": "Fund / ETF", "industry": "Sector — Technology",              "asset_type": "ETF" },
+    "XLF":  { "sector": "Fund / ETF", "industry": "Sector — Financials",              "asset_type": "ETF" },
+    "XLE":  { "sector": "Fund / ETF", "industry": "Sector — Energy",                  "asset_type": "ETF" },
+    "XLV":  { "sector": "Fund / ETF", "industry": "Sector — Health Care",             "asset_type": "ETF" },
+    "XLI":  { "sector": "Fund / ETF", "industry": "Sector — Industrials",             "asset_type": "ETF" },
+    "XLY":  { "sector": "Fund / ETF", "industry": "Sector — Consumer Discretionary",  "asset_type": "ETF" },
+    "XLP":  { "sector": "Fund / ETF", "industry": "Sector — Consumer Staples",        "asset_type": "ETF" },
+    "XLU":  { "sector": "Fund / ETF", "industry": "Sector — Utilities",               "asset_type": "ETF" },
+    "XLRE": { "sector": "Fund / ETF", "industry": "Sector — Real Estate",             "asset_type": "ETF" },
+    "XLB":  { "sector": "Fund / ETF", "industry": "Sector — Materials",               "asset_type": "ETF" },
+    "XLC":  { "sector": "Fund / ETF", "industry": "Sector — Communication Services",  "asset_type": "ETF" },
+
+    "ARKK": { "sector": "Fund / ETF", "industry": "Thematic — Disruptive Innovation", "asset_type": "ETF" },
+    "ARKG": { "sector": "Fund / ETF", "industry": "Thematic — Genomics",              "asset_type": "ETF" },
+    "ARKF": { "sector": "Fund / ETF", "industry": "Thematic — Fintech",               "asset_type": "ETF" },
+    "SOXX": { "sector": "Fund / ETF", "industry": "Thematic — Semiconductors",        "asset_type": "ETF" },
+    "SMH":  { "sector": "Fund / ETF", "industry": "Thematic — Semiconductors",        "asset_type": "ETF" },
+    "HACK": { "sector": "Fund / ETF", "industry": "Thematic — Cybersecurity",         "asset_type": "ETF" },
+    "BOTZ": { "sector": "Fund / ETF", "industry": "Thematic — Robotics & AI",         "asset_type": "ETF" },
+    "TAN":  { "sector": "Fund / ETF", "industry": "Thematic — Solar",                 "asset_type": "ETF" },
+    "ICLN": { "sector": "Fund / ETF", "industry": "Thematic — Clean Energy",          "asset_type": "ETF" },
+    "LIT":  { "sector": "Fund / ETF", "industry": "Thematic — Lithium & Battery",     "asset_type": "ETF" },
+    "KWEB": { "sector": "Fund / ETF", "industry": "Thematic — China Internet",        "asset_type": "ETF" },
+
+    "TLT":  { "sector": "Fund / ETF", "industry": "Fixed Income — Long Treasury",     "asset_type": "ETF" },
+    "HYG":  { "sector": "Fund / ETF", "industry": "Fixed Income — High Yield",        "asset_type": "ETF" },
+    "LQD":  { "sector": "Fund / ETF", "industry": "Fixed Income — IG Corporate",      "asset_type": "ETF" },
+    "BND":  { "sector": "Fund / ETF", "industry": "Fixed Income — Total Bond",        "asset_type": "ETF" },
+    "AGG":  { "sector": "Fund / ETF", "industry": "Fixed Income — Aggregate",         "asset_type": "ETF" },
+
+    "GLD":  { "sector": "Fund / ETF", "industry": "Commodity — Gold",                 "asset_type": "ETF" },
+    "SLV":  { "sector": "Fund / ETF", "industry": "Commodity — Silver",               "asset_type": "ETF" },
+    "USO":  { "sector": "Fund / ETF", "industry": "Commodity — Crude Oil",            "asset_type": "ETF" },
+    "VXX":  { "sector": "Fund / ETF", "industry": "Volatility — VIX Short-Term",      "asset_type": "ETF" },
+    "UVXY": { "sector": "Fund / ETF", "industry": "Volatility — VIX 1.5x",            "asset_type": "ETF" }
+  }
+}
