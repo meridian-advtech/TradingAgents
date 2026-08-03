@@ -2764,6 +2764,29 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     }
     .postbl tfoot td.nm { color: var(--dim); font-weight: 450; }
     .postbl tfoot .wbar { background: transparent; }
+    /* ── Stat list: label left, value right ── */
+    .stats { padding: 2px 0; }
+    .st {
+      display: flex; justify-content: space-between; align-items: baseline; gap: 14px;
+      padding: 7px 14px; border-bottom: 1px solid var(--border);
+    }
+    .st:last-child { border-bottom: 0; }
+    .st:hover { background: var(--hover); }
+    .st dt { font-size: 12px; color: var(--dim); }
+    .st dd {
+      font-size: 13.5px; font-weight: 600; color: var(--text); text-align: right;
+      font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    .stnote { display: block; font-size: 10.5px; color: var(--muted); margin-top: 1px; }
+    .stsub  { display: block; font-size: 10.5px; color: var(--dim); font-weight: 450; margin-top: 1px; }
+    .tbar i.green { background: var(--green); }
+    .tbar i.red   { background: var(--red); }
+    /* ── Three-column section, cards sized to content ── */
+    .cols3 {
+      display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px 18px; margin-bottom: 18px; align-items: start;
+    }
+    @media(max-width:1100px) { .cols3 { grid-template-columns: 1fr; } }
     /* ── Two-column section, cards sized to content ── */
     .cols2 {
       display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3202,16 +3225,26 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 <!-- ── Headline KPIs ── -->
 <dl class="kpis" id="kpis"></dl>
 
-<!-- ── Portfolio Metrics (curated) ── -->
-<div class="card" id="portfolio-metrics-card">
-  <div class="section-hdr">Portfolio Metrics</div>
-  <div class="pm-subhdr">Snapshot</div>
-  <div class="pm-grid" id="pm-snapshot"></div>
-  <div class="pm-subhdr">Trends</div>
-  <div class="pm-grid" id="pm-trends"></div>
-  <div class="pm-subhdr">Monthly Performance</div>
-  <div id="pm-monthly"></div>
+<!-- ── Portfolio metrics: three stat panels ── -->
+<div class="section-hdr">Portfolio metrics</div>
+<div class="cols3">
+  <div class="card np">
+    <div class="ph">Performance <span class="phn" id="pm-src">&nbsp;</span></div>
+    <div class="stats" id="pm-performance"></div>
+  </div>
+  <div class="card np">
+    <div class="ph">Risk &amp; exposure <span class="phn">current</span></div>
+    <div class="stats" id="pm-risk"></div>
+  </div>
+  <div class="card np">
+    <div class="ph">Activity <span class="phn">book &amp; trades</span></div>
+    <div class="stats" id="pm-activity"></div>
+  </div>
 </div>
+
+<!-- ── Monthly performance ── -->
+<div class="section-hdr">Monthly performance</div>
+<div class="tilestrip" id="pm-monthly"></div>
 
 <!-- ── Weekly Returns ── -->
 <div class="card">
@@ -3236,9 +3269,6 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     <div id="sizestyle-table"></div>
   </div>
 </div>
-
-<!-- ── Risk Metrics ── -->
-<div class="risk-3col" id="risk-row"></div>
 
 <!-- ── Positions ── -->
 <div class="card">
@@ -3579,145 +3609,107 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     }
   }
 
-  // ── Risk row ───────────────────────────────────────────────────────
-  const riskDefs = [
-    {
-      label: "Max Drawdown",
-      val:   () => fmtN(M.max_drawdown, 2) + "%",
-      sub:   () => "Peak-to-trough decline",
-      color: () => M.max_drawdown > 10 ? "var(--red)" : M.max_drawdown > 5 ? "var(--amber)" : "var(--green)",
-    },
-    {
-      label: "Sharpe Ratio",
-      val:   () => M.sharpe_ratio != null ? fmtN(M.sharpe_ratio, 2) : "< 10 days",
-      sub:   () => M.sharpe_ratio != null
-        ? (M.sharpe_ratio > 1 ? "Good risk-adjusted return" : "Building track record")
-        : "Need 10+ snapshots",
-      color: () => M.sharpe_ratio != null
-        ? (M.sharpe_ratio > 1 ? "var(--green)" : "var(--amber)") : "var(--dim)",
-    },
-    {
-      label: "Largest Single Loss",
-      val:   () => M.largest_loss < 0 ? "$" + fmtN(Math.abs(M.largest_loss), 2) : "\u2014",
-      sub:   () => "Closed trade P&L",
-      color: () => M.largest_loss < 0 ? "var(--red)" : "var(--dim)",
-    },
-  ];
-
-  const riskRow = document.getElementById("risk-row");
-  riskDefs.forEach(r => {
-    riskRow.innerHTML += `
-      <div class="rcard">
-        <div class="rlabel">${r.label}</div>
-        <div class="rval" style="color:${r.color()}">${r.val()}</div>
-        <div class="rsub">${r.sub()}</div>
-      </div>`;
-  });
-
-  // ── Portfolio metrics panel ────────────────────────────────────────
+  // ── Portfolio metrics: three stat panels ───────────────────────────
+  // Replaces 15 equal-weight tiles plus a separate 3-card risk row. Those
+  // carried real information at one visual rank, so scanning for a specific
+  // figure meant reading all eighteen. Grouped into performance / risk /
+  // activity as label-value lists, which is denser and actually scannable.
   (function renderPortfolioMetrics() {
-    const P = DATA.portfolio_metrics;
-    if (!P) return;
-
-    // Money with thousands separators + 2dp; signed money keeps the sign.
+    const P = DATA.portfolio_metrics || {};
     const money    = (n) => n == null ? "—" : "$" + fmtN(n, 2);
-    const moneySig = (n) => n == null ? "—" :
-      (n >= 0 ? "+$" : "-$") + fmtN(Math.abs(n), 2);
+    const moneySig = (n) => n == null ? "—" : (n >= 0 ? "+$" : "-$") + fmtN(Math.abs(n), 2);
     const pctSig   = (n) => n == null ? "—" : fmtSign(n, 2) + "%";
     const cls      = (n) => n == null ? "" : (n >= 0 ? "pnl-pos" : "pnl-neg");
-    const tile = (label, valHtml, sub) =>
-      `<div class="pm-tile"><div class="pm-label">${label}</div>` +
-      `<div class="pm-val">${valHtml}</div>` +
-      `<div class="pm-sub">${sub || ""}</div></div>`;
+    const row = (label, valHtml, note) =>
+      '<div class="st"><dt>' + label + (note ? '<span class="stnote">' + note + '</span>' : "")
+      + '</dt><dd>' + valHtml + '</dd></div>';
+    const wrap = (v, c) => c ? '<span class="' + c + '">' + v + '</span>' : v;
 
-    // ── Snapshot (computable now) ──
     const src = P.have_live ? "live IBKR" : (P.as_of ? "snapshot " + P.as_of : "—");
-    const best  = P.best  ? `${P.best.ticker} <span class="${cls(P.best.pct)}">${pctSig(P.best.pct)}</span>`   : "—";
-    const worst = P.worst ? `${P.worst.ticker} <span class="${cls(P.worst.pct)}">${pctSig(P.worst.pct)}</span>` : "—";
-    const snap = [
-      tile("Open Positions", P.open_positions != null ? String(P.open_positions) : "—", src),
-      // Breadth and blended open return both need live position marks. With
-      // IBKR offline they are unknowable — show a dash plus the staleness
-      // source rather than "0 up / 0 down", which reads as real data.
-      tile("In Profit / Loss",
-           (P.positions_in_profit == null || P.positions_in_loss == null) ? "—"
-             : `<span class="pnl-pos">${P.positions_in_profit} \u25B2</span>`
-               + ` / <span class="pnl-neg">${P.positions_in_loss} \u25BC</span>`,
-           P.positions_in_profit == null ? "Needs live marks · " + src : "Open book breadth"),
-      tile("Unrealized Return",
-           `<span class="${cls(P.unrealized_return_pct)}">${pctSig(P.unrealized_return_pct)}</span>`,
-           P.unrealized_return_pct == null ? "Needs live marks · " + src : "Blended, open book"),
-      tile("Invested", P.invested_pct != null ? fmtN(P.invested_pct, 2) + "%" : "—", "of NLV"),
-      tile("Unrealized P&L", `<span class="${cls(P.unrealized_pnl)}">${moneySig(P.unrealized_pnl)}</span>`, "Open positions"),
-      tile("Realized P&L", `<span class="${cls(P.realized_pnl_cum)}">${moneySig(P.realized_pnl_cum)}</span>`, "Cumulative, closed"),
-      tile("Largest Position", P.largest_pct != null ? fmtN(P.largest_pct, 2) + "%" : "—", "of NLV"),
-      tile("Top-5 Concentration", P.top5_pct != null ? fmtN(P.top5_pct, 2) + "%" : "—", "of NLV"),
-      tile("Best Open", best, "Unrealized %"),
-      tile("Worst Open", worst, "Unrealized %"),
-    ];
-    document.getElementById("pm-snapshot").innerHTML = snap.join("");
+    const srcEl = document.getElementById("pm-src");
+    if (srcEl) srcEl.textContent = src;
 
-    // ── Trends (— until >=2 days of snapshots) ──
-    // Snapshots are sparse, so every trend tile names the baseline date it
-    // actually measured from. Weekly renders "—" unless a distinct baseline
-    // ≥5 days back exists — it must never echo the daily figure.
-    const dd  = P.daily, wk = P.weekly;
-    const trendTile = (label, t, empty) => t
-      ? tile(label, `<span class="${cls(t.usd)}">${moneySig(t.usd)}</span>`,
-             `<span class="${cls(t.pct)}">${pctSig(t.pct)}</span>`
-             + (t.since ? " · since " + t.since : ""))
-      : tile(label, "—", empty || "Needs ≥2 days");
-    const trends = [
-      trendTile("Daily P&L", dd),
-      trendTile("Weekly P&L", wk, "No baseline ≥5 days back"),
-      tile("Drawdown from Peak",
-           P.drawdown_pct != null ? `<span class="${cls(P.drawdown_pct)}">${pctSig(P.drawdown_pct)}</span>` : "—",
-           P.drawdown_pct != null ? "Current vs peak NLV" : "Needs ≥2 days"),
-      tile("30-Day Return",
-           P.return_30d_pct != null ? `<span class="${cls(P.return_30d_pct)}">${pctSig(P.return_30d_pct)}</span>` : "—",
-           P.return_30d_pct != null ? "Trailing 30 days" : "Needs 30 days"),
-      tile("History", String(P.snapshot_days || 0), "day" + ((P.snapshot_days||0) !== 1 ? "s" : "") + " of snapshots"),
-    ];
-    document.getElementById("pm-trends").innerHTML = trends.join("");
+    const trend = (t, fallback) => t
+      ? wrap(moneySig(t.usd), cls(t.usd))
+        + '<span class="stsub">' + pctSig(t.pct)
+        + (t.since ? " · since " + t.since : "") + '</span>'
+      : '—<span class="stsub">' + (fallback || "needs ≥2 days") + '</span>';
 
-    // ── Monthly performance (ML ledger) ──
-    // The blended since-inception win rate hides the trend; one row per month
-    // shows it. Sourced from the same reconciled ledger as the Win Rate tile.
+    document.getElementById("pm-performance").innerHTML = [
+      row("Net liquidation value", money(M.current_value)),
+      row("Starting capital",      money(M.start_value)),
+      row("Total return",          wrap(pctSig(M.total_return_pct), cls(M.total_return_pct))),
+      row("Realized P&L",          wrap(moneySig(P.realized_pnl_cum), cls(P.realized_pnl_cum))),
+      row("Unrealized P&L",        wrap(moneySig(P.unrealized_pnl), cls(P.unrealized_pnl))),
+      row("Unrealized return",     wrap(pctSig(P.unrealized_return_pct), cls(P.unrealized_return_pct)),
+          P.unrealized_return_pct == null ? "needs live marks" : ""),
+      row("Daily P&L",             trend(P.daily)),
+      row("Weekly P&L",            trend(P.weekly, "no baseline ≥5 days back")),
+    ].join("");
+
+    document.getElementById("pm-risk").innerHTML = [
+      row("Sharpe ratio",        M.sharpe_ratio != null ? fmtN(M.sharpe_ratio, 2) : "—",
+          M.sharpe_ratio == null ? "needs 10+ snapshots" : ""),
+      row("Max drawdown",        wrap("-" + fmtN(M.max_drawdown, 2) + "%", "pnl-neg")),
+      row("Drawdown from peak",  wrap(pctSig(P.drawdown_pct), cls(P.drawdown_pct))),
+      row("30-day return",       wrap(pctSig(P.return_30d_pct), cls(P.return_30d_pct))),
+      row("Invested",            P.invested_pct != null ? fmtN(P.invested_pct, 2) + "%" : "—"),
+      row("Cash",                money(M.cash_value)),
+      row("Largest position",    P.largest_pct != null ? fmtN(P.largest_pct, 2) + "%" : "—"),
+      row("Top-5 concentration", P.top5_pct != null ? fmtN(P.top5_pct, 2) + "%" : "—"),
+      row("Largest single loss", M.largest_loss < 0
+            ? wrap("-$" + fmtN(Math.abs(M.largest_loss), 2), "pnl-neg") : "—"),
+    ].join("");
+
+    // Breadth needs live marks; with IBKR offline it is unknowable, and
+    // "0 up / 0 down" would read as real data.
+    const breadth = (P.positions_in_profit == null || P.positions_in_loss == null)
+      ? "—"
+      : '<span class="pnl-pos">' + P.positions_in_profit + '</span> / '
+        + '<span class="pnl-neg">' + P.positions_in_loss + '</span>';
+    const bw = (o) => o ? esc(o.ticker) + " " + wrap(pctSig(o.pct), cls(o.pct)) : "—";
+
+    document.getElementById("pm-activity").innerHTML = [
+      row("Open positions",  P.open_positions != null ? String(P.open_positions) : "—"),
+      row("In profit / loss", breadth,
+          P.positions_in_profit == null ? "needs live marks" : ""),
+      row("Best open",       bw(P.best)),
+      row("Worst open",      bw(P.worst)),
+      row("Closed trades",   String(M.closed_trades || 0)),
+      row("Win rate",        M.win_rate != null ? fmtN(M.win_rate, 1) + "%" : "—",
+          "since inception"),
+      row("Total trades",    String(M.total_trades),
+          M.filled_trades + " filled"),
+      row("Snapshot history", String(P.snapshot_days || 0),
+          "day" + ((P.snapshot_days || 0) !== 1 ? "s" : "")),
+    ].join("");
+
+    // ── Monthly performance ──
+    // A tile strip rather than a table: three rows in a full-width table wastes
+    // the row, and tiles keep the section one card tall as months accumulate.
     (function renderMonthly() {
-      const wrap = document.getElementById("pm-monthly");
-      if (!wrap) return;
-      const rows = (DATA.metrics && DATA.metrics.monthly_performance) || [];
+      const host = document.getElementById("pm-monthly");
+      if (!host) return;
+      const rows = (M.monthly_performance) || [];
       if (!rows.length) {
-        wrap.innerHTML = `<div class="pm-monthly-note">No closed trades in the ML ledger yet</div>`;
+        host.innerHTML = '<div class="tile"><div class="no-data">'
+          + 'No closed trades in the ML ledger yet</div></div>';
         return;
       }
-      const monthLabel = (m) => {
-        const parts = String(m).split("-");
-        const names = ["Jan","Feb","Mar","Apr","May","Jun",
-                       "Jul","Aug","Sep","Oct","Nov","Dec"];
-        const idx = parseInt(parts[1], 10) - 1;
-        return (names[idx] || parts[1]) + " " + parts[0];
-      };
-      const body = rows.map(r => {
-        const wrCls  = r.win_rate  >= 50 ? "pnl-pos" : (r.win_rate  < 40 ? "pnl-neg" : "");
-        const avgCls = r.avg_pct   == null ? "" : (r.avg_pct   >= 0 ? "pnl-pos" : "pnl-neg");
-        const usdCls = r.total_usd == null ? "" : (r.total_usd >= 0 ? "pnl-pos" : "pnl-neg");
-        return `<tr>
-          <td class="pm-month">${monthLabel(r.month)}</td>
-          <td>${r.n}</td>
-          <td class="${wrCls}">${fmtN(r.win_rate, 1)}%</td>
-          <td class="${avgCls}">${fmtSign(r.avg_pct, 2)}%</td>
-          <td class="${usdCls}">${moneySig(r.total_usd)}</td>
-        </tr>`;
+      const max = Math.max.apply(null, rows.map(function (r) {
+        return Math.abs(r.total_usd || 0); })) || 1;
+      host.innerHTML = rows.map(function (r) {
+        const pos = (r.total_usd || 0) >= 0;
+        return '<div class="tile"><div class="tlabel">' + esc(r.month) + '</div>'
+          + '<div class="tval ' + (pos ? "pnl-pos" : "pnl-neg") + '">'
+          + usdSig(r.total_usd) + '</div>'
+          + '<div class="tbar"><i class="' + (pos ? "green" : "red") + '" style="width:'
+          + (Math.abs(r.total_usd || 0) / max * 100).toFixed(0) + '%"></i></div>'
+          + '<div class="tmeta"><span>' + r.n + ' trades</span>'
+          + '<span>' + fmtN(r.win_rate, 0) + '% win</span>'
+          + '<span class="' + ((r.avg_pct || 0) >= 0 ? "pnl-pos" : "pnl-neg") + '">'
+          + fmtSign(r.avg_pct, 2) + '%</span></div></div>';
       }).join("");
-      wrap.innerHTML = `
-        <table class="pm-monthly">
-          <thead><tr>
-            <th>Month</th><th>Trades</th><th>Win %</th><th>Avg %</th><th>Realized $</th>
-          </tr></thead>
-          <tbody>${body}</tbody>
-        </table>
-        <div class="pm-monthly-note">Attributable closed trades, by exit month (ML ledger)</div>`;
     })();
   })();
 
