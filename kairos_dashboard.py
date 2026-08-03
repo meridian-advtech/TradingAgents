@@ -2559,9 +2559,15 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       padding-bottom: 18px;
       border-bottom: 1px solid var(--border);
     }
-    .logo { font-size: 20px; font-weight: 700; color: var(--cyan); letter-spacing: 4px; }
-    .logo span { color: var(--dim); font-weight: 400; }
-    .header-sub { font-size: 11px; color: var(--dim); margin-top: 5px; letter-spacing: 1px; }
+    /* 4px letterspacing on a 20px wordmark was wide enough to wrap on narrow
+       viewports and read as terminal chrome. Tightened, with the accent
+       carrying the brand rather than the tracking. */
+    .logo {
+      font-size: 18px; font-weight: 640; color: var(--text);
+      letter-spacing: -0.2px; white-space: nowrap;
+    }
+    .logo span { color: var(--dim); font-weight: 450; }
+    .header-sub { font-size: 12px; color: var(--dim); margin-top: 2px; }
     .header-right { text-align: right; font-size: 11px; color: var(--dim); }
     .dot {
       display: inline-block; width: 7px; height: 7px;
@@ -2578,8 +2584,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       border-radius: 8px; padding: 9px 16px; margin-bottom: 18px;
     }
     .sh-title {
-      font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
-      color: var(--muted); margin-right: 4px;
+      font-size: 11px; font-weight: 600; color: var(--muted); margin-right: 4px;
     }
     .sh-item { display: inline-flex; align-items: center; font-size: 11px; color: var(--dim); }
     .sh-item .dot { animation: none; box-shadow: none; }
@@ -2610,12 +2615,6 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     @keyframes spin { to { transform: rotate(360deg); } }
     .last-updated { font-size: 10px; color: var(--muted); }
     /* ── Metric grid ── */
-    .metrics-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
-      margin-bottom: 18px;
-    }
     .closed-grid {
       display: grid;
       grid-template-columns: repeat(6, 1fr);
@@ -2642,7 +2641,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     .mcard.c-red::after    { background: var(--red); }
     .mcard.c-purple::after { background: var(--purple); }
     .mcard.c-white::after  { background: var(--border2); }
-    .mlabel { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim); margin-bottom: 7px; }
+    .mlabel { font-size: 11.5px; color: var(--dim); margin-bottom: 7px; font-weight: 500; }
     .mval { font-size: 22px; font-weight: 700; line-height: 1; margin-bottom: 4px; }
     .mval.cyan   { color: var(--cyan); }
     .mval.green  { color: var(--green); }
@@ -2651,18 +2650,78 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     .mval.purple { color: var(--purple); }
     .mval.white  { color: var(--text); }
     .msub { font-size: 10px; color: var(--dim); }
-    .era-note {
-      font-size: 10px; color: var(--dim); line-height: 1.5;
-      border-left: 2px solid var(--cyan); padding: 6px 0 6px 10px;
-      margin: 0 0 14px;
+    /* ── Hero: one focal figure + the equity curve ──────────────────────
+       Replaces the 9-tile metrics grid, which had no rank (every tile the
+       same weight) and left an orphan on a third row. The era ambiguity that
+       the old .era-note paragraph apologised for in prose is now a control. */
+    .hero {
+      display: grid; grid-template-columns: 260px minmax(0, 1fr);
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; box-shadow: var(--shadow);
+      margin-bottom: 12px; overflow: hidden;
     }
-    .era-note b { color: var(--text); font-weight: 600; }
-    .era-note.hidden { display: none; }
+    .hero > * { min-width: 0; }
+    .hl { padding: 18px 20px; border-right: 1px solid var(--border); }
+    .eyebrow { font-size: 11px; font-weight: 600; color: var(--dim); margin-bottom: 6px; }
+    /* Proportional figures: equal-width digits read loose at display sizes. */
+    .hv {
+      font-size: 33px; font-weight: 660; letter-spacing: -1.1px; line-height: 1;
+      color: var(--text); font-variant-numeric: proportional-nums;
+    }
+    .hd { display: flex; align-items: baseline; gap: 8px; margin-top: 8px;
+          font-size: 12.5px; color: var(--dim); flex-wrap: wrap; }
+    .chip { font-size: 12px; font-weight: 620; padding: 2px 7px; border-radius: 5px; }
+    .chip.up   { background: var(--green-dim); color: var(--green); }
+    .chip.down { background: var(--red-dim);   color: var(--red); }
+    .chip.flat { background: var(--cyan-dim);  color: var(--dim); }
+    .hmeta { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+    .hmeta div { display: flex; justify-content: space-between; gap: 10px;
+                 padding: 3px 0; font-size: 12px; }
+    .hmeta dt { color: var(--dim); }
+    .hmeta dd { color: var(--text); font-weight: 550; font-variant-numeric: tabular-nums; }
+    .hr { padding: 14px 18px 12px; }
+    .crow { display: flex; justify-content: space-between; align-items: center;
+            gap: 12px; margin-bottom: 10px; }
+    .hr-title { font-size: 12px; color: var(--dim); }
+    /* Segmented control — the era switch */
+    .seg { display: inline-flex; padding: 2px; gap: 2px; background: var(--bg);
+           border: 1px solid var(--border); border-radius: 7px; }
+    .seg button {
+      font: inherit; font-size: 11px; font-weight: 550; padding: 4px 11px;
+      border: 0; border-radius: 5px; background: transparent; color: var(--dim);
+      cursor: pointer; white-space: nowrap;
+    }
+    .seg button[aria-pressed="true"] {
+      background: var(--surface2); color: var(--text); box-shadow: var(--shadow);
+    }
+    .seg button:hover { color: var(--text); }
+    .seg:empty { display: none; }
+    /* ── KPI strip ── */
+    .kpis {
+      display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 1px;
+      background: var(--border); border: 1px solid var(--border);
+      border-radius: 10px; overflow: hidden; margin-bottom: 18px;
+      box-shadow: var(--shadow);
+    }
+    .kpis > * { min-width: 0; }
+    .k { background: var(--surface); padding: 11px 13px; }
+    .k dt { font-size: 11px; color: var(--dim); margin-bottom: 5px; font-weight: 500; }
+    .k dd { font-size: 17px; font-weight: 620; letter-spacing: -.4px; color: var(--text);
+            font-variant-numeric: proportional-nums; }
+    .k dd.green { color: var(--green); } .k dd.red { color: var(--red); }
+    .k dd.amber { color: var(--amber); } .k dd.cyan { color: var(--cyan); }
+    .kf { font-size: 10.5px; color: var(--dim); margin-top: 3px; line-height: 1.4; }
+    @media(max-width:1250px) { .kpis { grid-template-columns: repeat(4, minmax(0,1fr)); } }
+    @media(max-width:900px) {
+      .hero { grid-template-columns: 1fr; }
+      .hl { border-right: 0; border-bottom: 1px solid var(--border); }
+      .kpis { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    }
     /* ── Portfolio metrics panel ── */
-    .pm-subhdr { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin: 4px 0 12px; }
+    .pm-subhdr { font-size: 11px; color: var(--muted); margin: 4px 0 12px; font-weight: 600; }
     .pm-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 16px; }
     .pm-tile { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 11px 13px; }
-    .pm-label { font-size: 8.5px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+    .pm-label { font-size: 11.5px; color: var(--dim); margin-bottom: 6px; font-weight: 500; }
     .pm-val { font-size: 17px; font-weight: 700; line-height: 1.05; color: var(--text); }
     .pm-sub { font-size: 9.5px; color: var(--dim); margin-top: 3px; }
     @media(max-width:1100px) { .pm-grid { grid-template-columns: repeat(3,1fr); } }
@@ -2670,9 +2729,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     /* ── Monthly performance table ── */
     .pm-monthly { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
     .pm-monthly th {
-      font-size: 8.5px; letter-spacing: 1.2px; text-transform: uppercase;
-      color: var(--dim); text-align: right; font-weight: 600;
-      padding: 6px 10px; border-bottom: 1px solid var(--border);
+      font-size: 11.5px; color: var(--dim); text-align: right; font-weight: 600;
+      padding: 8px 10px; border-bottom: 1px solid var(--border);
     }
     .pm-monthly th:first-child, .pm-monthly td:first-child { text-align: left; }
     .pm-monthly td {
@@ -2692,10 +2750,10 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       margin-bottom: 18px;
     }
     .section-hdr {
-      font-size: 9px;
-      letter-spacing: 2px;
-      text-transform: uppercase;
-      color: var(--dim);
+      font-size: 14px;
+      letter-spacing: -0.1px;
+      color: var(--text);
+      font-weight: 620;
       margin-bottom: 18px;
       display: flex;
       align-items: center;
@@ -2715,16 +2773,16 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       padding: 14px 16px;
       text-align: center;
     }
-    .rlabel { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim); margin-bottom: 8px; }
+    .rlabel { font-size: 11.5px; color: var(--dim); margin-bottom: 8px; font-weight: 500; }
     .rval { font-size: 28px; font-weight: 700; }
     .rsub { font-size: 10px; color: var(--dim); margin-top: 4px; }
     /* ── Tables ── */
     .tbl-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; font-size: 12px; }
     th {
-      text-align: left; color: var(--dim); font-size: 9px;
-      letter-spacing: 1.2px; text-transform: uppercase;
-      padding: 8px 12px; border-bottom: 1px solid var(--border);
+      text-align: left; color: var(--dim); font-size: 11.5px; font-weight: 600;
+      padding: 9px 12px; border-bottom: 1px solid var(--border);
+      background: var(--surface2);
     }
     td { padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: top; }
     tr:last-child td { border-bottom: none; }
@@ -2743,12 +2801,11 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     .no-data { text-align: center; color: var(--muted); padding: 28px; letter-spacing: 1px; }
     /* ── Responsive ── */
     @media(max-width:1100px) {
-      .metrics-grid { grid-template-columns: repeat(2,1fr); }
       .charts-2col  { grid-template-columns: 1fr; }
       .risk-3col    { grid-template-columns: repeat(2,1fr); }
       .closed-grid  { grid-template-columns: repeat(3,1fr); }
     }
-    @media(max-width:600px) { body { padding: 12px; } .metrics-grid { grid-template-columns:1fr; } .closed-grid { grid-template-columns: repeat(2,1fr); } }
+    @media(max-width:600px) { body { padding: 12px; } .closed-grid { grid-template-columns: repeat(2,1fr); } }
     /* ── Position rows are clickable ── */
     #positions-wrap tbody tr { cursor: pointer; transition: background 0.12s; }
     #positions-wrap tbody tr:hover td { background: var(--cyan-dim); }
@@ -2988,9 +3045,25 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 <!-- ── System health strip ── -->
 <div class="sys-health" id="sys-health"></div>
 
-<!-- ── Metric Cards ── -->
-<div class="era-note" id="era-note"></div>
-<div class="metrics-grid" id="metrics-grid"></div>
+<!-- ── Headline: hero figure + equity curve ── -->
+<section class="hero">
+  <div class="hl">
+    <div class="eyebrow">Net liquidation value</div>
+    <div class="hv" id="hero-val">&mdash;</div>
+    <div class="hd" id="hero-delta"></div>
+    <dl class="hmeta" id="hero-meta"></dl>
+  </div>
+  <div class="hr">
+    <div class="crow">
+      <div class="seg" id="era-seg" role="group" aria-label="Measurement period"></div>
+      <div class="hr-title" id="chart-title">Portfolio value</div>
+    </div>
+    <div class="chart-h280"><canvas id="portfolioChart"></canvas></div>
+  </div>
+</section>
+
+<!-- ── Headline KPIs ── -->
+<dl class="kpis" id="kpis"></dl>
 
 <!-- ── Portfolio Metrics (curated) ── -->
 <div class="card" id="portfolio-metrics-card">
@@ -3001,12 +3074,6 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
   <div class="pm-grid" id="pm-trends"></div>
   <div class="pm-subhdr">Monthly Performance</div>
   <div id="pm-monthly"></div>
-</div>
-
-<!-- ── Portfolio Value Chart ── -->
-<div class="card">
-  <div class="section-hdr">Portfolio Value Over Time</div>
-  <div class="chart-h340"><canvas id="portfolioChart"></canvas></div>
 </div>
 
 <!-- ── Weekly Returns + Asset Breakdown ── -->
@@ -3218,158 +3285,153 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
   const fmtUSD  = (n) => n == null ? "\u2014" : "$" + fmtN(n, 0);
   const fmtPct  = (n, d=2) => n == null ? "\u2014" : fmtSign(n, d) + "%";
   const colClass = (n) => n == null ? "white" : n > 0 ? "green" : n < 0 ? "red" : "white";
-  const accentOf = (n) => n == null ? "c-white" : n > 0 ? "c-green" : n < 0 ? "c-red" : "c-white";
   const usdSig  = (n) => n == null ? "\u2014" : (n >= 0 ? "+$" : "-$") + fmtN(Math.abs(n), 0);
 
   // ── Era view ───────────────────────────────────────────────────────
-  // The headline figures measure the CURRENT system — from the configured
-  // baseline date forward. Inception is never hidden: it rides along in the
-  // subtitle of every era tile. When no era is configured (or no baseline
-  // snapshot exists) E is null and every tile falls back to inception, which
-  // is exactly the pre-era behavior.
+  // Two measurement windows over the same book: since inception, and the
+  // current-system era from the configured baseline forward. Previously the
+  // era was force-applied and a paragraph of prose explained the ambiguity;
+  // it is now a control, and every era-dependent figure re-renders on switch.
   const E     = M.era || null;
   const eraOn = !!E;
+  let   view  = eraOn ? "era" : "all";          // default to the current system
+  const inEra = () => view === "era" && eraOn;
   const eraTag = eraOn ? "since " + E.baseline_date : "";
-  const eraLbl = (base) => eraOn ? base + " \u00b7 current system" : base;
-  const eraVal = (eKey, mKey) => eraOn ? E[eKey] : M[mKey];
+  const eraVal = (k) => inEra() ? E[k] : M[k];
 
-  // ── Era caption ────────────────────────────────────────────────────
-  (function renderEraNote() {
-    const el = document.getElementById("era-note");
+  // ── Hero ───────────────────────────────────────────────────────────
+  function renderHero() {
+    const PM = DATA.portfolio_metrics || {};
+    document.getElementById("hero-val").textContent = fmtUSD(M.current_value);
+
+    const ret = eraVal("total_return_pct");
+    const usd = inEra() ? E.total_return_usd : M.total_return_usd;
+    const cls = ret == null ? "flat" : ret > 0 ? "up" : ret < 0 ? "down" : "flat";
+    const when = inEra()
+      ? "current system \u00b7 " + eraTag.replace("since ", "since ")
+      : "since inception \u00b7 " + (DATA.start_date || "\u2014");
+    document.getElementById("hero-delta").innerHTML =
+      `<span class="chip ${cls}">${fmtPct(ret)}</span>`
+      + `<span>${usdSig(usd)} \u00b7 ${when}</span>`;
+
+    const rows = [
+      ["Invested",       PM.invested_pct != null ? fmtN(PM.invested_pct, 1) + "%" : "\u2014", ""],
+      ["Cash",           fmtUSD(M.cash_value), ""],
+      ["Open positions", PM.open_positions != null ? String(PM.open_positions) : "\u2014", ""],
+      ["Unrealized",     usdSig(PM.unrealized_pnl), colClass(PM.unrealized_pnl)],
+      ["Realized",       usdSig(inEra() ? E.realized_pnl : M.realized_pnl),
+                         colClass(inEra() ? E.realized_pnl : M.realized_pnl)],
+      ["Sharpe",         M.sharpe_ratio != null ? fmtN(M.sharpe_ratio, 2) : "\u2014", ""],
+    ];
+    document.getElementById("hero-meta").innerHTML = rows.map(
+      ([k, v, c]) => `<div><dt>${k}</dt><dd class="${c === "white" ? "" : c}">${v}</dd></div>`
+    ).join("");
+  }
+
+  // ── KPI strip ──────────────────────────────────────────────────────
+  function renderKpis() {
+    const tiles = [
+      {
+        label: "Total return",
+        val:   () => fmtPct(eraVal("total_return_pct")),
+        cls:   () => colClass(eraVal("total_return_pct")),
+        foot:  () => usdSig(inEra() ? E.total_return_usd : M.total_return_usd)
+                   + " \u00b7 " + (inEra() ? E.days : M.days_running) + "d",
+      },
+      {
+        label: "Annualized",
+        val:   () => fmtPct(eraVal("annualized_return")),
+        cls:   () => colClass(eraVal("annualized_return")),
+        foot:  () => {
+          const d = inEra() ? E.days : M.days_running;
+          return d + "-day basis" + (d < 90 ? " \u00b7 low confidence" : "");
+        },
+      },
+      {
+        label: "vs Advisor (" + fmtN(M.advisor_rate, 1) + "%)",
+        val:   () => fmtPct(eraVal("vs_advisor")),
+        cls:   () => colClass(eraVal("vs_advisor")),
+        foot:  () => "annualized spread",
+      },
+      {
+        label: "vs Target (" + fmtN(M.target_rate, 1) + "%)",
+        val:   () => fmtPct(eraVal("vs_target")),
+        cls:   () => colClass(eraVal("vs_target")),
+        foot:  () => "annualized spread",
+      },
+      {
+        label: "Win rate",
+        val:   () => {
+          const wr = inEra() ? E.win_rate : M.win_rate;
+          return wr != null ? fmtN(wr, 1) + "%" : "\u2014";
+        },
+        cls:   () => {
+          const wr = inEra() ? E.win_rate : M.win_rate;
+          return wr == null ? "white" : wr >= 50 ? "green" : "amber";
+        },
+        foot:  () => {
+          const n = inEra() ? E.closed_trades : M.closed_trades;
+          return (n == null ? 0 : n) + " closed trades";
+        },
+      },
+      {
+        label: "Realized P&L",
+        val:   () => usdSig(inEra() ? E.realized_pnl : M.realized_pnl),
+        cls:   () => colClass(inEra() ? E.realized_pnl : M.realized_pnl),
+        foot:  () => inEra() ? "in era" : "cumulative",
+      },
+      // Not era-scoped: the same figure under either window.
+      {
+        label: "Max drawdown",
+        val:   () => M.max_drawdown != null ? "-" + fmtN(M.max_drawdown, 2) + "%" : "\u2014",
+        cls:   () => M.max_drawdown > 10 ? "red" : M.max_drawdown > 5 ? "amber" : "white",
+        foot:  () => "peak to trough",
+      },
+      {
+        label: "Total trades",
+        val:   () => String(M.total_trades),
+        cls:   () => "white",
+        foot:  () => M.filled_trades + " filled, "
+                   + (M.total_trades - M.filled_trades) + " other",
+      },
+    ];
+    document.getElementById("kpis").innerHTML = tiles.map(t => {
+      const c = t.cls();
+      return `<div class="k"><dt>${t.label}</dt>`
+           + `<dd class="${c === "white" ? "" : c}">${t.val()}</dd>`
+           + `<div class="kf">${t.foot()}</div></div>`;
+    }).join("");
+  }
+
+  // ── Era switch ─────────────────────────────────────────────────────
+  function renderSeg() {
+    const el = document.getElementById("era-seg");
     if (!el) return;
-    if (!eraOn) { el.className = "era-note hidden"; return; }
-    const usedOther = E.baseline_actual && E.baseline_actual !== E.baseline_date
-      ? ` (nearest snapshot: ${E.baseline_actual})` : "";
-    const src = E.baseline_source ? ` ${E.baseline_source}.` : "";
+    if (!eraOn) { el.innerHTML = ""; return; }   // :empty hides it
     el.innerHTML =
-      `Headline metrics measure the <b>current system</b> \u2014 ${eraTag}`
-      + `${usedOther}, from a baseline of $${fmtN(E.baseline_value, 0)}.${src}`
-      + (E.baseline_note ? ` ${E.baseline_note}.` : "")
-      + ` Since-inception figures are kept on each tile below the headline;`
-      + ` the monthly table shows the full history.`;
-  })();
+        `<button type="button" data-view="all" aria-pressed="${view === "all"}">`
+      + `Since inception</button>`
+      + `<button type="button" data-view="era" aria-pressed="${view === "era"}">`
+      + `Current system</button>`;
+    el.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
+      if (view === b.dataset.view) return;
+      view = b.dataset.view;
+      renderAllEraViews();
+    }));
+  }
 
-  // ── Metric cards ───────────────────────────────────────────────────
-  const cardDefs = [
-    {
-      label: eraLbl("Total Return"),
-      val:   () => fmtPct(eraVal("total_return_pct", "total_return_pct")),
-      sub:   () => eraOn
-        ? usdSig(E.total_return_usd) + " " + eraTag
-          + " \u00b7 inception: " + fmtPct(M.total_return_pct)
-        : usdSig(M.total_return_usd) + " net P&L",
-      color: () => colClass(eraVal("total_return_pct", "total_return_pct")),
-      accent:() => accentOf(eraVal("total_return_pct", "total_return_pct")),
-    },
-    {
-      label: eraLbl("Annualized Return"),
-      val:   () => fmtPct(eraVal("annualized_return", "annualized_return")),
-      sub:   () => {
-        if (!eraOn) {
-          return M.annualized_return == null ? "Insufficient data (<7 days)"
-            : "from " + M.days_running + " day" + (M.days_running !== 1 ? "s" : "") + " of data";
-        }
-        const era = E.annualized_return == null
-          ? "Insufficient era data (<7 days)"
-          : "from " + E.days + " day" + (E.days !== 1 ? "s" : "") + " " + eraTag;
-        return era + " \u00b7 inception: " + fmtPct(M.annualized_return);
-      },
-      color: () => colClass(eraVal("annualized_return", "annualized_return")),
-      accent:() => accentOf(eraVal("annualized_return", "annualized_return")),
-    },
-    {
-      label: eraLbl("vs Advisor (14.4%)"),
-      val:   () => fmtPct(eraVal("vs_advisor", "vs_advisor")),
-      sub:   () => {
-        const v = eraVal("vs_advisor", "vs_advisor");
-        const verdict = v == null ? "No annualized figure yet"
-          : (v >= 0 ? "\u25b2 Ahead of benchmark" : "\u25bc Behind benchmark");
-        return eraOn ? verdict + " \u00b7 inception: " + fmtPct(M.vs_advisor) : verdict;
-      },
-      color: () => colClass(eraVal("vs_advisor", "vs_advisor")),
-      accent:() => accentOf(eraVal("vs_advisor", "vs_advisor")),
-    },
-    {
-      label: eraLbl("vs Target (29.0%)"),
-      val:   () => fmtPct(eraVal("vs_target", "vs_target")),
-      sub:   () => {
-        const v = eraVal("vs_target", "vs_target");
-        const verdict = v == null ? "No annualized figure yet"
-          : (v >= 0 ? "\u25b2 On track to double" : "\u25bc Gap to close");
-        return eraOn ? verdict + " \u00b7 inception: " + fmtPct(M.vs_target) : verdict;
-      },
-      color: () => colClass(eraVal("vs_target", "vs_target")),
-      accent:() => accentOf(eraVal("vs_target", "vs_target")),
-    },
-    {
-      label: "Portfolio Value",
-      val:   () => fmtUSD(M.current_value),
-      sub:   () => "Started at " + fmtUSD(M.start_value),
-      color: () => "cyan",
-      accent:() => "c-cyan",
-    },
-    {
-      label: "Cash Available",
-      val:   () => fmtUSD(M.cash_value),
-      sub:   () => fmtN(M.cash_pct, 1) + "% of NLV",
-      color: () => "white",
-      accent:() => "c-white",
-    },
-    {
-      label: eraLbl("Win Rate"),
-      val:   () => {
-        const wr = eraOn ? E.win_rate : M.win_rate;
-        return wr != null ? fmtN(wr, 1) + "%" : "\u2014";
-      },
-      sub:   () => {
-        const n = M.closed_trades || 0;
-        if (!eraOn) {
-          if (M.win_rate == null) return n + " closed trades (no exits yet)";
-          return M.trade_stats_source === "ml"
-            ? n + " attributable closed trades (ML ledger)"
-            : n + " closed trade" + (n !== 1 ? "s" : "") + " (legacy lots — ML ledger unavailable)";
-        }
-        const eN  = E.closed_trades == null ? 0 : E.closed_trades;
-        const inc = M.win_rate == null ? "\u2014" : fmtN(M.win_rate, 1) + "%";
-        return eN + " closed " + eraTag + " \u00b7 inception: " + inc
-             + " of " + n + " trades";
-      },
-      color: () => {
-        const wr = eraOn ? E.win_rate : M.win_rate;
-        return wr != null && wr >= 50 ? "green" : wr != null && wr > 0 ? "amber" : "white";
-      },
-      accent:() => {
-        const wr = eraOn ? E.win_rate : M.win_rate;
-        return wr != null && wr >= 50 ? "c-green" : wr != null && wr > 0 ? "c-amber" : "c-white";
-      },
-    },
-    {
-      label: "Total Trades",
-      val:   () => String(M.total_trades),
-      sub:   () => M.filled_trades + " filled, " + (M.total_trades - M.filled_trades) + " other",
-      color: () => "white",
-      accent:() => "c-white",
-    },
-    {
-      label: "Days Running",
-      val:   () => String(M.days_running),
-      sub:   () => "Since " + (DATA.start_date || "\u2014")
-                 + (eraOn ? " \u00b7 " + E.days + " in current era" : ""),
-      color: () => "purple",
-      accent:() => "c-purple",
-    },
-  ];
-
-  const grid = document.getElementById("metrics-grid");
-  cardDefs.forEach(def => {
-    const c = def.color(), a = def.accent();
-    grid.innerHTML += `
-      <div class="mcard ${a}">
-        <div class="mlabel">${def.label}</div>
-        <div class="mval ${c}">${def.val()}</div>
-        <div class="msub">${def.sub()}</div>
-      </div>`;
-  });
+  function renderAllEraViews() {
+    renderSeg();
+    renderHero();
+    renderKpis();
+    if (typeof applyChartWindow === "function") applyChartWindow();
+    const t = document.getElementById("chart-title");
+    if (t) {
+      t.textContent = inEra()
+        ? "Portfolio value \u00b7 " + eraTag
+        : "Portfolio value \u00b7 since inception";
+    }
+  }
 
   // ── Risk row ───────────────────────────────────────────────────────
   const riskDefs = [
@@ -3857,19 +3919,19 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
   })();
 
   // ── Chart defaults ─────────────────────────────────────────────────
-  Chart.defaults.color = "#6a80a8";
-  Chart.defaults.borderColor = "#1a2845";
+  Chart.defaults.color = CH.dim;
+  Chart.defaults.borderColor = CH.border;
   Chart.defaults.font.family = "SF Mono, Consolas, Monaco, Courier New, monospace";
   Chart.defaults.font.size = 11;
 
   const gridOpts = {
-    color: "rgba(26,40,69,0.8)",
+    color: CH.border,
     drawBorder: false,
   };
   const tickOpts = { color: CH.dim };
 
   // ── Portfolio value chart ──────────────────────────────────────────
-  new Chart(document.getElementById("portfolioChart"), {
+  const portfolioChart = new Chart(document.getElementById("portfolioChart"), {
     type: "line",
     data: {
       labels: S.dates,
@@ -3881,7 +3943,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
           backgroundColor: "rgba(91,141,239,0.10)",
           borderWidth: 2.5,
           pointRadius: S.dates.length > 30 ? 0 : 4,
-          pointBackgroundColor: "#00ccff",
+          pointBackgroundColor: CH.cyan,
           tension: 0.3,
           fill: true,
           order: 1,
@@ -3923,8 +3985,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
           backgroundColor: CH.surface,
           borderColor: CH.border,
           borderWidth: 1,
-          titleColor: "#c8d8f0",
-          bodyColor: "#6a80a8",
+          titleColor: CH.text,
+          bodyColor: CH.dim,
           callbacks: {
             label: ctx => {
               const val = ctx.parsed.y;
@@ -3939,17 +4001,55 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         },
       },
       scales: {
-        x: { grid: gridOpts, ticks: tickOpts },
+        // 72 daily labels rotated 45deg is an unreadable picket fence. Cap the
+        // count and keep them horizontal; the tooltip carries the exact date.
+        x: {
+          grid: gridOpts,
+          ticks: { ...tickOpts, maxTicksLimit: 8, maxRotation: 0, autoSkip: true },
+        },
         y: {
           grid: gridOpts,
           ticks: {
             ...tickOpts,
+            maxTicksLimit: 6,
             callback: v => "$" + (v >= 1000 ? (v/1000).toFixed(0) + "k" : v),
           },
         },
       },
     },
   });
+
+
+  // Clip the equity curve to the selected measurement window. Slicing the
+  // arrays (rather than drawing a marker on the full series) is what makes the
+  // era view actually re-scale — otherwise 33 days of data sit compressed
+  // against 77 days of axis and the shape is unreadable.
+  function applyChartWindow() {
+    if (!portfolioChart) return;
+    let i0 = 0;
+    if (inEra() && E && E.baseline_date) {
+      const found = S.dates.findIndex(d => d >= E.baseline_date);
+      if (found > 0) i0 = found;
+    }
+    portfolioChart.data.labels = S.dates.slice(i0);
+    const keys = ["actual", "advisor", "target"];
+    portfolioChart.data.datasets.forEach((ds, n) => {
+      const src = S[keys[n]] || [];
+      ds.data = src.slice(i0);
+      ds.pointRadius = (S.dates.length - i0) > 30 ? 0 : 4;
+    });
+    portfolioChart.update("none");
+  }
+
+  // First paint. Deferred to here because the hero and KPI renderers drive the
+  // chart window, and the chart must exist before they run.
+  renderAllEraViews();
+  // Chart.js lays out its category scale on its own first frame. A window
+  // applied before that lands is measured against the pre-layout scale, so the
+  // series gets compressed into the left ~40% of the plot while the axis spans
+  // the full width. Re-apply once laid out; text has already painted, so this
+  // costs nothing visible.
+  requestAnimationFrame(() => applyChartWindow());
 
   // ── Weekly returns chart ───────────────────────────────────────────
   if (W.labels.length > 0) {
@@ -3999,7 +4099,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
           legend: { position: "top", labels: { color: CH.dim, boxWidth: 16, padding: 12 } },
           tooltip: {
             backgroundColor: CH.surface, borderColor: CH.border, borderWidth: 1,
-            titleColor: "#c8d8f0", bodyColor: "#6a80a8",
+            titleColor: CH.text, bodyColor: CH.dim,
             callbacks: {
               label: ctx => " " + ctx.dataset.label + ": " +
                 (ctx.parsed.y >= 0 ? "+" : "") + ctx.parsed.y.toFixed(3) + "%",
@@ -4073,11 +4173,11 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     const dollars = entries.map(([, v]) => v);
 
     const bgColors  = pcts.map(p => p >= WARN_PCT ? "rgba(255,68,102,0.8)"  : "rgba(0,204,255,0.75)");
-    const bdColors  = pcts.map(p => p >= WARN_PCT ? "#ff4466"               : "#00ccff");
+    const bdColors  = pcts.map(p => p >= WARN_PCT ? CH.red : CH.cyan);
 
     // Warn border on the card itself if any sector is over limit
     if (pcts.some(p => p >= WARN_PCT) && sectorCard) {
-      sectorCard.style.borderColor = "#ff4466";
+      sectorCard.style.borderColor = CH.red;
       sectorCard.style.boxShadow   = "0 0 0 1px rgba(255,68,102,0.4)";
     }
 
@@ -4120,7 +4220,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
           },
           tooltip: {
             backgroundColor: CH.surface, borderColor: CH.border, borderWidth: 1,
-            titleColor: "#c8d8f0", bodyColor: "#6a80a8",
+            titleColor: CH.text, bodyColor: CH.dim,
             callbacks: {
               label: ctx => {
                 if (ctx.datasetIndex === 1) return null;
@@ -4444,13 +4544,13 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       const data   = series.map(s => s.p);
       const net = d.closed ? d.realized_pnl : d.unrealized_pnl;
       const up = net == null ? true : net >= 0;
-      const lineColor = up ? "#00e676" : "#ff4466";
+      const lineColor = up ? CH.green : CH.red;
 
       // Highlight the entry (cyan) and, for closed trades, the exit point.
       const ptR = [], ptBg = [];
       labels.forEach(t => {
-        if (t === d.entry_t)      { ptR.push(4); ptBg.push("#00ccff"); }
-        else if (t === d.exit_t)  { ptR.push(4); ptBg.push("#c8d8f0"); }
+        if (t === d.entry_t)      { ptR.push(4); ptBg.push(CH.cyan); }
+        else if (t === d.exit_t)  { ptR.push(4); ptBg.push(CH.text); }
         else                      { ptR.push(0); ptBg.push(lineColor); }
       });
 
@@ -4472,7 +4572,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         legendHtml += `<span><span class="lg-dash" style="border-color:#ff4466"></span>Hard stop</span>`;
       }
       if (d.trail_stop_price != null) {
-        datasets.push(hline(d.trail_stop_price, "#ffaa00"));
+        datasets.push(hline(d.trail_stop_price, CH.amber));
         legendHtml += `<span><span class="lg-dash" style="border-color:#ffaa00"></span>Trailing stop</span>`;
       }
       if (legend) legend.innerHTML = legendHtml;
@@ -4486,7 +4586,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             legend: { display: false },
             tooltip: {
               backgroundColor: CH.surface, borderColor: CH.border, borderWidth: 1,
-              titleColor: "#c8d8f0", bodyColor: "#6a80a8",
+              titleColor: CH.text, bodyColor: CH.dim,
               filter: item => item.datasetIndex === 0,
               callbacks: { label: ctx => " $" + ctx.parsed.y.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2}) },
             },
