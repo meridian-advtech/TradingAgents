@@ -97,36 +97,73 @@ def _sec_registry() -> dict:
 
 
 def _price_status(tickers: list) -> dict:
-    """{ticker: (has_recent_trade, last_date_or_None)} via batched yfinance."""
-    out = {t: (False, None) for t in tickers}
+    """{ticker: (has_recent_trade, last_date, vendor_answered)}.
+
+    vendor_answered distinguishes "the vendor told us this symbol has no
+    trades" from "the vendor did not answer". Conflating them is how a single
+    failed batch condemns 50 live stocks: on the first full run, one chunk
+    came back empty and MO through SCHW — Altria, Moderna, Motorola, M&T — were
+    all recorded as priceless. A symbol is only ever called dead on a real
+    answer, never on silence.
+
+    Any ticker the batch pass could not price is retried INDIVIDUALLY, because
+    a batch is all-or-nothing while a single-symbol request is not.
+    """
+    out = {t: (False, None, False) for t in tickers}
     try:
         import yfinance as yf
-        # Batch to keep the request count sane; yfinance handles space-separated.
-        CHUNK = 60
-        for i in range(0, len(tickers), CHUNK):
-            batch = tickers[i:i + CHUNK]
-            try:
-                df = yf.download(" ".join(batch), period="1mo", interval="1d",
-                                 auto_adjust=True, progress=False,
-                                 group_by="ticker", threads=True)
-            except Exception:
-                continue
+    except Exception:
+        return out
+
+    def _record(t, ser):
+        ser = ser.dropna()
+        if len(ser):
+            last = ser.index[-1].date()
+            age = (datetime.now(timezone.utc).date() - last).days
+            out[t] = (age <= STALE_DAYS, last.isoformat(), True)
+            return True
+        return False
+
+    CHUNK = 60
+    for i in range(0, len(tickers), CHUNK):
+        batch = tickers[i:i + CHUNK]
+        try:
+            df = yf.download(" ".join(batch), period="1mo", interval="1d",
+                             auto_adjust=True, progress=False,
+                             group_by="ticker", threads=True)
+        except Exception:
+            df = None
+        got = 0
+        if df is not None and len(df):
             for t in batch:
                 try:
-                    if len(batch) == 1:
-                        ser = df["Close"]
-                    else:
-                        ser = df[t]["Close"]
-                    ser = ser.dropna()
-                    if len(ser):
-                        last = ser.index[-1].date()
-                        age = (datetime.now(timezone.utc).date() - last).days
-                        out[t] = (age <= STALE_DAYS, last.isoformat())
+                    ser = df["Close"] if len(batch) == 1 else df[t]["Close"]
+                    if _record(t, ser):
+                        got += 1
                 except Exception:
                     continue
-            time.sleep(0.2)
-    except Exception:
-        pass
+        if got == 0 and len(batch) > 1:
+            print(f"    batch {i//CHUNK + 1} returned nothing for all "
+                  f"{len(batch)} symbols — treating as a vendor failure, "
+                  f"not {len(batch)} delistings")
+        time.sleep(0.2)
+
+    # Individual retry for everything still unpriced.
+    missing = [t for t in tickers if not out[t][2]]
+    if missing:
+        print(f"  retrying {len(missing)} unpriced symbol(s) individually…")
+        for t in missing:
+            try:
+                h = yf.Ticker(t).history(period="1mo", interval="1d",
+                                         auto_adjust=True)
+                if h is not None and len(h) and "Close" in h:
+                    if _record(t, h["Close"]):
+                        continue
+                # A real, empty answer from a single-symbol request.
+                out[t] = (False, None, True)
+            except Exception:
+                out[t] = (False, None, False)   # still no answer
+            time.sleep(0.1)
     return out
 
 
@@ -162,9 +199,20 @@ def check(tickers: list | None = None, held_only: bool = False) -> list:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     results = []
     for t in universe:
-        has_price, last_date = prices.get(t, (False, None))
+        has_price, last_date, answered = prices.get(t, (False, None, False))
         in_sec = (t in sec) if sec else None
         cik = str(sec.get(t)) if sec and t in sec else None
+
+        if not answered:
+            # The price vendor never answered. Silence is not evidence of
+            # death — say so rather than guessing.
+            results.append({"ticker": t, "status": "unknown", "has_price": False,
+                            "last_price_date": None, "in_sec": in_sec, "cik": cik,
+                            "held": t in held,
+                            "detail": "price vendor did not answer — re-run; "
+                                      "no conclusion drawn",
+                            "checked_at": now})
+            continue
 
         if has_price and (in_sec or in_sec is None):
             status, detail = "live", ""
