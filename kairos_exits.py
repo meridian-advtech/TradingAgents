@@ -73,6 +73,9 @@ _DEFAULT_EXITS = {
     "reentry": {"no_higher_price_guard": True, "require_new_signal_above_exit": True},
     "hot_reversion_time_gate": {"days": 7},
     "close_window_et": {"start": "15:45", "end": "16:00"},
+    # Ships DISABLED — see the price-invalidation section below.
+    "price_invalidation": {"enabled": False, "confirm_closes": 2,
+                           "min_age_days": 1},
 }
 
 
@@ -195,6 +198,110 @@ def get_position_signal(ticker: str, entry_signals: list[str] | None = None) -> 
     return "STANDARD"
 
 
+# ── Condition 1.5: price-level thesis invalidation ───────────────────
+# MECHANICAL invalidation, distinct from the reasoning-driven THESIS-INVALID
+# label produced by the LLM thesis-review path. Both can exit a position, but
+# they are separate mechanisms and must stay separately attributable — hence
+# the "PRICE-INVALIDATION:" prefix and the "[price-invalid]" tag (parallel to
+# "[target-armed]").
+#
+# Backtest basis (2026-08-02, n=56 clean closed trades with parseable levels):
+# requiring 2 CONSECUTIVE CLOSES below the level beat actuals by +12.7 pts,
+# firing on 15/56 with 9 helped / 4 hurt. The two-close confirmation is what
+# gives it whipsaw resistance; a single close (or an intraday touch) does not
+# reproduce the result.
+
+_DAILY_CLOSES_CACHE: dict = {}
+
+
+def clear_daily_closes_cache() -> None:
+    """Reset the per-run daily-close cache (one network fetch per ticker)."""
+    _DAILY_CLOSES_CACHE.clear()
+
+
+def _recent_daily_closes(ticker: str, n: int) -> list | None:
+    """Last `n` CONFIRMED daily closes, oldest → newest. None if unavailable.
+
+    Uses yfinance daily bars — the same kind of data the backtest ran on. An
+    in-progress session is EXCLUDED: during market hours yfinance returns a
+    partial bar for today whose "close" is just the last trade, and counting it
+    as a close would fire this condition a day early on intraday noise.
+    """
+    key = (ticker, n)
+    if key in _DAILY_CLOSES_CACHE:
+        return _DAILY_CLOSES_CACHE[key]
+
+    closes = None
+    try:
+        import yfinance as yf
+        hist = yf.Ticker(ticker).history(period="1mo", interval="1d",
+                                         auto_adjust=True)
+        if hist is not None and not hist.empty and "Close" in hist:
+            rows = [(idx.date(), float(val))
+                    for idx, val in hist["Close"].items()
+                    if val == val and val > 0]
+            # Drop an in-progress session (exchange-local date == today ET).
+            try:
+                from zoneinfo import ZoneInfo
+                today_et = datetime.now(ZoneInfo("America/New_York")).date()
+            except Exception:
+                today_et = None
+            if rows and today_et is not None and rows[-1][0] >= today_et:
+                rows = rows[:-1]
+            if len(rows) >= n:
+                closes = [c for _d, c in rows[-n:]]
+    except Exception:
+        closes = None
+
+    _DAILY_CLOSES_CACHE[key] = closes
+    return closes
+
+
+def price_invalidation_exit(
+    ticker: str,
+    avg_cost: float,
+    holding_days: int,
+    cfg: dict | None = None,
+) -> str | None:
+    """Return a SELL reason when the thesis invalidation line is confirmed broken.
+
+    Gated off by default (exits.price_invalidation.enabled). Returns None for
+    any position without a cleanly parseable level, without enough confirmed
+    closes, or younger than min_age_days. Never raises — a failure here must
+    fall through to the remaining exit conditions, not break the eval loop.
+    """
+    try:
+        cfg = cfg or _exits_config()
+        pi_cfg = cfg.get("price_invalidation", {})
+        if not pi_cfg.get("enabled", False):
+            return None
+
+        min_age = int(pi_cfg.get("min_age_days", 1))
+        if holding_days < min_age:
+            # Day-1 grace period: a position has to be given a session to
+            # settle before a mechanical line can condemn it.
+            return None
+
+        n = max(1, int(pi_cfg.get("confirm_closes", 2)))
+
+        from kairos_ml_outcomes import get_invalidation_level
+        level = get_invalidation_level(ticker, avg_cost)
+        if level is None:
+            return None
+
+        closes = _recent_daily_closes(ticker, n)
+        if not closes or len(closes) < n:
+            return None
+
+        if all(c <= level for c in closes):
+            return (f"PRICE-INVALIDATION: {n} consecutive closes below "
+                    f"${level:,.2f} (thesis invalidation line) [price-invalid]")
+    except Exception:
+        return None
+
+    return None
+
+
 # ── Condition 1 + 2: stop threshold math ─────────────────────────────
 
 def hard_stop_threshold(signal: str, regime: str, cfg: dict | None = None) -> tuple[float, float]:
@@ -268,6 +375,14 @@ def evaluate_position(
     if is_close_eval and gain_pct <= closing_stop:
         return (f"STOP-LOSS: {gain_pct:.1f}% <= closing stop "
                 f"{closing_stop:.1f}% ({signal}, {regime})")
+
+    # ── Condition 1.5: Price-level thesis invalidation ───────────────
+    # After the hard stop (a breached stop always wins and is cheaper to
+    # evaluate), before the trailing stop (a broken thesis line should exit at
+    # the line, not wait for a give-back from peak). No-op unless enabled.
+    pi_reason = price_invalidation_exit(ticker, avg_cost, holding_days, cfg)
+    if pi_reason:
+        return pi_reason
 
     # ── Condition 2: Trailing stop (profit capture) ──────────────────
     # Target-armed trail (backtest-verified): if enabled and this position has a
@@ -624,6 +739,14 @@ def run_exit_engine(ib=None, regime: str | None = None, dry_run: bool = False) -
     if regime is None:
         regime = _get_regime()
     is_close = _in_close_window(cfg)
+
+    # Per-run caches: one DB read and one history fetch per ticker, at most.
+    clear_daily_closes_cache()
+    try:
+        from kairos_ml_outcomes import clear_invalidation_cache
+        clear_invalidation_cache()
+    except Exception:
+        pass
 
     print(f"  Regime: {regime}  |  close-window eval: {is_close}"
           f"{'  |  DRY RUN' if dry_run else ''}")

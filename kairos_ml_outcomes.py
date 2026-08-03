@@ -19,6 +19,7 @@ Usage:
 
 import json
 import os
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -570,6 +571,110 @@ def get_thesis_target(ticker: str) -> Optional[float]:
     ).fetchone()
     conn.close()
     return row["predicted_return_pct"] if row and row["predicted_return_pct"] is not None else None
+
+
+# ── Price-level thesis invalidation ──────────────────────────────────
+# The Council logs free-text invalidation_conditions per thesis. Most are
+# qualitative ("Breaks below pre-earnings support level") and out of scope for
+# v1 — only an explicit, parseable PRICE LEVEL is usable mechanically. This
+# reader is deliberately conservative: anything it cannot read cleanly returns
+# None and the position falls through to the other exit conditions untouched.
+
+# "below $165" / "above $12.50"
+_INVAL_DIR_RE = re.compile(
+    r"\b(below|above)\b[^$\d\n]{0,20}\$\s*([\d,]+(?:\.\d+)?)", re.IGNORECASE)
+# "$165 support" / "$12.50 resistance"
+_INVAL_LEVEL_RE = re.compile(
+    r"\$\s*([\d,]+(?:\.\d+)?)\s*(support|resistance)\b", re.IGNORECASE)
+
+# Economic sanity band for a parsed level, as implied move from entry price.
+# Rejects misparses in both directions: a level at or above entry (-0.5% floor)
+# would fire instantly, and one more than 30% below entry is far past the hard
+# stop and almost certainly a parse of an unrelated number.
+_INVAL_MIN_MOVE_PCT = -30.0
+_INVAL_MAX_MOVE_PCT = -0.5
+
+_INVALIDATION_CACHE: dict = {}
+
+
+def clear_invalidation_cache() -> None:
+    """Reset the per-evaluation-run cache. Call once at the top of a run."""
+    _INVALIDATION_CACHE.clear()
+
+
+def _parse_invalidation_levels(text: str) -> list:
+    """Extract BELOW-direction price levels from invalidation_conditions text.
+
+    Returns a list of floats. "above"/"resistance" matches are dropped: for a
+    long-only book, invalidation is a break DOWN through a level.
+    """
+    levels = []
+    if not text:
+        return levels
+
+    for direction, raw in _INVAL_DIR_RE.findall(text):
+        if direction.lower() != "below":
+            continue
+        try:
+            levels.append(float(raw.replace(",", "")))
+        except ValueError:
+            continue
+
+    for raw, kind in _INVAL_LEVEL_RE.findall(text):
+        if kind.lower() != "support":
+            continue
+        try:
+            levels.append(float(raw.replace(",", "")))
+        except ValueError:
+            continue
+
+    return levels
+
+
+def get_invalidation_level(ticker: str, entry_price: float) -> Optional[float]:
+    """Parsed price-invalidation level for this ticker's most recent thesis.
+
+    Reads thesis_predictions.invalidation_conditions (read-only connection),
+    extracts below-direction price levels, keeps only those whose implied move
+    from `entry_price` lands in the sanity band, and returns the one CLOSEST to
+    entry (the first line that would be broken).
+
+    Returns None when there is no thesis row, no parseable level, or nothing
+    survives the sanity band — i.e. whenever a mechanical read is not safe.
+    Never raises: any failure degrades to None.
+    """
+    key = (ticker, round(float(entry_price), 4) if entry_price else None)
+    if key in _INVALIDATION_CACHE:
+        return _INVALIDATION_CACHE[key]
+
+    level = None
+    try:
+        if entry_price and entry_price > 0:
+            conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+            try:
+                row = conn.execute(
+                    """SELECT invalidation_conditions FROM thesis_predictions
+                       WHERE ticker = ? ORDER BY timestamp_entry DESC LIMIT 1""",
+                    (ticker,),
+                ).fetchone()
+            finally:
+                conn.close()
+
+            if row and row[0]:
+                candidates = [
+                    lvl for lvl in _parse_invalidation_levels(row[0])
+                    if lvl > 0 and _INVAL_MIN_MOVE_PCT
+                    <= (lvl - entry_price) / entry_price * 100.0
+                    <= _INVAL_MAX_MOVE_PCT
+                ]
+                if candidates:
+                    # Closest to entry == highest surviving level.
+                    level = max(candidates)
+    except Exception:
+        level = None
+
+    _INVALIDATION_CACHE[key] = level
+    return level
 
 
 # ── Reconcile provisional entry prices ───────────────────────────────

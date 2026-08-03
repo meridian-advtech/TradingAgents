@@ -147,7 +147,11 @@ def _log_sell(ticker: str, qty: int, entry_price: float, sell_price: float,
 
     # Determine trigger type from reason string. Order matters — check the
     # more specific Exit Architecture v2 triggers before the generic ones.
-    if "PRICE-CONTRADICTION" in reason:
+    if "PRICE-INVALIDATION" in reason:
+        # Mechanical price-level break. Kept distinct from the reasoning-driven
+        # THESIS-INVALID path so per-mechanism attribution stays separable.
+        trigger = "PRICE-INVALIDATION"
+    elif "PRICE-CONTRADICTION" in reason:
         trigger = "PRICE-CONTRADICTION"
     elif "TRAILING-STOP" in reason:
         trigger = "TRAILING-STOP"
