@@ -309,7 +309,12 @@ def fetch_ibkr_data() -> dict:
                 "symbol":        sym,
                 "secType":       sec,
                 "assetClass":    "crypto" if is_crypto else "equity",
-                "sector":        _normalize_sector(raw_sector, sym) if not is_crypto else "Crypto",
+                # Real sector, same source as the exposure panel. Previously
+                # this was the universe screening bucket, so the positions
+                # table showed "Large Cap" and "Financials" in the same column
+                # the exposure panel labelled "Financial Services" — two
+                # provenances for one column, in one view.
+                "sector":        "Crypto" if is_crypto else _position_sector(sym, raw_sector),
                 "quantity":      qty,
                 "avg_cost":      round(avg, 2),
                 "market_value":  mkt,
@@ -427,6 +432,24 @@ def _normalize_sector(raw: str, symbol: str = "") -> str:
 
     # Already looks like a proper name (from Tier B) — just title-case it
     return raw.replace("_", " ").title()
+
+
+def _position_sector(symbol: str, raw_bucket: str) -> str:
+    """Real sector for a single position, matching the exposure panel.
+
+    Falls back to the normalised universe bucket if the security master is
+    unavailable or has not resolved this ticker, so the column always says
+    something rather than going blank.
+    """
+    try:
+        import kairos_security_master as sm
+    except ImportError:
+        return _normalize_sector(raw_bucket, symbol)
+
+    sector = sm.get_sector(symbol)
+    if sector and sector != sm.UNRESOLVED:
+        return sector
+    return _normalize_sector(raw_bucket, symbol)
 
 
 def _eligible_equity(positions: list):
