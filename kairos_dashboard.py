@@ -2696,6 +2696,63 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     }
     .seg button:hover { color: var(--text); }
     .seg:empty { display: none; }
+    /* ── Tile strip ─────────────────────────────────────────────────────
+       For a small parts-of-a-whole set where one slice dominates. The AI
+       chain is ~92% non-chain, so a stacked bar renders the three tiers as
+       invisible slivers; the readable content is the total and its split.
+       Magnitude, not identity — one hue, no categorical palette needed.      */
+    .tilestrip {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 1px; background: var(--border); border: 1px solid var(--border);
+      border-radius: 10px; overflow: hidden; box-shadow: var(--shadow);
+      margin-bottom: 18px;
+    }
+    .tile { background: var(--surface); padding: 13px 16px; min-width: 0; }
+    .tile.lead { background: var(--surface2); }
+    .tile.lead .tval { color: var(--cyan); }
+    .tlabel { font-size: 11.5px; color: var(--dim); font-weight: 550; margin-bottom: 5px; }
+    .tval { font-size: 19px; font-weight: 640; letter-spacing: -.4px; color: var(--text);
+            font-variant-numeric: proportional-nums; }
+    .tbar { height: 4px; border-radius: 2px; background: var(--bg); margin: 9px 0 8px; overflow: hidden; }
+    .tbar i { display: block; height: 100%; border-radius: 2px; background: var(--cyan); }
+    .tmeta { display: flex; justify-content: space-between; gap: 8px;
+             font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+    /* ── Two-column section, cards sized to content ── */
+    .cols2 {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px 18px; margin-bottom: 18px; align-items: start;
+    }
+    .card.np { padding: 0; overflow: hidden; }
+    .ph {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+      font-size: 12.5px; font-weight: 600; color: var(--text);
+      padding: 11px 14px 10px; border-bottom: 1px solid var(--border);
+    }
+    .phn { font-size: 11px; font-weight: 450; color: var(--dim); }
+    /* Exposure rows: label, value, share, magnitude bar. */
+    .exp { width: 100%; border-collapse: collapse; }
+    .exp td { padding: 7px 14px; font-size: 12.5px; border-bottom: 1px solid var(--border);
+              white-space: nowrap; }
+    .exp tr:last-child td { border-bottom: 0; }
+    .exp tr:hover td { background: var(--hover); }
+    .exp .v, .exp .p { text-align: right; font-variant-numeric: tabular-nums; }
+    .exp .p { color: var(--dim); width: 62px; }
+    .exp tr.over .p { color: var(--red); }
+    .expbar { width: 56px; }
+    .expbar span { display: block; height: 4px; border-radius: 2px; background: var(--border2); }
+    .expbar i { display: block; height: 100%; border-radius: 2px; background: var(--cyan); }
+    .exp tr.over .expbar i { background: var(--red); }
+    .overtag {
+      font-size: 10.5px; font-weight: 600; color: var(--red); background: var(--red-dim);
+      padding: 1px 6px; border-radius: 4px; margin-left: 7px;
+    }
+    .warnbar {
+      font-size: 11.5px; color: var(--text); background: var(--surface2);
+      border: 1px solid var(--border); border-left: 2px solid var(--amber);
+      border-radius: 6px; padding: 8px 13px; margin-bottom: 14px;
+    }
+    .warnbar b { font-weight: 600; }
+    @media(max-width:900px) { .cols2 { grid-template-columns: 1fr; } }
     /* ── KPI strip ── */
     .kpis {
       display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 1px;
@@ -3076,30 +3133,28 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
   <div id="pm-monthly"></div>
 </div>
 
-<!-- ── Weekly Returns + Asset Breakdown ── -->
-<div class="charts-2col">
-  <div class="card">
-    <div class="section-hdr">Weekly Returns vs Benchmarks</div>
-    <div class="chart-h280"><canvas id="weeklyChart"></canvas></div>
-  </div>
-  <div class="card">
-    <div class="section-hdr">AI Value Chain Exposure</div>
-    <div id="chainKpi" style="padding:18px 8px;"></div>
-  </div>
+<!-- ── Weekly Returns ── -->
+<div class="card">
+  <div class="section-hdr">Weekly returns vs benchmarks</div>
+  <div class="chart-h280"><canvas id="weeklyChart"></canvas></div>
 </div>
 
-<!-- ── Sector Breakdown ── -->
-<div class="card" id="sector-card">
-  <div class="section-hdr">Sector Exposure (Equity)</div>
-  <div style="display:flex;align-items:center;gap:14px;margin-bottom:10px;font-size:10px;color:var(--dim)">
-    <span style="display:inline-flex;align-items:center;gap:5px">
-      <span style="display:inline-block;width:12px;height:12px;background:rgba(0,204,255,0.75);border:1px solid #00ccff;border-radius:2px"></span>Normal
-    </span>
-    <span style="display:inline-flex;align-items:center;gap:5px">
-      <span style="display:inline-block;width:12px;height:12px;background:rgba(255,68,102,0.8);border:1px solid #ff4466;border-radius:2px"></span>&gt;25% — over concentration limit
-    </span>
+<!-- ── AI Value Chain ── -->
+<div class="section-hdr">AI value chain</div>
+<div class="tilestrip" id="chainKpi"></div>
+
+<!-- ── Exposure: two independent axes over the same book ── -->
+<div class="section-hdr">Exposure</div>
+<div id="short-note"></div>
+<div class="cols2">
+  <div class="card np" id="sector-card">
+    <div class="ph">Sector <span class="phn" id="sector-phn">GICS</span></div>
+    <div id="sector-table"></div>
   </div>
-  <div class="chart-h280"><canvas id="sectorChart"></canvas></div>
+  <div class="card np">
+    <div class="ph">Size / style <span class="phn">screening bucket, not a sector</span></div>
+    <div id="sizestyle-table"></div>
+  </div>
 </div>
 
 <!-- ── Risk Metrics ── -->
@@ -3286,6 +3341,11 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
   const fmtPct  = (n, d=2) => n == null ? "\u2014" : fmtSign(n, d) + "%";
   const colClass = (n) => n == null ? "white" : n > 0 ? "green" : n < 0 ? "red" : "white";
   const usdSig  = (n) => n == null ? "\u2014" : (n >= 0 ? "+$" : "-$") + fmtN(Math.abs(n), 0);
+  // Shared escaper. Several renderers previously each declared their own
+  // function-scoped copy; anything outside those closures had none.
+  const esc = (s) => String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 
   // ── Era view ───────────────────────────────────────────────────────
   // Two measurement windows over the same book: since inception, and the
@@ -4120,127 +4180,106 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       .innerHTML = \'<div class="no-data">No weekly data yet &mdash; check back after the first week</div>\';
   }
 
-  // ── AI Value Chain Exposure KPI table ──────────────────────────────
-  (function() {
-    const chain   = DATA.chain_tier_breakdown || {};
-    const buckets = (chain.buckets || []).filter(b => b.label !== "Non-Chain");
-    const nlv     = DATA.metrics ? (DATA.metrics.nlv || 0) : 0;
-    const wrap    = document.getElementById("chainKpi");
+  // ── AI value chain ─────────────────────────────────────────────────
+  // Non-Chain is ~92% of the book, so a stacked bar or donut renders the three
+  // tiers as invisible slivers. The readable content is the in-chain total and
+  // how it splits — a magnitude comparison, so one hue and no categorical
+  // palette. Tier bars scale against the largest tier, not NLV, to stay legible.
+  (function renderChain() {
+    const chain = DATA.chain_tier_breakdown || {};
+    const all   = chain.buckets || [];
+    const wrap  = document.getElementById("chainKpi");
     if (!wrap) return;
 
-    if (!buckets.length) {
-      wrap.innerHTML = '<div class="no-data">No chain positions yet</div>';
+    const tiers = all.filter(b => b.label !== "Non-Chain");
+    const total = all.reduce((a, b) => a + (b.value || 0), 0);
+    if (!tiers.length || total <= 0) {
+      wrap.innerHTML = '<div class="tile"><div class="no-data">No chain positions yet</div></div>';
       return;
     }
+    const inChain = tiers.reduce((a, b) => a + (b.value || 0), 0);
+    const maxTier = Math.max.apply(null, tiers.map(b => b.value || 0)) || 1;
+    const pctOf = (v, base) => base > 0 ? (v / base * 100) : 0;
 
-    let rows = buckets.map(b => {
-      const val  = b.value || 0;
-      const pct  = nlv > 0 ? (val / nlv * 100).toFixed(1) : "0.0";
-      const fmtVal = "$" + val.toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:0});
-      return `<tr>
-        <td style="padding:10px 8px;">
-          <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${b.color};margin-right:8px;"></span>
-          <span style="color:#c8d8f0;font-size:13px;">${b.label}</span>
-        </td>
-        <td style="padding:10px 8px;text-align:right;color:#c8d8f0;font-size:13px;font-weight:600;">${fmtVal}</td>
-        <td style="padding:10px 8px;text-align:right;color:#6a80a8;font-size:12px;">${pct}% of NLV</td>
-      </tr>`;
+    let html =
+        '<div class="tile lead"><div class="tlabel">In-chain exposure</div>'
+      + '<div class="tval">' + fmtN(pctOf(inChain, total), 1) + '%</div>'
+      + '<div class="tbar"><i style="width:'
+      + Math.min(100, pctOf(inChain, total)).toFixed(0) + '%"></i></div>'
+      + '<div class="tmeta"><span>' + fmtUSD(inChain) + '</span>'
+      + '<span>' + fmtUSD(total - inChain) + ' non-chain</span></div></div>';
+
+    html += tiers.map(function (b) {
+      const v = b.value || 0;
+      return '<div class="tile"><div class="tlabel">' + esc(b.label) + '</div>'
+           + '<div class="tval">' + fmtN(pctOf(v, total), 1) + '%</div>'
+           + '<div class="tbar"><i style="width:' + (v / maxTier * 100).toFixed(0) + '%"></i></div>'
+           + '<div class="tmeta"><span>' + fmtUSD(v) + '</span>'
+           + '<span>' + fmtN(pctOf(v, inChain), 0) + '% of chain</span></div></div>';
     }).join("");
 
-    wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;">${rows}</table>`;
+    wrap.innerHTML = html;
   })();
 
-  // ── Sector breakdown chart ─────────────────────────────────────────
-  (function() {
-    const sectorRaw  = DATA.sector_breakdown || {};
-    const WARN_PCT   = 25;
-    const equityBase = M.equity_value > 0 ? M.equity_value : M.current_value;
+  // ── Exposure: sector (GICS) and size/style, as two separate axes ───
+  // These measure different things. lookup_sector() returns the universe
+  // screening bucket, which scatters one real sector across several cohorts;
+  // sector_breakdown now resolves through the security master instead. Both
+  // are shown because size/style is a legitimate view — just not a sector one.
+  //
+  // A table rather than a chart is deliberate: past ~7 classes that all carry
+  // meaning, adjacent colours blur, and 11 sectors would need a categorical
+  // palette beyond the safe ceiling. Magnitude bars in a table read better.
+  (function renderExposure() {
+    const WARN_PCT = 25;
+    const base = M.equity_value > 0 ? M.equity_value : M.current_value;
 
-    const entries = Object.entries(sectorRaw)
-      .filter(([, v]) => v > 0)
-      .sort((a, b) => b[1] - a[1]);
-
-    const sectorCard = document.getElementById("sector-card");
-
-    if (entries.length === 0 || equityBase <= 0) {
-      const el = sectorCard ? sectorCard.querySelector(".chart-h280") : null;
-      if (el) el.innerHTML = \'<div class="no-data">No equity positions to display</div>\';
-      return;
+    function table(elId, data, flagLimit) {
+      const host = document.getElementById(elId);
+      if (!host) return;
+      const rows = Object.entries(data || {})
+        .filter(function (e) { return e[1] > 0; })
+        .sort(function (a, b) { return b[1] - a[1]; });
+      if (!rows.length || base <= 0) {
+        host.innerHTML = '<div class="no-data">No equity positions to display</div>';
+        return;
+      }
+      const max = rows[0][1];
+      const body = rows.map(function (e) {
+        const k = e[0], v = e[1];
+        const pct = v / base * 100;
+        const isOver = flagLimit && pct >= WARN_PCT;
+        return '<tr class="' + (isOver ? "over" : "") + '">'
+             + '<td>' + esc(k)
+             + (isOver ? '<span class="overtag">over watermark</span>' : "") + '</td>'
+             + '<td class="v">' + fmtUSD(v) + '</td>'
+             + '<td class="p">' + fmtN(pct, 1) + '%</td>'
+             + '<td class="expbar"><span><i style="width:'
+             + (v / max * 100).toFixed(0) + '%"></i></span></td></tr>';
+      }).join("");
+      host.innerHTML = '<table class="exp"><tbody>' + body + '</tbody></table>';
     }
 
-    const labels  = entries.map(([k]) => k.replace(/_/g, " "));
-    const pcts    = entries.map(([, v]) => parseFloat((v / equityBase * 100).toFixed(1)));
-    const dollars = entries.map(([, v]) => v);
+    table("sector-table", DATA.sector_breakdown, true);
+    table("sizestyle-table", DATA.size_style_breakdown, false);
 
-    const bgColors  = pcts.map(p => p >= WARN_PCT ? "rgba(255,68,102,0.8)"  : "rgba(0,204,255,0.75)");
-    const bdColors  = pcts.map(p => p >= WARN_PCT ? CH.red : CH.cyan);
+    const phn = document.getElementById("sector-phn");
+    if (phn) phn.textContent = "GICS · watermark " + WARN_PCT + "%";
 
-    // Warn border on the card itself if any sector is over limit
-    if (pcts.some(p => p >= WARN_PCT) && sectorCard) {
-      sectorCard.style.borderColor = CH.red;
-      sectorCard.style.boxShadow   = "0 0 0 1px rgba(255,68,102,0.4)";
-    }
-
-    new Chart(document.getElementById("sectorChart"), {
-      type: "bar",
-      data: {
-        labels,
-        datasets: [
-          {
-            label: "% of Equity",
-            data: pcts,
-            backgroundColor: bgColors,
-            borderColor: bdColors,
-            borderWidth: 1.5,
-            borderRadius: 3,
-            order: 1,
-          },
-          {
-            label: "25% limit",
-            data: labels.map(() => WARN_PCT),
-            type: "line",
-            borderColor: CH.red,
-            borderWidth: 1.5,
-            borderDash: [5, 4],
-            pointRadius: 0,
-            fill: false,
-            order: 0,
-          },
-        ],
-      },
-      options: {
-        indexAxis: "y",
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: "index", intersect: false },
-        plugins: {
-          legend: {
-            position: "top",
-            labels: { color: CH.dim, boxWidth: 16, padding: 12 },
-          },
-          tooltip: {
-            backgroundColor: CH.surface, borderColor: CH.border, borderWidth: 1,
-            titleColor: CH.text, bodyColor: CH.dim,
-            callbacks: {
-              label: ctx => {
-                if (ctx.datasetIndex === 1) return null;
-                const idx = ctx.dataIndex;
-                const over = pcts[idx] >= WARN_PCT ? " \u26a0 OVER LIMIT" : "";
-                return ` ${pcts[idx].toFixed(1)}%  ($${dollars[idx].toLocaleString("en-US", {maximumFractionDigits:0})})${over}`;
-              },
-            },
-          },
-        },
-        scales: {
-          x: {
-            grid: gridOpts,
-            ticks: { ...tickOpts, callback: v => v + "%" },
-            max: Math.min(100, Math.max(35, ...pcts) + 5),
-          },
-          y: { grid: { display: false }, ticks: tickOpts },
-        },
-      },
-    });
+    // Shorts net into totals correctly but cannot be a slice of a
+    // part-to-whole view, so say so rather than silently dropping them.
+    const shorts = DATA.short_positions || [];
+    const note = document.getElementById("short-note");
+    if (!note) return;
+    note.innerHTML = shorts.length
+      ? '<div class="warnbar">' + shorts.length + " short position"
+        + (shorts.length === 1 ? "" : "s") + " — "
+        + shorts.map(function (p) {
+            return "<b>" + esc(p.symbol) + "</b> " + fmtN(p.quantity, 0)
+                 + " sh " + fmtUSD(p.market_value);
+          }).join(", ")
+        + " · netted into totals, excluded from the breakdowns above</div>"
+      : "";
   })();
 
   // ── Positions table ────────────────────────────────────────────────
