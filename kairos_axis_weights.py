@@ -103,6 +103,27 @@ PARAM_GIVEBACK_REF = 15.0
 PARAM_CUMULATIVE_WINDOW_DAYS = 7
 PARAM_CUMULATIVE_BAND_FRAC = 0.40
 
+# Horizon over which forgone gain (the too-EARLY pole) is measured, in calendar
+# days. Must be one of kairos_ml_outcomes.FORGONE_HORIZONS.
+#
+# This choice is load-bearing, not cosmetic. Give-back is realised the moment a
+# position is sold, but forgone gain accrues for as long as the stock keeps
+# running — so a SHORT horizon systematically favours tightening. At 5 days a
+# winner sold into a multi-week advance looks nearly costless; at 60 days it
+# does not. That asymmetry is the measurement analogue of the one-sided
+# objective the ratchet ran on, which is why the horizon is explicit and
+# recorded in the evidence rather than hard-coded at the shortest option.
+#
+# Longer horizons need time to mature, so raise this as the corpus fills in;
+# compute_param reports coverage at every horizon to make that call concrete.
+#
+# Set to 14d on 2026-08-03. It covers the SAME 19 in-regime trailing-stop
+# trades as 5d — so the longer window costs no sample — while measuring nearly
+# 50% more forgone gain (6.01 vs 4.14) and correspondingly tempering the
+# proposal (8.0 -> 6.95 rather than 6.70). 30d is the next step at n=13 and
+# should be adopted once coverage grows; 60d is n=2 and gated.
+PARAM_FORGONE_HORIZON_DAYS = 14
+
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -544,9 +565,17 @@ def _has_compute(axis: str) -> bool:
 # 2026-07-11: proposal generation frozen after the approve-ratchet postmortem.
 # Evidence was stale (mfe NULL on 28/30 rows; averages driven by 2 trades) and the
 # objective one-sided (no forgone-gain term), so daily proposals compounded 25%/night
-# on unchanged information. Set to False (or empty) only after the evidence redesign
-# (freshness gate + regime windows + two-sided score) lands.
-PROPOSALS_FROZEN = "2026-07-11 ratchet postmortem"
+# on unchanged information.
+#
+# 2026-08-03: UNFROZEN. The redesign the freeze was waiting on has landed and is
+# verified — two-sided objective, regime window, contributing-row filter,
+# cumulative 7-day ±40% band, freshness gate; 26/26 selftests green; replaying
+# the original ratchet now halts at 4.8 (−40%) instead of 4.0 (−50%). Forgone
+# gain is measured at a 14-day horizon rather than 5 (see
+# PARAM_FORGONE_HORIZON_DAYS) so the too-early pole is not systematically
+# understated. The human approval gate is unchanged and remains mandatory:
+# unfreezing lets the loop PROPOSE, never apply.
+PROPOSALS_FROZEN = False
 
 def propose_all(run_id: str | None = None) -> dict:
     """Write a fresh 'proposed' row for each AUTO_PROPOSE_AXES axis, one Slack note.
@@ -809,15 +838,38 @@ def compute_param(path: str) -> dict:
     lo, hi = PARAM_WHITELIST[path]
     current = _current_param_value(path)
 
-    sql = """
-        SELECT trade_id, pnl_pct, mfe_pct, give_back_pct, forgone_gain_5d_pct,
-               exit_params_snapshot
-        FROM trade_outcomes
-        WHERE exit_reason LIKE 'TRAILING-STOP%'
-          AND timestamp_exit IS NOT NULL
-    """
+    # Forgone-gain horizon is configurable (see PARAM_FORGONE_HORIZON_DAYS).
+    try:
+        from kairos_ml_outcomes import FORGONE_HORIZONS, forgone_column
+        horizon = (PARAM_FORGONE_HORIZON_DAYS
+                   if PARAM_FORGONE_HORIZON_DAYS in FORGONE_HORIZONS
+                   else FORGONE_HORIZONS[0])
+        all_horizons = list(FORGONE_HORIZONS)
+    except Exception:
+        horizon, all_horizons = 5, [5]
+        def forgone_column(d):  # noqa: E306 — local fallback
+            return f"forgone_gain_{int(d)}d_pct"
     conn = _ml_connect_ro()
     try:
+        # Select only horizon columns that actually exist: a database that has
+        # not yet run the migration must degrade to the horizons it has, not
+        # crash the learning loop.
+        present = {r["name"] for r in conn.execute("PRAGMA table_info(trade_outcomes)")}
+        all_horizons = [h for h in all_horizons if forgone_column(h) in present]
+        if not all_horizons:
+            all_horizons = [horizon]
+        if forgone_column(horizon) not in present and all_horizons:
+            horizon = all_horizons[0]
+        fg_col = forgone_column(horizon)
+
+        sql = f"""
+            SELECT trade_id, pnl_pct, mfe_pct, give_back_pct,
+                   {', '.join(forgone_column(h) for h in all_horizons)},
+                   exit_params_snapshot
+            FROM trade_outcomes
+            WHERE exit_reason LIKE 'TRAILING-STOP%'
+              AND timestamp_exit IS NOT NULL
+        """
         all_rows = [dict(r) for r in conn.execute(sql).fetchall()]
     finally:
         conn.close()
@@ -833,7 +885,7 @@ def compute_param(path: str) -> dict:
     def _contributes(r) -> bool:
         return (r.get("mfe_pct") is not None
                 and r.get("pnl_pct") is not None
-                and r.get("forgone_gain_5d_pct") is not None)
+                and r.get(fg_col) is not None)
 
     rows = [r for r in in_regime if _contributes(r)]
     n = len(rows)
@@ -854,7 +906,7 @@ def compute_param(path: str) -> dict:
         gb = r["give_back_pct"]
         if gb is None:
             gb = r["mfe_pct"] - r["pnl_pct"]
-        fg = r["forgone_gain_5d_pct"]
+        fg = r[fg_col]
         givebacks.append(gb)
         forgones.append(fg)
         errors.append(gb - fg)
@@ -920,6 +972,21 @@ def compute_param(path: str) -> dict:
         "avg_pnl_pct": round(_avg("pnl_pct"), 4),
         "avg_give_back_pct": round(avg_gb, 4),
         "avg_forgone_gain_pct": round(avg_fg, 4),
+        "forgone_horizon_days": horizon,
+        # Coverage and mean forgone gain at EVERY horizon, over the in-regime
+        # set. Makes the horizon decision inspectable: if forgone gain climbs
+        # steeply with horizon, the short window was hiding winner-harvesting.
+        "forgone_by_horizon": {
+            f"{h}d": {
+                "n": sum(1 for r in in_regime if r.get(forgone_column(h)) is not None),
+                "avg": (round(sum(r[forgone_column(h)] for r in in_regime
+                                  if r.get(forgone_column(h)) is not None)
+                              / max(1, sum(1 for r in in_regime
+                                           if r.get(forgone_column(h)) is not None)), 4)
+                        if any(r.get(forgone_column(h)) is not None for r in in_regime)
+                        else None),
+            } for h in all_horizons
+        },
         "mean_error_pp": round(mean_error, 4),
         "direction": direction_label,
         "round_trips": round_trips,

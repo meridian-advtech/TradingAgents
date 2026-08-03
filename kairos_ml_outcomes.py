@@ -143,7 +143,37 @@ _TRADE_OUTCOMES_EXTRA_COLUMNS = [
     # is the difference between "this signal drove the trade" and "this signal
     # happened to be firing for this ticker that day". See ATTRIBUTION_SOURCES.
     ("signal_attribution_source", "TEXT"),
+    # Forgone gain at longer horizons (see FORGONE_HORIZONS). The 5-day window
+    # is too short to see winner-harvesting: a position sold into a multi-week
+    # advance looks costless at 5 days and expensive at 60. Each horizon is
+    # independently NULL until its own window matures.
+    ("forgone_gain_14d_pct", "REAL"),
+    ("forgone_gain_30d_pct", "REAL"),
+    ("forgone_gain_60d_pct", "REAL"),
+    ("forgone_filled_at", "TEXT"),
 ]
+
+# Post-exit horizons over which forgone gain is measured, in CALENDAR days:
+# ~1 week, 2 weeks, 1 month, 2 months. Canonical definition for every horizon:
+#
+#     forgone_gain_Nd_pct = (max High in (exit, exit+N days] - price_exit)
+#                           / price_exit * 100
+#
+# i.e. the best exit that was still available within N days of the one taken.
+# Positive means we left money on the table (exited EARLY); negative means the
+# position kept falling after the exit (exiting was right).
+#
+# NOTE: the pre-existing forgone_gain_5d_pct values were written by a script no
+# longer present in the repo and disagreed with post_exit_peak_pct on 64 of 160
+# rows, with no recoverable definition. kairos_outcome_features now recomputes
+# all horizons — including 5d — from this one definition, so the objective runs
+# on a measure that can be reproduced and audited.
+FORGONE_HORIZONS = (5, 14, 30, 60)
+
+
+def forgone_column(days: int) -> str:
+    """Column name holding forgone gain at an N-day horizon."""
+    return f"forgone_gain_{int(days)}d_pct"
 
 # Provenance values for signal_attribution_source, ordered most → least
 # trustworthy. Anything below 'confluence' is CONTEXT, not causation, and

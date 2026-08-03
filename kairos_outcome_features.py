@@ -166,6 +166,24 @@ def compute_features_for_trade(ticker, ts_entry, ts_exit, price_entry, price_exi
             pk = float(post_highs.max())
             result["post_exit_peak_pct"] = round((pk - price_exit) / price_exit * 100.0, 4)
 
+    # ── Forgone gain across every horizon ────────────────────────────
+    # Same canonical measure as post_exit_peak_pct, evaluated at each horizon in
+    # FORGONE_HORIZONS: the best exit still available within N days of the one
+    # taken. Each horizon matures independently, so a trade closed 20 days ago
+    # yields 5d and 14d while 30d and 60d stay NULL rather than being computed
+    # from a truncated window (which would understate forgone gain — exactly the
+    # bias the longer horizons exist to remove).
+    from kairos_ml_outcomes import FORGONE_HORIZONS, forgone_column
+    post_start = (exit_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+    for h in FORGONE_HORIZONS:
+        col = forgone_column(h)
+        result[col] = None
+        if now < (exit_dt + timedelta(days=h)):
+            continue  # window not yet elapsed
+        hi = highs.loc[post_start:(exit_dt + timedelta(days=h)).strftime("%Y-%m-%d")]
+        if len(hi) > 0:
+            result[col] = round((float(hi.max()) - price_exit) / price_exit * 100.0, 4)
+
     return result
 
 
@@ -177,11 +195,14 @@ def _select_rows(conn, window_days, only_missing, now):
     only_missing: features_filled_at IS NULL, OR post_exit_peak_pct IS NULL and
     the post-exit window has now elapsed (so a previously-immature row matures).
     """
+    from kairos_ml_outcomes import FORGONE_HORIZONS, forgone_column
+    fg_cols = [forgone_column(h) for h in FORGONE_HORIZONS]
     rows = conn.execute(
         "SELECT trade_id, ticker, timestamp_entry, timestamp_exit, "
         "       price_entry, price_exit, pnl_pct, action, "
-        "       mfe_pct, post_exit_peak_pct, features_filled_at "
-        "FROM trade_outcomes WHERE timestamp_exit IS NOT NULL "
+        "       mfe_pct, post_exit_peak_pct, features_filled_at, "
+        + ", ".join(fg_cols) +
+        " FROM trade_outcomes WHERE timestamp_exit IS NOT NULL "
         "ORDER BY timestamp_exit"
     ).fetchall()
     if not only_missing:
@@ -192,10 +213,18 @@ def _select_rows(conn, window_days, only_missing, now):
         if r["features_filled_at"] is None:
             todo.append(r)
             continue
+        xdt = _parse_utc(r["timestamp_exit"])
         if r["post_exit_peak_pct"] is None:
-            xdt = _parse_utc(r["timestamp_exit"])
             if xdt and now >= (xdt + timedelta(days=window_days)):
                 todo.append(r)
+                continue
+        # A longer horizon that has newly matured also makes the row due — this
+        # is what lets 30d/60d forgone gain fill in over time without a manual
+        # re-run per horizon.
+        if xdt and any(r[forgone_column(h)] is None
+                       and now >= (xdt + timedelta(days=h))
+                       for h in FORGONE_HORIZONS):
+            todo.append(r)
     return todo
 
 
@@ -231,8 +260,13 @@ def fill_features(window_days: int = 5, only_missing: bool = True,
                       if r["ticker"] and (r["action"] or "").upper() == "BUY"})
     hist = {}
     if tickers and entry_dts and exit_dts:
+        # The download must reach past the LONGEST forgone horizon, not just
+        # window_days — otherwise the 60d peak is silently computed from a
+        # truncated series and understates forgone gain.
+        from kairos_ml_outcomes import FORGONE_HORIZONS
+        _span = max(window_days, max(FORGONE_HORIZONS))
         start = (min(entry_dts) - timedelta(days=2)).strftime("%Y-%m-%d")
-        end = (max(exit_dts) + timedelta(days=window_days + 3)).strftime("%Y-%m-%d")
+        end = (max(exit_dts) + timedelta(days=_span + 3)).strftime("%Y-%m-%d")
         print(f"  Fetching daily OHLC for {len(tickers)} ticker(s) {start} → {end} ...")
         hist = _download_daily(tickers, start, end)
 
@@ -276,15 +310,30 @@ def fill_features(window_days: int = 5, only_missing: bool = True,
             if dry_run:
                 continue
 
+            # Forgone horizons are written with COALESCE semantics in reverse:
+            # a horizon that has not yet matured is None and must NOT overwrite
+            # a value already stored, so only non-None horizons are updated.
+            from kairos_ml_outcomes import FORGONE_HORIZONS, forgone_column
+            fg_cols, fg_vals = [], []
+            for h in FORGONE_HORIZONS:
+                col = forgone_column(h)
+                if feats.get(col) is not None:
+                    fg_cols.append(f"  {col} = ?")
+                    fg_vals.append(feats[col])
+            fg_sql = ("," + ",".join(fg_cols) + ", forgone_filled_at = ?") if fg_cols else ""
+            if fg_cols:
+                fg_vals.append(filled_at)
+
             write_conn.execute(
                 "UPDATE trade_outcomes SET "
                 "  mfe_pct = ?, give_back_pct = ?, post_exit_peak_pct = ?, "
-                "  post_exit_window_days = ?, exit_reason = ?, features_filled_at = ? "
-                "WHERE trade_id = ?",
+                "  post_exit_window_days = ?, exit_reason = ?, features_filled_at = ?"
+                + fg_sql +
+                " WHERE trade_id = ?",
                 (
                     feats["mfe_pct"], feats["give_back_pct"],
                     feats["post_exit_peak_pct"], feats["post_exit_window_days"],
-                    exit_reason, filled_at, r["trade_id"],
+                    exit_reason, filled_at, *fg_vals, r["trade_id"],
                 ),
             )
             summary["written"] += 1
