@@ -2480,29 +2480,70 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
   <title>Kairos Performance Dashboard</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
+    /* ── Design tokens ──────────────────────────────────────────────────
+       Variable NAMES are unchanged from the original terminal palette so
+       every existing rule inherits the new look without markup edits; only
+       the VALUES move. Saturated neon (#00e676 / #ff4466) reads as a gaming
+       HUD; institutional reporting wants desaturated semantic colour and a
+       single accent. --cyan is retained as the accent slot name.            */
     :root {
-      --bg: #080d1c;
-      --surface: #0d1426;
-      --surface2: #111c35;
-      --border: #1a2845;
-      --border2: #243560;
-      --text: #c8d8f0;
-      --dim: #6a80a8;
-      --muted: #3a4a68;
-      --cyan: #00ccff;
-      --cyan-dim: rgba(0,204,255,0.15);
-      --green: #00e676;
-      --green-dim: rgba(0,230,118,0.15);
-      --amber: #ffaa00;
-      --amber-dim: rgba(255,170,0,0.15);
-      --red: #ff4466;
-      --red-dim: rgba(255,68,102,0.15);
-      --purple: #bb66ff;
-      --purple-dim: rgba(187,102,255,0.15);
+      --bg: #0b1020;
+      --surface: #121829;
+      --surface2: #171e33;
+      --border: #242d47;
+      --border2: #2f3a58;
+      --text: #e7ecf6;
+      --dim: #98a5be;
+      --muted: #67748f;
+      --cyan: #5b8def;
+      --cyan-dim: rgba(91,141,239,0.14);
+      --green: #3fa87a;
+      --green-dim: rgba(63,168,122,0.13);
+      --amber: #c9973f;
+      --amber-dim: rgba(201,151,63,0.13);
+      --red: #d1656b;
+      --red-dim: rgba(209,101,107,0.13);
+      --purple: #8a7bd8;
+      --purple-dim: rgba(138,123,216,0.13);
+      --hover: rgba(255,255,255,0.035);
+      --shadow: 0 1px 2px rgba(0,0,0,.35), 0 10px 26px -16px rgba(0,0,0,.7);
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+      --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    }
+    /* Light theme: allocators read in daylight and print to PDF. The toggle
+       must beat the OS preference in both directions, so the media query is
+       scoped with :where() to keep it below the explicit data-theme stamp. */
+    :root[data-theme="light"] {
+      --bg: #f5f7fb;
+      --surface: #ffffff;
+      --surface2: #f4f6fa;
+      --border: #dee3ed;
+      --border2: #cdd5e3;
+      --text: #111726;
+      --dim: #525d73;
+      --muted: #7d8799;
+      --cyan: #2f62d6;
+      --cyan-dim: rgba(47,98,214,0.10);
+      --green: #1c7a52;
+      --green-dim: rgba(28,122,82,0.09);
+      --amber: #8f6b1c;
+      --amber-dim: rgba(143,107,28,0.09);
+      --red: #b3373f;
+      --red-dim: rgba(179,55,63,0.09);
+      --purple: #5b49b0;
+      --purple-dim: rgba(91,73,176,0.09);
+      --hover: rgba(16,24,40,0.035);
+      --shadow: 0 1px 2px rgba(16,24,40,.04), 0 10px 26px -18px rgba(16,24,40,.3);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* Equal-width digits wherever figures align vertically — table rows and
+       stat lists. Large standalone figures take proportional digits, which is
+       handled per-element below. */
+    table, .pm-val, .mval, .rval, .so-fact-val, .so-kv-val,
+    .cl-count, .sh-val, .last-updated { font-variant-numeric: tabular-nums; }
+    .mono, .tkr { font-family: var(--mono); }
     body {
-      font-family: "SF Mono","Consolas","Monaco","Courier New",monospace;
+      font-family: var(--sans);
       background: var(--bg);
       color: var(--text);
       min-height: 100vh;
@@ -2687,7 +2728,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     }
     td { padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: top; }
     tr:last-child td { border-bottom: none; }
-    tr:hover td { background: rgba(255,255,255,0.02); }
+    tr:hover td { background: var(--hover); }
     .tag-BUY  { color: var(--green); font-weight: 700; }
     .tag-SELL { color: var(--red); font-weight: 700; }
     .tag-HOLD { color: var(--dim); }
@@ -2710,7 +2751,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     @media(max-width:600px) { body { padding: 12px; } .metrics-grid { grid-template-columns:1fr; } .closed-grid { grid-template-columns: repeat(2,1fr); } }
     /* ── Position rows are clickable ── */
     #positions-wrap tbody tr { cursor: pointer; transition: background 0.12s; }
-    #positions-wrap tbody tr:hover td { background: rgba(0,204,255,0.05); }
+    #positions-wrap tbody tr:hover td { background: var(--cyan-dim); }
     #positions-wrap tbody tr td:first-child { position: relative; }
     #positions-wrap tbody tr:hover td:first-child::before {
       content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--cyan);
@@ -2740,7 +2781,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       letter-spacing: 0.5px; cursor: pointer; transition: color 0.12s, border-color 0.12s;
     }
     .cl-pill:hover { color: var(--text); border-color: var(--border2); }
-    .cl-pill.active { color: var(--cyan); border-color: var(--cyan); background: rgba(0,204,255,0.06); }
+    .cl-pill.active { color: var(--cyan); border-color: var(--cyan); background: var(--cyan-dim); }
     .cl-filter-state { display: flex; align-items: center; gap: 12px; }
     .cl-count { font-size: 11px; color: var(--dim); letter-spacing: 0.5px; }
     .cl-clear {
@@ -2754,7 +2795,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     /* ── Closed-trade list ── */
     #closed-list { margin-top: 18px; }
     #closed-list tbody tr { cursor: pointer; transition: background 0.12s; }
-    #closed-list tbody tr:hover td { background: rgba(0,204,255,0.05); }
+    #closed-list tbody tr:hover td { background: var(--cyan-dim); }
     #closed-list tbody tr td:first-child { position: relative; }
     #closed-list tbody tr:hover td:first-child::before {
       content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--cyan);
@@ -2768,7 +2809,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     #signal-analytics th.sortable { cursor: pointer; user-select: none; }
     #signal-analytics th.sortable:hover { color: var(--text); }
     #signal-analytics th .arrow { color: var(--cyan); font-size: 9px; margin-left: 3px; }
-    #signal-analytics tbody tr:hover td { background: rgba(255,255,255,0.02); }
+    #signal-analytics tbody tr:hover td { background: var(--hover); }
     .sig-pill {
       display: inline-flex; align-items: center; gap: 6px;
       font-weight: 700; color: var(--text); font-size: 11px;
@@ -2800,7 +2841,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     /* ── Slide-over panel ── */
     .so-overlay {
       position: fixed; inset: 0; z-index: 90;
-      background: rgba(4,8,18,0.55); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+      background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
       opacity: 0; visibility: hidden; transition: opacity 0.28s ease, visibility 0.28s ease;
     }
     .so-overlay.open { opacity: 1; visibility: visible; }
@@ -2870,9 +2911,9 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     .so-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
     .so-pill {
       font-size: 10px; font-weight: 700; letter-spacing: 0.5px; padding: 5px 11px; border-radius: 20px;
-      background: var(--cyan-dim); color: var(--cyan); border: 1px solid rgba(0,204,255,0.3);
+      background: var(--cyan-dim); color: var(--cyan); border: 1px solid var(--cyan);
     }
-    .so-pill.rev { background: var(--purple-dim); color: var(--purple); border-color: rgba(187,102,255,0.3); }
+    .so-pill.rev { background: var(--purple-dim); color: var(--purple); border-color: var(--purple); }
     .so-conf-row { display: flex; align-items: center; gap: 12px; }
     .so-conf-dots { display: flex; gap: 4px; }
     .so-conf-dot { width: 18px; height: 5px; border-radius: 3px; background: var(--border2); }
@@ -2933,6 +2974,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     <div style="margin-top:3px" id="snap-count"></div>
     <div class="refresh-row">
       <span class="last-updated" id="last-updated"></span>
+      <button class="refresh-btn" id="theme-btn" type="button"
+              aria-label="Toggle light or dark theme">Light</button>
       <button class="refresh-btn" id="refresh-btn" onclick="refreshDashboard()">
         <span class="spinner"></span>
         <span class="btn-icon">&#x21bb;</span>
@@ -3062,6 +3105,69 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 </div>
 
 <script>
+  // Chart.js cannot read CSS custom properties, so resolve the palette once
+  // per render into an object the chart configs reference. Rebuilt whenever
+  // the theme changes, otherwise charts keep the colours of the mode they
+  // were first drawn in.
+  const CH = {};
+  function readPalette() {
+    const cs = getComputedStyle(document.documentElement);
+    const v = (n, fallback) => (cs.getPropertyValue(n) || "").trim() || fallback;
+    CH.cyan    = v("--cyan",    "#5b8def");
+    CH.green   = v("--green",   "#3fa87a");
+    CH.amber   = v("--amber",   "#c9973f");
+    CH.red     = v("--red",     "#d1656b");
+    CH.purple  = v("--purple",  "#8a7bd8");
+    CH.dim     = v("--dim",     "#98a5be");
+    CH.border  = v("--border",  "#242d47");
+    CH.surface = v("--surface", "#121829");
+    CH.text    = v("--text",    "#e7ecf6");
+  }
+
+  // ── Theme ──────────────────────────────────────────────────────────
+  // Stamped on <html> so the data-theme rules win over the OS preference in
+  // both directions. Persisted, because a viewer who picked light does not
+  // want it reset on every cron-driven page refresh.
+  (function initTheme() {
+    const root = document.documentElement;
+    const btn  = document.getElementById("theme-btn");
+    const prefersLight = window.matchMedia
+      && window.matchMedia("(prefers-color-scheme: light)").matches;
+    let mode;
+    try { mode = localStorage.getItem("kairos-theme"); } catch (e) { mode = null; }
+    if (!mode) mode = prefersLight ? "light" : "dark";
+    const apply = (m, redraw) => {
+      root.setAttribute("data-theme", m);
+      if (btn) btn.textContent = m === "dark" ? "Light" : "Dark";
+      try { localStorage.setItem("kairos-theme", m); } catch (e) {}
+      readPalette();
+      if (redraw && window.Chart) {
+        // Re-tint live charts in place rather than rebuilding them, so zoom
+        // and any open tooltip survive the switch.
+        Object.values(Chart.instances || {}).forEach(c => {
+          try {
+            const o = c.options || {};
+            if (o.plugins && o.plugins.legend && o.plugins.legend.labels)
+              o.plugins.legend.labels.color = CH.dim;
+            if (o.plugins && o.plugins.tooltip) {
+              o.plugins.tooltip.backgroundColor = CH.surface;
+              o.plugins.tooltip.borderColor = CH.border;
+            }
+            Object.values(o.scales || {}).forEach(sc => {
+              if (sc.ticks) sc.ticks.color = CH.dim;
+              if (sc.grid)  sc.grid.color  = CH.border;
+            });
+            c.update("none");
+          } catch (e) {}
+        });
+      }
+    };
+    apply(mode, false);
+    if (btn) btn.addEventListener("click", () => {
+      apply(root.getAttribute("data-theme") === "dark" ? "light" : "dark", true);
+    });
+  })();
+
   const DATA = __DATA_JSON__;
   const M = DATA.metrics;
   const S = DATA.series;
@@ -3760,7 +3866,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     color: "rgba(26,40,69,0.8)",
     drawBorder: false,
   };
-  const tickOpts = { color: "#6a80a8" };
+  const tickOpts = { color: CH.dim };
 
   // ── Portfolio value chart ──────────────────────────────────────────
   new Chart(document.getElementById("portfolioChart"), {
@@ -3771,8 +3877,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         {
           label: "Kairos Actual",
           data: S.actual,
-          borderColor: "#00ccff",
-          backgroundColor: "rgba(0,204,255,0.08)",
+          borderColor: CH.cyan,
+          backgroundColor: "rgba(91,141,239,0.10)",
           borderWidth: 2.5,
           pointRadius: S.dates.length > 30 ? 0 : 4,
           pointBackgroundColor: "#00ccff",
@@ -3783,7 +3889,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         {
           label: "Advisor 14.4%",
           data: S.advisor,
-          borderColor: "#ffaa00",
+          borderColor: CH.amber,
           borderWidth: 1.5,
           borderDash: [6, 4],
           pointRadius: 0,
@@ -3794,7 +3900,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         {
           label: "Target 29.0%",
           data: S.target,
-          borderColor: "#00e676",
+          borderColor: CH.green,
           borderWidth: 1.5,
           borderDash: [3, 3],
           pointRadius: 0,
@@ -3811,11 +3917,11 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       plugins: {
         legend: {
           position: "top",
-          labels: { color: "#6a80a8", boxWidth: 20, padding: 16 },
+          labels: { color: CH.dim, boxWidth: 20, padding: 16 },
         },
         tooltip: {
-          backgroundColor: "#0d1426",
-          borderColor: "#1a2845",
+          backgroundColor: CH.surface,
+          borderColor: CH.border,
           borderWidth: 1,
           titleColor: "#c8d8f0",
           bodyColor: "#6a80a8",
@@ -3864,7 +3970,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
           {
             label: "Advisor (0.277%/wk)",
             data: W.advisor,
-            borderColor: "#ffaa00",
+            borderColor: CH.amber,
             borderWidth: 1.5,
             borderDash: [5,3],
             type: "line",
@@ -3875,7 +3981,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
           {
             label: "Target (0.558%/wk)",
             data: W.target,
-            borderColor: "#00e676",
+            borderColor: CH.green,
             borderWidth: 1.5,
             borderDash: [3,3],
             type: "line",
@@ -3890,9 +3996,9 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         maintainAspectRatio: false,
         interaction: { mode: "index", intersect: false },
         plugins: {
-          legend: { position: "top", labels: { color: "#6a80a8", boxWidth: 16, padding: 12 } },
+          legend: { position: "top", labels: { color: CH.dim, boxWidth: 16, padding: 12 } },
           tooltip: {
-            backgroundColor: "#0d1426", borderColor: "#1a2845", borderWidth: 1,
+            backgroundColor: CH.surface, borderColor: CH.border, borderWidth: 1,
             titleColor: "#c8d8f0", bodyColor: "#6a80a8",
             callbacks: {
               label: ctx => " " + ctx.dataset.label + ": " +
@@ -3993,7 +4099,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             label: "25% limit",
             data: labels.map(() => WARN_PCT),
             type: "line",
-            borderColor: "rgba(255,68,102,0.55)",
+            borderColor: CH.red,
             borderWidth: 1.5,
             borderDash: [5, 4],
             pointRadius: 0,
@@ -4010,10 +4116,10 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         plugins: {
           legend: {
             position: "top",
-            labels: { color: "#6a80a8", boxWidth: 16, padding: 12 },
+            labels: { color: CH.dim, boxWidth: 16, padding: 12 },
           },
           tooltip: {
-            backgroundColor: "#0d1426", borderColor: "#1a2845", borderWidth: 1,
+            backgroundColor: CH.surface, borderColor: CH.border, borderWidth: 1,
             titleColor: "#c8d8f0", bodyColor: "#6a80a8",
             callbacks: {
               label: ctx => {
@@ -4379,7 +4485,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
           plugins: {
             legend: { display: false },
             tooltip: {
-              backgroundColor: "#0d1426", borderColor: "#1a2845", borderWidth: 1,
+              backgroundColor: CH.surface, borderColor: CH.border, borderWidth: 1,
               titleColor: "#c8d8f0", bodyColor: "#6a80a8",
               filter: item => item.datasetIndex === 0,
               callbacks: { label: ctx => " $" + ctx.parsed.y.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2}) },
@@ -4389,8 +4495,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             x: { display: false },
             y: {
               position: "right",
-              grid: { color: "rgba(26,40,69,0.6)", drawBorder: false },
-              ticks: { color: "#6a80a8", font: { size: 9 }, maxTicksLimit: 4,
+              grid: { color: CH.border, drawBorder: false },
+              ticks: { color: CH.dim, font: { size: 9 }, maxTicksLimit: 4,
                        callback: v => "$" + v },
             },
           },
