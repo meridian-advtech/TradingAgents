@@ -235,11 +235,16 @@ API keys belong in environment variables, never in `kairos_config.json` or other
   on KARD against a $20.82 close. The root cause is fixed; these are the residue.
 - **`PROPOSALS_FROZEN` unfreeze decision** — logic is repaired and 26/26 green; flipping it is J's call
   (see the Arbiter section).
-- Signal attribution contamination in `signals_fired` — needs a clean fix before per-signal P&L or
-  Arbiter *axis-weight* learning can be trusted. Note the **param** loop (`trail_pct`,
-  `profit_floor_pp`) is NOT affected: it learns from `exit_reason` + mfe/give-back/forgone, not from
-  `signals_fired`. Sequence the param loop first — it is the piece that caused the ratchet and it is
-  unblocked.
+- Signal attribution: **fixed forward 2026-08-03**, but the corpus is split. `_derive_entry_signals`
+  documented a source priority and implemented a *union* of all five sources, merging trade-level
+  causation with ticker-level coincidence and prose guesses. It is now genuinely tiered (first tier
+  wins outright), and the tier is persisted as `trade_outcomes.signal_attribution_source`
+  (`explicit`/`confluence` = causal, per `TRUSTED_ATTRIBUTION_SOURCES`; `ticker_context`/
+  `rationale_text` = not). All 270 pre-fix rows are stamped `legacy_mixed` and **must be excluded**
+  from per-signal analysis — they cannot be un-mixed, the source files are gone. Per-signal P&L stays
+  untrustworthy until enough clean rows accumulate; re-check the provenance breakdown before drawing
+  conclusions. Note the **param** loop was never affected (it reads `exit_reason` + mfe/give-back/
+  forgone, not `signals_fired`).
 - Invalidation-level coverage: only 37% of logged theses named a parseable price. The Council prompt is
   fixed going forward; worth re-measuring coverage after a few weeks of new theses before judging the
   price-invalidation mechanism's value.
@@ -251,7 +256,21 @@ API keys belong in environment variables, never in `kairos_config.json` or other
 - Tier 0 pre-filter (`skip_tier0: true`) validated in dry-run (603/622 pass, 21.5s) but not yet
   reactivated in production — deferred pending router validation sequencing
 - Fundamentals/valuation blind spot: Kairos has no point-in-time fundamentals source, making every
-  signal valuation-blind. Flagged as the top-priority signal-sharpening item.
+  signal valuation-blind — a HOT-INSIDER name at 60x earnings looks identical to one at 12x. Top
+  signal-sharpening item. **Recommended path (scoped 2026-08-03, not started):** SEC EDGAR XBRL
+  `data.sec.gov/api/xbrl/companyfacts/CIK##########.json` — free, no vendor, and *point-in-time by
+  construction* (every fact carries its `filed` date, so backtests can't leak future data, which
+  yfinance fundamentals cannot promise). The plumbing already exists: `kairos_thesis_validity._sec_cik`
+  resolves ticker→CIK from `company_tickers.json`, and `data.sec.gov` is already a trusted host in the
+  stack for Form 4 intake. Sequence, per diagnose-before-code:
+  1. `kairos_fundamentals.py` — pull a SMALL field set (revenue TTM, net income, EPS, shares out, cash,
+     debt, operating cash flow), cache to a table, expose `get_fundamentals(ticker, as_of)`; report
+     universe coverage before anything consumes it.
+  2. **Diagnose** — across the closed-trade corpus, does entry valuation percentile relate to outcome?
+     If there is no relationship, the blind spot is not costing anything and this stops here.
+  3. Only if (2) shows signal: add a valuation section to the Council prompt (context only, like the
+     tax and axis-calibration sections) and observe.
+  4. Only after that: let valuation gate or size positions — behavior-changing, needs its own backtest.
 - Phase 3 (Arbiter auto-apply) evidence thresholds: scoped conceptually, not yet formally documented
 - Sonnet 5 pricing transitions from intro ($2/$10 per M tokens) to standard ($3/$15) on August 31, and
   the updated tokenizer maps the same text to 1.0-1.35x more tokens — factor into any cost projections
