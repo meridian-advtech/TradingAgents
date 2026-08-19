@@ -171,7 +171,10 @@ def _pct(v, sign=False) -> str:
     if v is None:
         return "—"
     try:
-        return (f"{v:+.1f}%" if sign else f"{v:.1f}%")
+        # 2dp: profit_floor_pp and similar params move in hundredths, and a
+        # 1dp round (e.g. 1.1552 -> 1.2, 1.1867 -> 1.2) can silently display
+        # a real change as "no change". Confirmed 2026-08-19.
+        return (f"{v:+.2f}%" if sign else f"{v:.2f}%")
     except (TypeError, ValueError):
         return str(v)
 
@@ -200,34 +203,37 @@ def _param_headline(path: str, cur, new, direction, changed: bool) -> str:
 
 
 def _param_why(ev: dict, cur, changed: bool) -> str:
-    eff = ev.get("effect") or {}
-    curr = eff.get("current") or {}
-    n = curr.get("n", ev.get("n_contributing", 0))
-    gb = curr.get("avg_give_back_pp")
-    fg = curr.get("avg_forgone_5d_pp")
-    since = eff.get("since_date")
-    since_s = (str(since)[:10] if since else "the last change")
-    lines = []
-    if n and gb is not None and fg is not None:
-        lines.append(
-            f"Since {since_s}, *{n}* trades closed under the current {_pct(cur)} setting: "
-            f"they gave back *{_pct(gb)}* from their peaks (gain given back from the peak) "
-            f"but missed only *{_pct(fg)}* of gains after selling (gains missed after selling).")
-    prior = eff.get("prior")
-    pv = eff.get("prior_value")
-    if prior and prior.get("n"):
-        lines.append(
-            f"Under the previous {_pct(pv)} setting it was {_pct(prior.get('avg_give_back_pp'))} "
-            f"given back / {_pct(prior.get('avg_forgone_5d_pp'))} missed across {prior.get('n')} trades.")
-    elif pv is not None:
-        lines.append(
-            f"There isn't matured data yet under the previous {_pct(pv)} setting to compare against.")
-    if not lines:
-        need = ""
+    # Evidence shape as actually written by kairos_axis_weights.py's rebuilt
+    # snapshot pipeline (2026-08): flat fields, not the nested effect.current/
+    # effect.prior shape this used to read. That mismatch made every param
+    # proposal — even well-evidenced ones — silently fall through to the
+    # "not enough data" message below. Fixed 2026-08-19; read the real fields.
+    n = ev.get("n") or ev.get("n_contributing") or 0
+    gb = ev.get("avg_give_back_pct")
+    fg = ev.get("avg_forgone_gain_pct")
+    mfe = ev.get("avg_mfe_pct")
+    horizon = ev.get("forgone_horizon_days")
+    rt = ev.get("round_trips")
+    rt_rate = ev.get("roundtrip_rate")
+    starv = ev.get("starvation") or {}
+
+    if not (n and gb is not None and fg is not None):
         gr = ev.get("gate_reason") or ""
         return ("Not enough fresh trades have closed under the current setting with complete "
                 "peak/after-sale data to justify a change yet." + (f" ({gr})" if gr else ""))
-    # Direction rationale
+
+    lines = [
+        f"Across *{n}* trades under the current {_pct(cur)} setting: they reached "
+        f"*{_pct(mfe)}* average peak gain while held, but gave back *{_pct(gb)}* of "
+        f"that from the peak. Looking {horizon or 14} days past the sale, the stock kept "
+        f"running another *{_pct(fg)}* on average (gains missed after selling)."
+    ]
+    if rt is not None and rt_rate is not None:
+        lines.append(f"*{rt}* of these ({rt_rate:.0%}) round-tripped from a real peak to a worse exit.")
+    summ = starv.get("summary")
+    if summ:
+        lines.append(f"_({summ})_")
+
     if changed:
         if (gb or 0) >= (fg or 0):
             lines.append("Giving back more than we miss means winners are round-tripping — "
@@ -315,9 +321,11 @@ def build_proposal_blocks(proposal: dict) -> list:
         headline = _weight_headline(axis, prior_v, new_v, changed)
         why = _weight_why(axis, ev, changed)
         if changed:
-            approve_line = ("*If you approve:* the Council's exit-timing lean shifts "
-                            f"to {_fmt_value(False, new_v)} (observed only — not yet injected "
-                            "into any live decision).")
+            approve_line = ("*If you approve:* the Council's exit-timing lean updates to "
+                            f"{_fmt_value(False, new_v)} — this value is already injected into "
+                            "every reasoning prompt once it clears a small deadband (it has been "
+                            "since this axis was first approved), so this changes what's actively "
+                            "shaping live decisions, not a first-time activation.")
         else:
             approve_line = None
         do_nothing_line = ("*If you do nothing:* the setting stays put. I'll only re-propose "
