@@ -154,7 +154,7 @@ source "$VENV_ACTIVATE"
 # Load API keys from zshrc (handles keys not in launchd environment)
 if [ -f "$HOME/.zshrc" ]; then
     # Extract only export lines to avoid running interactive shell code
-    eval "$(grep -E '^export (ANTHROPIC|FINNHUB|FRED|KALSHI|CONGRESS|RENAISSANCE_CAPITAL)_API_KEY=' "$HOME/.zshrc" 2>/dev/null || true)"
+    eval "$(grep -E '^export (ANTHROPIC|FINNHUB|FRED|KALSHI|CONGRESS|RENAISSANCE_CAPITAL|MISTRAL)_API_KEY=|^export SLACK_(APP|BOT)_TOKEN=' "$HOME/.zshrc" 2>/dev/null || true)"
 fi
 
 cd "$KAIROS_DIR"
