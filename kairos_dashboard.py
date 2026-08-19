@@ -4188,6 +4188,12 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      // Chart.js's default ~1s animated draw-in races against applyChartWindow()
+      // slicing the data to the era window immediately after construction — the
+      // visible symptom is the chart painting the full since-inception range
+      // first, then appearing to "grow" as the window is applied a beat later.
+      // soChart (below) already disables this for the same reason; matching it.
+      animation: false,
       interaction: { mode: "index", intersect: false },
       plugins: {
         legend: {
