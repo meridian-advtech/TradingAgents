@@ -82,6 +82,19 @@ import requests
 
 # ── Absolute paths (matches kairos_commander.py convention) ──────────
 SCRIPT_DIR = "/Users/jelmore/Kairos"
+
+# macOS fork-safety belt-and-braces. Every subprocess call in this process now
+# goes through kairos_spawn (posix_spawn, which runs no atfork handlers), so
+# this is not the primary defense — but any third-party library that forks
+# internally (joblib/loky, multiprocessing, ProcessPoolExecutor) bypasses our
+# code entirely, and that is exactly how kairos_ml's n_jobs=-1 crashed
+# kairos_run.py 16 times on 2026-08-19. Set before any networking library
+# imports, and set HERE rather than inherited, because this is its own process
+# with its own environment. See kairos_spawn for the full crash signature.
+os.environ.setdefault("no_proxy", "*")
+os.environ.setdefault("NO_PROXY", "*")
+os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
+
 sys.path.insert(0, SCRIPT_DIR)
 
 from kairos_arbiter import (  # noqa: E402  (path inserted above)

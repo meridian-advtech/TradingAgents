@@ -249,6 +249,52 @@ def _encode_features(X: list[dict], encoder: OneHotEncoder | None = None,
     return encoded_X, encoder, all_feat_names
 
 
+# Sequential on purpose. n_jobs=-1 used to be set here, and it was the last
+# fork() left inside kairos_run.py's own process.
+#
+# joblib spins up its parallel backend on the first n_jobs!=1 call, and that
+# backend starts multiprocessing's resource_tracker helper via
+# _posixsubprocess.fork_exec. Forking THIS process is what crashes: it is
+# heavy, multi-threaded and already networked, and on this host Little Snitch
+# and Tailscale install NetworkExtension filters, so Network.framework
+# registers a pthread_atfork child handler that SIGSEGVs in the forked child
+# before exec() replaces it:
+#
+#     EXC_BAD_ACCESS in os_log_preferences_refresh
+#       <- NEFlowDirectorDestroy <- nw_settings_child_has_forked
+#       <- _pthread_atfork_child_handlers <- fork
+#       <- _posixsubprocess.subprocess_fork_exec
+#
+# Worse than a one-off: when the tracker dies, multiprocessing relaunches it,
+# which forks again, which crashes again. That relaunch loop is what turned
+# one fork into the escalating bursts logged on 2026-08-19 (1 crash at 09:37,
+# 4 at 09:47, 11 at 11:30), each one accompanied by
+# "resource_tracker: process died unexpectedly, relaunching" in
+# kairos_scheduler.log. Same crash class as kairos_alerts.py's Slack
+# transport, but there is no subprocess call of ours to convert here — the
+# fork is inside joblib, so the fix is to never ask for a second process.
+#
+# Costs nothing: measured on the live model (100 trees, depth 10, 19
+# features, 16 candidates) predictions are BITWISE identical and sequential
+# is ~6.5x FASTER (105ms vs 681ms per 50 predicts) — this workload is far too
+# small to amortize joblib's dispatch overhead. Revisit only if the corpus
+# grows by orders of magnitude, and then measure the fork risk again first.
+ML_N_JOBS = 1
+
+
+def _force_sequential(model):
+    """Pin a model to n_jobs=1, in place, and return it.
+
+    Needed on the load path as well as the train path: kairos_ml_model.pkl was
+    pickled from a model built with n_jobs=-1, and unpickling restores that
+    attribute, so a cached model would still fork on its first predict even
+    after this module stopped constructing parallel ones.
+    """
+    if model is not None and getattr(model, "n_jobs", None) != ML_N_JOBS:
+        model.n_jobs = ML_N_JOBS
+    return model
+
+
 def train_model(force_retrain: bool = False) -> dict:
     """Train (or load) RandomForestClassifier on closed trade outcomes.
     
@@ -278,6 +324,8 @@ def train_model(force_retrain: bool = False) -> dict:
         try:
             with open(MODEL_PATH, "rb") as f:
                 cached = pickle.load(f)
+            # Older pickles carry n_jobs=-1; see _force_sequential.
+            _force_sequential(cached.get("model"))
             _model_cache = cached
             logger.info(f"Model loaded from {MODEL_PATH} (trained on {cached['trade_count']} trades)")
             return _model_cache
@@ -310,7 +358,7 @@ def train_model(force_retrain: bool = False) -> dict:
         min_samples_split=5,
         min_samples_leaf=2,
         random_state=42,
-        n_jobs=-1
+        n_jobs=ML_N_JOBS
     )
     model.fit(X_encoded, y_array)
     

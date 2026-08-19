@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import subprocess
+import kairos_spawn
 import sys
 import threading
 import time
@@ -28,6 +29,19 @@ from datetime import datetime, timezone
 from flask import Flask, jsonify, redirect, send_file
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# macOS fork-safety belt-and-braces. Every subprocess call in this process now
+# goes through kairos_spawn (posix_spawn, which runs no atfork handlers), so
+# this is not the primary defense — but any third-party library that forks
+# internally (joblib/loky, multiprocessing, ProcessPoolExecutor) bypasses our
+# code entirely, and that is exactly how kairos_ml's n_jobs=-1 crashed
+# kairos_run.py 16 times on 2026-08-19. Set before any networking library
+# imports, and set HERE rather than inherited, because this is its own process
+# with its own environment. See kairos_spawn for the full crash signature.
+os.environ.setdefault("no_proxy", "*")
+os.environ.setdefault("NO_PROXY", "*")
+os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
+
 DASHBOARD_HTML = os.path.join(SCRIPT_DIR, "kairos_dashboard.html")
 DASHBOARD_PY = os.path.join(SCRIPT_DIR, "kairos_dashboard.py")
 VENV_PYTHON = os.path.join(os.path.expanduser("~"), "Kairos-env", "bin", "python3")
@@ -64,7 +78,10 @@ def _run_dashboard_refresh():
     python = VENV_PYTHON if os.path.exists(VENV_PYTHON) else sys.executable
 
     try:
-        result = subprocess.run(
+        # posix_spawn, not subprocess.run — this is a threaded Flask server
+        # with live sockets; forking it can SIGSEGV in Network.framework's
+        # atfork child handler pre-exec. See kairos_spawn.
+        result = kairos_spawn.run(
             [python, DASHBOARD_PY],
             capture_output=True,
             text=True,

@@ -17,11 +17,25 @@ import argparse
 import json
 import os
 import subprocess
+import kairos_spawn
 import sys
 import traceback
 from datetime import datetime, timezone
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# macOS fork-safety belt-and-braces. Every subprocess call in this process now
+# goes through kairos_spawn (posix_spawn, which runs no atfork handlers), so
+# this is not the primary defense — but any third-party library that forks
+# internally (joblib/loky, multiprocessing, ProcessPoolExecutor) bypasses our
+# code entirely, and that is exactly how kairos_ml's n_jobs=-1 crashed
+# kairos_run.py 16 times on 2026-08-19. Set before any networking library
+# imports, and set HERE rather than inherited, because this is its own process
+# with its own environment. See kairos_spawn for the full crash signature.
+os.environ.setdefault("no_proxy", "*")
+os.environ.setdefault("NO_PROXY", "*")
+os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
+
 MONITOR_LOG = os.path.join(SCRIPT_DIR, "kairos_monitor.log")
 IBKR_STATE_FILE = os.path.join(SCRIPT_DIR, ".ibkr_last_ok")
 MAX_LOG_LINES = 5000  # rotate after this many lines
@@ -229,7 +243,12 @@ def run_pipeline(
     try:
         # Load API keys from .zshrc environment via login shell
         env = dict(os.environ)
-        result = subprocess.run(
+        # posix_spawn, not subprocess.run — see kairos_spawn. This module is
+        # not wired into anything as of 2026-08-19, but it is a cycle
+        # supervisor that wraps kairos_run.py, so whenever it IS wired in it
+        # would be forking exactly the kind of process that crashes. Hardened
+        # now so re-enabling it does not silently reintroduce the bug.
+        result = kairos_spawn.run(
             cmd,
             capture_output=True,
             text=True,

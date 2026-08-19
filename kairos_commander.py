@@ -53,11 +53,16 @@ sys.path.insert(0, SCRIPT_DIR)
 # networking libs import so every subprocess this daemon spawns inherits it.
 os.environ.setdefault("no_proxy", "*")
 os.environ.setdefault("NO_PROXY", "*")
+# Same crash class, wider net: a library that forks internally (joblib,
+# multiprocessing) never touches our kairos_spawn wrapper, so also tell the
+# ObjC runtime not to reinitialize unsafely in a forked child.
+os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
 
 from kairos_command_registry import (  # noqa: E402 — needs SCRIPT_DIR on path
     is_structured_command,
     split_command,
 )
+import kairos_spawn
 
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "kairos_config.json")
 KAIROS_DB = os.path.join(SCRIPT_DIR, "kairos.db")
@@ -835,8 +840,11 @@ def _run_cycle_subprocess(extra_args: list[str]) -> tuple[int, str]:
     cmd = [python_exe, os.path.join(SCRIPT_DIR, "kairos_run.py"),
            "--cycle"] + extra_args
     log.info("Spawning cycle: %s", " ".join(cmd))
+    # posix_spawn, not subprocess.run — this daemon is multi-threaded (Socket
+    # Mode listener + cycle worker threads) and networked, so forking it can
+    # SIGSEGV in Network.framework's atfork child handler. See kairos_spawn.
     try:
-        proc = subprocess.run(
+        proc = kairos_spawn.run(
             cmd,
             cwd=SCRIPT_DIR,
             capture_output=True,

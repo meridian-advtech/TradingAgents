@@ -76,7 +76,7 @@ STALLED = [(180, "PASS"), (210, "PASS")]
 _sim_now = NOW
 
 
-def set_probes(agents=None, ollama=None, ibkr=None, cycles=None):
+def set_probes(agents=None, ollama=None, ibkr=None, cycles=None, crashes=None):
     """Install probe stubs; each argument defaults to the healthy answer."""
     H._launchctl_labels = lambda: (agents if agents is not None else (set(H.EXPECTED_AGENTS), ""))
     H._fetch_ollama_tags = lambda: (
@@ -87,6 +87,9 @@ def set_probes(agents=None, ollama=None, ibkr=None, cycles=None):
     )
     spec = HEALTHY if cycles is None else cycles
     H._read_scheduler_log_tail = lambda: (sched_log(spec, _sim_now), "")
+    H._scan_recent_crashes = lambda cutoff_ts: (
+        crashes if crashes is not None else ([], "unknown", "unknown")
+    )
 
 
 def run(state_path, now=NOW):
@@ -293,7 +296,7 @@ out = run(state, now=NOW + timedelta(minutes=30))
 ck("new failure set posts despite being inside the 4h window", out["action"] == "new")
 ck("posted once", len(_posts) == 1)
 ck("both failures named", "Ollama" in out["message"] and "7497" in out["message"])
-ck("header counts 2 of 4", "2 of 4 evaluated checks FAILING" in out["message"])
+ck("header counts 2 of 5", "2 of 5 evaluated checks FAILING" in out["message"])
 if SHOW:
     show("Two simultaneous failures", out["message"])
 
@@ -332,6 +335,32 @@ out = run(fresh_state())
 ck("nothing checked within the boot grace", out["findings"] == [] and out["results"] == [])
 ck("zero Slack calls", len(_posts) == 0)
 H._boot_age_minutes = lambda: 999.0
+
+
+print("\n=== M. Check 5 — recent crash reports ===")
+set_probes(crashes=([], "unknown", "unknown"))
+out = run(fresh_state())
+ck("no crashes is healthy", out["findings"] == [])
+
+set_probes(crashes=(
+    ["Python-2026-08-19-113045.ips", "Python-2026-08-19-113046.ips"],
+    "com.kairos.scheduler",
+    "fork() in a multi-threaded process (known class, see kairos_alerts.py)",
+))
+out = run(fresh_state())
+ck("crash burst is a finding", any(f.key.startswith("crash:") for f in out["findings"]))
+ck("names both files in the key", "113045" in out["findings"][0].key and "113046" in out["findings"][0].key)
+ck("names the coalition", "com.kairos.scheduler" in out["message"])
+ck("names the fork signature", "fork()" in out["message"])
+
+def _boom(cutoff_ts):
+    raise OSError("permission denied")
+H._scan_recent_crashes = _boom
+out = run(fresh_state())
+ck("scan failure is skipped, not a silent pass",
+   any(r.name == "Recent crashes" and r.skipped for r in out["results"]))
+ck("skipped check contributes no finding", not any(f.key.startswith("crash:") for f in out["findings"]))
+set_probes()
 
 
 # ═════════════════════════════════════════════════════════════════════════════

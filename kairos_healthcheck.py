@@ -63,7 +63,21 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# macOS fork-safety belt-and-braces. Every subprocess call in this process now
+# goes through kairos_spawn (posix_spawn, which runs no atfork handlers), so
+# this is not the primary defense — but any third-party library that forks
+# internally (joblib/loky, multiprocessing, ProcessPoolExecutor) bypasses our
+# code entirely, and that is exactly how kairos_ml's n_jobs=-1 crashed
+# kairos_run.py 16 times on 2026-08-19. Set before any networking library
+# imports, and set HERE rather than inherited, because this is its own process
+# with its own environment. See kairos_spawn for the full crash signature.
+os.environ.setdefault("no_proxy", "*")
+os.environ.setdefault("NO_PROXY", "*")
+os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
+
 sys.path.insert(0, SCRIPT_DIR)
+import kairos_spawn
 
 ET = ZoneInfo("America/New_York")
 
@@ -178,7 +192,10 @@ class CheckResult:
 def _launchctl_labels() -> tuple[set[str] | None, str]:
     """Loaded LaunchAgent labels in this user's domain. (None, err) if unknown."""
     try:
-        proc = subprocess.run(
+        # posix_spawn, not subprocess.run — see kairos_spawn. Especially apt
+        # here: this module exists to detect the very crash that forking
+        # causes, so it must not be able to cause one itself.
+        proc = kairos_spawn.run(
             ["/bin/launchctl", "list"],
             capture_output=True,
             text=True,
@@ -291,7 +308,7 @@ def _boot_age_minutes() -> float | None:
     except Exception:
         pass
     try:
-        out = subprocess.run(
+        out = kairos_spawn.run(   # posix_spawn — see kairos_spawn
             ["/usr/sbin/sysctl", "-n", "kern.boottime"],
             capture_output=True,
             text=True,
@@ -857,37 +874,30 @@ CRASH_REPORT_DIR = os.path.expanduser("~/Library/Logs/DiagnosticReports")
 CRASH_LOOKBACK_MINUTES = 40  # 30m cycle + slack, so consecutive runs don't gap
 
 
-def check_recent_crashes(now_utc: datetime) -> CheckResult:
-    """Catches the class of failure that motivated this whole file: a Kairos
-    process (usually a fork()-in-a-multithreaded-process crash — see
-    kairos_alerts.py's posix_spawn rewrite, 2026-08-18) segfaults, and until
-    now nothing noticed except a macOS crash dialog popping up in front of J.
-    A crashed cycle can still exit with output that LOOKS like a clean run
-    from the outside (2026-08-19: 1 crash, trading recovered and filled fine)
-    — this check exists so 'nothing looked wrong' stops being the only signal.
+def _scan_recent_crashes(cutoff_ts: float) -> tuple[list[str], str, str]:
+    """The one OS-touching probe for Check 5 — mirrors the pattern of
+    _launchctl_labels / _fetch_ollama_tags / _probe_ibkr_port /
+    _read_scheduler_log_tail so the selftest can stub exactly this and
+    exercise the real decision logic in check_recent_crashes() below.
+    Returns (sorted crash filenames newer than cutoff_ts, coalition of the
+    most recent one, its crash signature) — empty list / "unknown" / "unknown"
+    if the directory is missing or nothing matches.
     """
-    try:
-        if not os.path.isdir(CRASH_REPORT_DIR):
-            return CheckResult("Recent crashes", "no crash report directory found (nothing to check)")
-        cutoff = now_utc.timestamp() - CRASH_LOOKBACK_MINUTES * 60
-        hits = []
-        for fname in os.listdir(CRASH_REPORT_DIR):
-            if not (fname.startswith("Python-") and fname.endswith(".ips")):
-                continue
-            path = os.path.join(CRASH_REPORT_DIR, fname)
-            try:
-                if os.path.getmtime(path) >= cutoff:
-                    hits.append((fname, path))
-            except OSError:
-                continue
-    except Exception as exc:
-        return CheckResult("Recent crashes", f"could not scan crash reports: {exc}", skipped=True)
-
+    if not os.path.isdir(CRASH_REPORT_DIR):
+        return [], "unknown", "unknown"
+    hits = []
+    for fname in os.listdir(CRASH_REPORT_DIR):
+        if not (fname.startswith("Python-") and fname.endswith(".ips")):
+            continue
+        path = os.path.join(CRASH_REPORT_DIR, fname)
+        try:
+            if os.path.getmtime(path) >= cutoff_ts:
+                hits.append((fname, path))
+        except OSError:
+            continue
     if not hits:
-        return CheckResult("Recent crashes", f"none in the last {CRASH_LOOKBACK_MINUTES}m")
+        return [], "unknown", "unknown"
 
-    # Pull a bit of context from the most recent one — coalition + whether it's
-    # the known fork/atfork signature, so the alert is specific, not just a count.
     coalition, signature = "unknown", "unknown"
     try:
         with open(sorted(hits, key=lambda h: os.path.getmtime(h[1]))[-1][1]) as fh:
@@ -901,16 +911,35 @@ def check_recent_crashes(now_utc: datetime) -> CheckResult:
             signature = "EXC_BAD_ACCESS (segfault, cause not yet classified)"
     except Exception:
         pass
+    return sorted(set(f for f, _ in hits)), coalition, signature
 
-    names = sorted(set(f for f, _ in hits))
+
+def check_recent_crashes(now_utc: datetime) -> CheckResult:
+    """Catches the class of failure that motivated this whole file: a Kairos
+    process (usually a fork()-in-a-multithreaded-process crash — see
+    kairos_alerts.py's posix_spawn rewrite, 2026-08-18) segfaults, and until
+    now nothing noticed except a macOS crash dialog popping up in front of J.
+    A crashed cycle can still exit with output that LOOKS like a clean run
+    from the outside (2026-08-19: 1 crash, trading recovered and filled fine)
+    — this check exists so 'nothing looked wrong' stops being the only signal.
+    """
+    try:
+        cutoff = now_utc.timestamp() - CRASH_LOOKBACK_MINUTES * 60
+        names, coalition, signature = _scan_recent_crashes(cutoff)
+    except Exception as exc:
+        return CheckResult("Recent crashes", f"could not scan crash reports: {exc}", skipped=True)
+
+    if not names:
+        return CheckResult("Recent crashes", f"none in the last {CRASH_LOOKBACK_MINUTES}m")
+
     return CheckResult(
         "Recent crashes",
-        f"{len(hits)} in the last {CRASH_LOOKBACK_MINUTES}m",
+        f"{len(names)} in the last {CRASH_LOOKBACK_MINUTES}m",
         [
             Finding(
                 key="crash:" + ",".join(names),
                 headline=(
-                    f"{len(hits)} Python crash report(s) in the last "
+                    f"{len(names)} Python crash report(s) in the last "
                     f"{CRASH_LOOKBACK_MINUTES} minutes, most recent from "
                     f"coalition '{coalition}'."
                 ),
@@ -1040,7 +1069,13 @@ def main(argv: list[str] | None = None) -> int:
         + (" (dry run)" if args.dry_run else "")
     )
     outcome = run_healthcheck(dry_run=args.dry_run, verbose=args.verbose)
-    return 1 if outcome["findings"] else 0
+    # Exit code reflects whether the MONITOR did its job, not whether it found
+    # something to report — a real finding, correctly detected and (maybe)
+    # correctly suppressed as an already-known repeat, is success, not
+    # failure. Only a check that couldn't run at all (skipped=True, e.g. the
+    # crash-report directory was unreadable) means the monitor itself failed.
+    any_skipped = any(r.skipped for r in outcome["results"])
+    return 1 if any_skipped else 0
 
 
 if __name__ == "__main__":
