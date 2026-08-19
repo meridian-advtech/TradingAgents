@@ -27,6 +27,11 @@ from typing import Optional
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
+# Primary state DB and live config. Both are READ ONLY from this module — the
+# only reason they are reachable here is to stamp a close with the exit regime
+# it happened under (see build_exit_params_snapshot).
+KAIROS_DB_PATH = os.path.join(SCRIPT_DIR, "kairos.db")
+CONFIG_PATH = os.path.join(SCRIPT_DIR, "kairos_config.json")
 
 
 # ── Schema ───────────────────────────────────────────────────────────
@@ -151,6 +156,13 @@ _TRADE_OUTCOMES_EXTRA_COLUMNS = [
     ("forgone_gain_30d_pct", "REAL"),
     ("forgone_gain_60d_pct", "REAL"),
     ("forgone_filled_at", "TEXT"),
+    # Regime tag: the exit-engine params + axis weights in force when this trade
+    # closed, as JSON (see build_exit_params_snapshot). The learning loop's
+    # regime window (kairos_axis_weights._in_regime) reads this to decide whether
+    # a closed trade is evidence about the CURRENT parameters or about a system
+    # that no longer exists. A row without it can never be evidence — which is
+    # why it is stamped at close, not backfilled on a cadence.
+    ("exit_params_snapshot", "TEXT"),
 ]
 
 # Post-exit horizons over which forgone gain is measured, in CALENDAR days:
@@ -301,6 +313,121 @@ def write_trade_open(
     return trade_id
 
 
+# ── Exit-params snapshot (regime tagging) ────────────────────────────
+# Every closed trade carries a record of the exit engine that produced it. The
+# learning loop scores a parameter only on trades that closed under that
+# parameter's CURRENT value (kairos_axis_weights._in_regime); a trade with no
+# snapshot is not "assume it matches", it is excluded outright. So a close that
+# is not stamped here is permanently invisible to the loop — the snapshot cannot
+# be recovered later, because the config it describes has already moved on.
+#
+# Two shapes exist in the corpus and BOTH must stay readable by _in_regime,
+# which only ever reads snap["params"][path] and snap["axis_weights"][axis]:
+#
+#   live (reconstructed=False)  params, axis_weights, reconstructed,
+#                               trailing_stop (the whole config block, for
+#                               forensics), captured_at = now
+#   reconstructed (=True)       params, axis_weights, reconstructed,
+#                               captured_at = the trade's exit timestamp
+#
+# The reconstructed shape carries no trailing_stop block on purpose: the
+# historical config text is not recoverable, and inventing it would make a
+# reconstruction indistinguishable from a real capture.
+
+# Dotted config paths recorded in every snapshot. MUST stay in sync with
+# kairos_axis_weights.PARAM_WHITELIST — for a path the loop can propose but the
+# snapshot does not record, _snapshot_value returns None, so _in_regime is False
+# for EVERY trade and that param sits gated at n=0 forever. It fails closed, but
+# silently, and reads exactly like a regime that has not filled in yet.
+# kairos_selftest_learning.py asserts the two lists agree.
+SNAPSHOT_PARAM_PATHS = (
+    "exits.trailing_stop.target_armed.trail_pct",
+    "exits.trailing_stop.profit_floor_pp",
+)
+
+
+def _get_dotted(cfg: dict, path: str):
+    """Return (value, found) for a dotted path into a nested dict."""
+    cur = cfg
+    for key in path.split("."):
+        if not isinstance(cur, dict) or key not in cur:
+            return None, False
+        cur = cur[key]
+    return cur, True
+
+
+def _load_live_config() -> dict:
+    """kairos_config.json, or {} if unreadable. Never raises."""
+    try:
+        with open(CONFIG_PATH) as f:
+            return json.load(f) or {}
+    except (json.JSONDecodeError, IOError, OSError):
+        return {}
+
+
+def _live_axis_weights() -> dict:
+    """{axis: weight} for active axes from kairos.db, or {} if unreadable.
+
+    Read-only connection: this is a snapshot of primary state taken from the
+    outcomes writer, and must never be able to lock or mutate kairos.db.
+    """
+    try:
+        conn = sqlite3.connect(f"file:{KAIROS_DB_PATH}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            return {r["axis"]: r["weight"] for r in conn.execute(
+                "SELECT axis, weight FROM axis_weights WHERE status = 'active'")}
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return {}
+
+
+def build_exit_params_snapshot(reconstructed: bool = False,
+                               param_overrides: Optional[dict] = None,
+                               weight_overrides: Optional[dict] = None,
+                               as_of: Optional[str] = None) -> dict:
+    """The exit-engine regime to stamp on a closing trade.
+
+    Live capture reads kairos_config.json + kairos.db. A backfill passes
+    param_overrides / weight_overrides (the values reconstructed as in force at
+    the trade's exit) plus as_of=<the exit timestamp>, and gets a snapshot that
+    is explicitly flagged reconstructed=True.
+
+    Never raises: an unreadable config or DB yields None values for what could
+    not be read, which _in_regime treats as "cannot attribute" — the row is
+    excluded from evidence rather than silently mis-attributed.
+    """
+    cfg = _load_live_config() if param_overrides is None else {}
+
+    params = {}
+    for path in SNAPSHOT_PARAM_PATHS:
+        if param_overrides is not None:
+            params[path] = param_overrides.get(path)
+            continue
+        val, found = _get_dotted(cfg, path)
+        params[path] = val if found else None
+
+    weights = dict(weight_overrides) if weight_overrides is not None \
+        else _live_axis_weights()
+
+    snap = {
+        "params": params,
+        "axis_weights": weights,
+        "reconstructed": bool(reconstructed),
+    }
+    if not reconstructed:
+        # Full block, for forensics: the params above say WHICH regime, this says
+        # what the whole engine looked like (tiers, IPO widening, enabled flags).
+        ts_block, found = _get_dotted(cfg or _load_live_config(),
+                                      "exits.trailing_stop")
+        if found and isinstance(ts_block, dict):
+            snap["trailing_stop"] = ts_block
+    snap["captured_at"] = as_of or datetime.now(timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
+    return snap
+
+
 # ── Write: trade close ───────────────────────────────────────────────
 
 def write_trade_close(
@@ -350,6 +477,16 @@ def write_trade_close(
     else:
         outcome_label = "LOSS"
 
+    # Regime tag. Guarded end-to-end: a close must never fail because the config
+    # or kairos.db could not be read — an unstamped row costs the learning loop
+    # one trade, an exception here costs the trade record itself. COALESCE keeps
+    # an already-present snapshot (e.g. one reconstructed by
+    # kairos_backfill_evidence) rather than overwriting it with today's regime.
+    try:
+        snapshot_json = json.dumps(build_exit_params_snapshot())
+    except Exception:
+        snapshot_json = None
+
     conn.execute(
         """UPDATE trade_outcomes
            SET timestamp_exit = ?,
@@ -357,10 +494,12 @@ def write_trade_close(
                pnl_dollar = ?,
                pnl_pct = ?,
                hold_duration_mins = ?,
-               outcome_label = ?
+               outcome_label = ?,
+               exit_params_snapshot = COALESCE(exit_params_snapshot, ?)
            WHERE trade_id = ?""",
         (timestamp_exit, price_exit, round(pnl_dollar, 4),
-         round(pnl_pct, 4), hold_duration_mins, outcome_label, trade_id),
+         round(pnl_pct, 4), hold_duration_mins, outcome_label,
+         snapshot_json, trade_id),
     )
 
     # Score the original thesis prediction (if any) against the actual close.

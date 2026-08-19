@@ -344,6 +344,25 @@ def compute_exit_timing() -> dict:
     computed_score = _clamp(mean_error / GIVEBACK_SCALE, -1.0, 1.0)
     trade_ids = sorted(r["trade_id"] for r in matured)
 
+    # Why the sample is what it is — see _describe_starvation. n_pending here is
+    # "enriched but the post-exit window has not elapsed"; a row with no
+    # give_back_pct at all was never enriched, which is a different problem with
+    # a different fix.
+    n_no_snapshot = sum(
+        1 for r in all_rows
+        if _snapshot_value(r.get("exit_params_snapshot"),
+                           "axis_weights", "exit_timing") is None)
+    starvation = {
+        "n_no_snapshot": n_no_snapshot,
+        "n_wrong_regime": len(all_rows) - len(rows) - n_no_snapshot,
+        "n_missing_features": sum(1 for r in rows
+                                  if r["give_back_pct"] is None),
+        "n_pending_maturation": n_pending,
+        "zero_sample_streak": (_zero_sample_streak("exit_timing") if n == 0 else
+                               {"runs": 0, "since": None, "closes_since": 0}),
+    }
+    starvation["summary"] = _describe_starvation(starvation)
+
     evidence = {
         "mean_error_pp": round(mean_error, 6),
         "mean_giveback_pp": round(mean_giveback, 6),
@@ -355,6 +374,7 @@ def compute_exit_timing() -> dict:
         "n_excluded_out_of_regime": len(all_rows) - len(rows),
         "current_weight": current_weight,
         "trade_ids": trade_ids,
+        "starvation": starvation,
     }
     return {
         "axis": "exit_timing",
@@ -612,6 +632,8 @@ def propose_all(run_id: str | None = None) -> dict:
                 "proposed_delta": p["proposed_delta"],
                 "new_weight": p["new_weight"],
                 "gated": p["gated"],
+                # Carried so the Slack note can explain an empty sample.
+                "evidence": p.get("evidence") or {},
             })
         except Exception as exc:
             errors.append({"axis": axis, "error": str(exc)})
@@ -648,6 +670,19 @@ def _format_slack_propose_all(run_id: str, proposals: list[dict],
                       f"(Δ {p['proposed_delta']:+.4f}; score {p['computed_score']:+.4f}, "
                       f"n={p['sample_size']})  [id {p['history_id']}]")
         lines.append(f"  • `{p['axis']}`: {detail}")
+
+        # Same rule as the param loop: an empty sample must say why it is empty.
+        if not p["sample_size"]:
+            starve = (p.get("evidence") or {}).get("starvation") or {}
+            why = starve.get("summary")
+            streak = (starve.get("zero_sample_streak") or {})
+            # Red only when it is unambiguous: repeatedly empty AND trades
+            # closed in between. One empty run on a young regime is a warning.
+            marker = (":rotating_light:"
+                      if streak.get("runs", 0) >= 2 and streak.get("closes_since")
+                      else ":warning:")
+            lines.append(f"      {marker} sample is 0"
+                         + (f" — {why}" if why else ""))
     for e in errors:
         lines.append(f"  • `{e['axis']}`: error — {e['error']}")
     if not proposals and not errors:
@@ -749,6 +784,92 @@ def _in_regime(snapshot_json, kind: str, key: str, current, tol: float = 1e-6) -
         return False
     val = _snapshot_value(snapshot_json, kind, key)
     return val is not None and abs(val - float(current)) <= tol
+
+
+# ── Starvation diagnostics ───────────────────────────────────────────
+# A gated proposal reporting "sample 0" is ambiguous in the worst possible way:
+# it reads identically whether the regime is simply young (correct, expect it to
+# fill in) or the evidence pipeline has stopped feeding it (a silent, permanent
+# outage). The two are distinguishable — a starved loop shows trades CLOSING
+# while the sample stays empty — but only if the message carries the reason
+# alongside the number. These helpers exist to make that difference loud.
+
+
+def _zero_sample_streak(axis: str) -> dict:
+    """How long this axis has reported an EMPTY sample, and what closed meanwhile.
+
+    Walks axis_weight_history newest→oldest while sample_size is 0/NULL. Returns
+    {runs, since, closes_since}: consecutive empty-sample proposal rows, the
+    timestamp of the earliest one, and how many trades have closed since then.
+    A single empty run is ordinary. Empty runs spanning real closes are not.
+    Degrades to zeros if either DB is unreadable — a diagnostic must never be
+    able to break the compute it is describing.
+    """
+    out = {"runs": 0, "since": None, "closes_since": 0}
+    try:
+        from kairos_log_db import get_connection
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT sample_size, created_at FROM axis_weight_history "
+                "WHERE axis = ? ORDER BY id DESC LIMIT 50", (axis,)).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return out
+
+    for r in rows:
+        if r["sample_size"]:      # non-zero, non-NULL → streak ends here
+            break
+        out["runs"] += 1
+        out["since"] = r["created_at"]
+
+    if out["since"]:
+        try:
+            conn = _ml_connect_ro()
+            try:
+                out["closes_since"] = conn.execute(
+                    "SELECT COUNT(*) FROM trade_outcomes "
+                    "WHERE timestamp_exit IS NOT NULL AND timestamp_exit >= ?",
+                    (out["since"],)).fetchone()[0]
+            finally:
+                conn.close()
+        except Exception:
+            pass
+    return out
+
+
+def _describe_starvation(starve: dict) -> str:
+    """One human sentence naming why a sample is thin, or '' when it is not.
+
+    Ordered most-actionable first: a missing regime snapshot is unrecoverable
+    for that row and needs a code fix; unmatured rows just need time.
+    """
+    parts = []
+    if starve.get("n_no_snapshot"):
+        parts.append(f"{starve['n_no_snapshot']} closed trade(s) lack a regime "
+                     f"snapshot (permanently unusable as evidence)")
+    if starve.get("n_wrong_regime"):
+        parts.append(f"{starve['n_wrong_regime']} closed under different "
+                     f"parameters")
+    if starve.get("n_missing_features"):
+        parts.append(f"{starve['n_missing_features']} in-regime row(s) never "
+                     f"had outcome features computed "
+                     f"(kairos_outcome_features.fill_features)")
+    if starve.get("n_pending_maturation"):
+        parts.append(f"{starve['n_pending_maturation']} in-regime row(s) pending "
+                     f"maturation")
+    streak = starve.get("zero_sample_streak") or {}
+    if streak.get("runs", 0) >= 2:
+        detail = f"sample has read 0 for {streak['runs']} consecutive run(s)"
+        if streak.get("since"):
+            detail += f" since {streak['since']}"
+        if streak.get("closes_since"):
+            # This is the line that separates "young regime" from "starved loop":
+            # trades closed and the sample still did not move.
+            detail += f" while {streak['closes_since']} trade(s) closed"
+        parts.append(detail)
+    return "; ".join(parts)
 
 
 def _evidence_hash(trade_ids, current, proposed) -> str:
@@ -871,6 +992,12 @@ def compute_param(path: str) -> dict:
               AND timestamp_exit IS NOT NULL
         """
         all_rows = [dict(r) for r in conn.execute(sql).fetchall()]
+        # Table-wide, not just trailing-stop: an unstamped close is invisible to
+        # EVERY regime window, so this counts the systemic hole rather than this
+        # one param's slice of it.
+        n_closed_no_snapshot = conn.execute(
+            "SELECT COUNT(*) FROM trade_outcomes WHERE timestamp_exit IS NOT NULL "
+            "AND exit_params_snapshot IS NULL").fetchone()[0]
     finally:
         conn.close()
 
@@ -889,6 +1016,30 @@ def compute_param(path: str) -> dict:
 
     rows = [r for r in in_regime if _contributes(r)]
     n = len(rows)
+
+    # ── Why the sample is what it is ─────────────────────────────────
+    # Split the excluded rows by CAUSE, because the causes need different
+    # responses: no snapshot is a code fix, wrong regime is expected and
+    # self-healing, missing features means the enricher is not running, and
+    # pending maturation just needs time.
+    n_no_snapshot = sum(
+        1 for r in all_rows
+        if _snapshot_value(r.get("exit_params_snapshot"), "params", path) is None)
+    starvation = {
+        "n_no_snapshot": n_no_snapshot,
+        "n_wrong_regime": len(all_rows) - len(in_regime) - n_no_snapshot,
+        # Never enriched at all — mfe is written by the same pass as forgone.
+        "n_missing_features": sum(1 for r in in_regime
+                                  if r.get("mfe_pct") is None),
+        # Enriched, but this horizon has not elapsed yet.
+        "n_pending_maturation": sum(1 for r in in_regime
+                                    if r.get("mfe_pct") is not None
+                                    and r.get(fg_col) is None),
+        "n_closed_no_snapshot_all": n_closed_no_snapshot,
+        "zero_sample_streak": _zero_sample_streak(axis) if n == 0 else
+                              {"runs": 0, "since": None, "closes_since": 0},
+    }
+    starvation["summary"] = _describe_starvation(starvation)
 
     def _avg(key):
         vals = [r[key] for r in rows if r.get(key) is not None]
@@ -930,6 +1081,11 @@ def compute_param(path: str) -> dict:
             f"insufficient fresh evidence: {n} contributing in-regime trade(s) "
             f"< {PARAM_MIN_SAMPLE} required "
             f"({len(in_regime)} in regime of {len(all_rows)} trailing-stop closes)")
+        # A bare count says the loop is quiet; the cause says whether that is
+        # expected. Always carried when the sample is EMPTY, where the ambiguity
+        # between "young regime" and "broken pipeline" is total.
+        if starvation["summary"] and n == 0:
+            gate_reason += f" — {starvation['summary']}"
     gated = gate_reason is not None
 
     # Magnitude from the size of the net error; sign from which pole dominates.
@@ -997,6 +1153,7 @@ def compute_param(path: str) -> dict:
         "current_value": current,
         "max_change_frac": PARAM_MAX_CHANGE_FRAC,
         "gate_reason": gate_reason,
+        "starvation": starvation,
         "evidence_hash": _evidence_hash(
             [r["trade_id"] for r in rows], current,
             current if gated else proposed_value),
@@ -1015,6 +1172,45 @@ def compute_param(path: str) -> dict:
 
 
 # ── Propose: write a 'proposed' param row (does NOT touch config) ─────
+
+# Keys propose_all_params projects out of every propose_param_update return.
+# Kept as one list so the projection and the builder cannot disagree.
+PARAM_PROPOSAL_SUMMARY_KEYS = (
+    "axis", "path", "history_id", "computed_score", "sample_size",
+    "prior_weight", "proposed_delta", "new_weight", "gated", "skipped",
+)
+
+
+def _param_proposal_result(result: dict, run_id: str, history_id: int | None,
+                           prior_weight: float, new_weight: float,
+                           proposed_delta: float,
+                           skipped: str | None = None) -> dict:
+    """The ONE shape every propose_param_update return path emits.
+
+    propose_all_params projects a FIXED key set out of this dict, so a path that
+    omits a key does not degrade — it raises KeyError, which the per-param
+    try/except swallows and reports to Slack as an *error*. That is how the
+    freshness skip (a healthy "nothing new to say") came to be indistinguishable
+    from a broken param loop. Both paths now build their result here.
+    """
+    return {
+        "history_id": history_id,
+        # None when a row was actually written; else the reason it was not.
+        "skipped": skipped,
+        "axis": result["axis"],
+        "path": result["path"],
+        "run_id": run_id,
+        "computed_score": result["computed_score"],
+        "sample_size": result["sample_size"],
+        "prior_weight": prior_weight,
+        "proposed_delta": proposed_delta,
+        "new_weight": new_weight,
+        "gated": result["gated"],
+        "gate_reason": result.get("gate_reason"),
+        "evidence": result["evidence"],
+        "evidence_hash": result["evidence"].get("evidence_hash"),
+    }
+
 
 def propose_param_update(path: str, run_id: str | None = None) -> dict:
     """Compute a param statistic and write a 'proposed' row (whitelisted only).
@@ -1038,6 +1234,17 @@ def propose_param_update(path: str, run_id: str | None = None) -> dict:
     proposed = result["proposed_value"]
     gated = result["gated"]
 
+    # Endpoints are decided BEFORE the freshness gate so both return paths can
+    # report the same fields (see _param_proposal_result).
+    if gated or current is None or proposed is None:
+        prior_weight = current if current is not None else 0.0
+        new_weight = prior_weight
+        proposed_delta = 0.0
+    else:
+        prior_weight = current
+        new_weight = proposed
+        proposed_delta = round(new_weight - prior_weight, 6)
+
     # ── Freshness gate ───────────────────────────────────────────────
     # If the contributing corpus and both endpoints are identical to the most
     # recent recorded proposal, there is no new information — writing another
@@ -1057,29 +1264,16 @@ def propose_param_update(path: str, run_id: str | None = None) -> dict:
         if prev is not None and prev["evidence"]:
             prev_hash = (json.loads(prev["evidence"]) or {}).get("evidence_hash")
             if prev_hash and new_hash and prev_hash == new_hash:
-                return {
-                    "history_id": None,
-                    "skipped": "no new evidence",
-                    "axis": axis,
-                    "path": path,
-                    "run_id": run_id,
-                    "evidence_hash": new_hash,
-                    "sample_size": result["sample_size"],
-                    "gated": gated,
-                }
+                # Nothing proposed this run: the standing row stands untouched,
+                # so this run's own delta is zero against the current value.
+                return _param_proposal_result(
+                    result, run_id, history_id=None,
+                    prior_weight=prior_weight, new_weight=prior_weight,
+                    proposed_delta=0.0, skipped="no new evidence")
     except Exception:
         # A freshness check that cannot run must not block proposing; the
         # human gate and the cumulative band are the load-bearing guards.
         pass
-
-    if gated or current is None or proposed is None:
-        prior_weight = current if current is not None else 0.0
-        new_weight = prior_weight
-        proposed_delta = 0.0
-    else:
-        prior_weight = current
-        new_weight = proposed
-        proposed_delta = round(new_weight - prior_weight, 6)
 
     conn = get_connection()
     try:
@@ -1104,19 +1298,9 @@ def propose_param_update(path: str, run_id: str | None = None) -> dict:
     finally:
         conn.close()
 
-    return {
-        "history_id": history_id,
-        "axis": axis,
-        "path": path,
-        "run_id": run_id,
-        "computed_score": result["computed_score"],
-        "sample_size": result["sample_size"],
-        "prior_weight": prior_weight,
-        "proposed_delta": proposed_delta,
-        "new_weight": new_weight,
-        "gated": gated,
-        "evidence": result["evidence"],
-    }
+    return _param_proposal_result(
+        result, run_id, history_id=history_id, prior_weight=prior_weight,
+        new_weight=new_weight, proposed_delta=proposed_delta)
 
 
 def propose_all_params(run_id: str | None = None) -> dict:
@@ -1139,9 +1323,11 @@ def propose_all_params(run_id: str | None = None) -> dict:
     for path in PARAM_WHITELIST:
         try:
             p = propose_param_update(path, run_id=run_id)
-            proposals.append({k: p[k] for k in (
-                "axis", "path", "history_id", "computed_score", "sample_size",
-                "prior_weight", "proposed_delta", "new_weight", "gated")})
+            summary = {k: p[k] for k in PARAM_PROPOSAL_SUMMARY_KEYS}
+            # Starvation diagnostics ride along so the Slack note can say WHY a
+            # sample is 0 rather than just that it is.
+            summary["evidence"] = p.get("evidence") or {}
+            proposals.append(summary)
         except Exception as exc:
             errors.append({"axis": PARAM_PREFIX + path, "error": str(exc)})
             print(f"  propose_all_params: {path} failed: {exc}", file=sys.stderr)
@@ -1167,7 +1353,12 @@ def _format_slack_propose_params(run_id: str, proposals: list[dict],
     ]
     for p in proposals:
         n = p["sample_size"]
-        if p["gated"]:
+        # Skipped is its OWN bucket. It used to surface as an error (KeyError on
+        # the summary projection) or get read as a gate; it is neither — it means
+        # the standing proposal still stands and nothing changed underneath it.
+        if p.get("skipped"):
+            detail = f"skipped — {p['skipped']} (n={n}); standing proposal unchanged"
+        elif p["gated"]:
             detail = (f"gated — insufficient data (n {n} < {PARAM_MIN_SAMPLE}); "
                       f"no change (stays {p['prior_weight']:g})")
         elif abs(p["proposed_delta"]) < 1e-9:
@@ -1178,6 +1369,20 @@ def _format_slack_propose_params(run_id: str, proposals: list[dict],
                       f"(Δ {p['proposed_delta']:+g}; score {p['computed_score']:+.4f}, "
                       f"n={n})  [id {p['history_id']}]")
         lines.append(f"  • `{p['path']}`: {detail}")
+
+        # An empty sample is never self-explanatory — say why, every time, and
+        # escalate the marker when it has been empty across real trading.
+        if n == 0:
+            starve = (p.get("evidence") or {}).get("starvation") or {}
+            why = starve.get("summary")
+            streak = (starve.get("zero_sample_streak") or {})
+            # Red only when it is unambiguous: repeatedly empty AND trades
+            # closed in between. One empty run on a young regime is a warning.
+            marker = (":rotating_light:"
+                      if streak.get("runs", 0) >= 2 and streak.get("closes_since")
+                      else ":warning:")
+            lines.append(f"      {marker} sample is 0"
+                         + (f" — {why}" if why else ""))
     for e in errors:
         lines.append(f"  • `{e['axis']}`: error — {e['error']}")
     if not proposals and not errors:

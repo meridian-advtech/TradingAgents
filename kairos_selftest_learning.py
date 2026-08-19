@@ -241,6 +241,143 @@ def main():
     kc.close()
     check("cycle: history row status == approved", st == "approved")
 
+    # ── propose_all_params is re-runnable ───────────────────────────
+    # The freshness skip and the normal path return DIFFERENT dicts unless they
+    # share a builder. propose_all_params projects a fixed key set out of both,
+    # so a missing key raised KeyError inside the per-param try/except and was
+    # reported to Slack as an ERROR — a healthy "nothing new to say" was
+    # indistinguishable from a broken param loop. Running twice is the test:
+    # the second run is skip-only by construction.
+    print("\n[propose_all_params is re-runnable]")
+    _env(tmp, rows_tight, trail=8.0)
+    r1 = A.propose_all_params(run_id="selftest_1")
+    check("first propose_all_params run has no errors", r1["errors"] == [])
+    check("first run writes rows", any(p["history_id"] is not None
+                                       for p in r1["proposals"]))
+    r2 = A.propose_all_params(run_id="selftest_2")
+    check("SECOND propose_all_params run produces NO errors", r2["errors"] == [])
+    check("second run is all skips (no rows written)",
+          all(p["history_id"] is None for p in r2["proposals"]))
+    check("skipped proposals report skipped='no new evidence'",
+          all(p["skipped"] == "no new evidence" for p in r2["proposals"]))
+    check("skipped proposals still carry the full summary key set",
+          all(all(k in p for k in A.PARAM_PROPOSAL_SUMMARY_KEYS)
+              for p in r2["proposals"]))
+    check("skipped proposal reports prior_weight == current value",
+          all(abs(p["prior_weight"] - A._current_param_value(p["path"])) < 1e-9
+              for p in r2["proposals"]))
+    check("skipped proposal reports zero delta and new_weight == prior",
+          all(p["proposed_delta"] == 0.0 and p["new_weight"] == p["prior_weight"]
+              for p in r2["proposals"]))
+    check("Slack text renders skips distinctly (not as an error/gate)",
+          "skipped — no new evidence" in r2["slack_text"]
+          and "error —" not in r2["slack_text"])
+
+    # ── snapshot capture (regime tagging at close) ───────────────────
+    # A close that is not stamped can never be evidence for ANY axis, and the
+    # snapshot is unrecoverable after the config moves on — so the write path,
+    # not a backfill, has to be the thing that guarantees it.
+    print("\n[exit_params_snapshot capture]")
+    import kairos_ml_outcomes as M
+    check("SNAPSHOT_PARAM_PATHS matches PARAM_WHITELIST",
+          set(M.SNAPSHOT_PARAM_PATHS) == set(A.PARAM_WHITELIST))
+    check("exit_params_snapshot is schema-managed",
+          "exit_params_snapshot" in dict(M._TRADE_OUTCOMES_EXTRA_COLUMNS))
+
+    ml_live = os.path.join(tmp, "ml_live.db")
+    if os.path.exists(ml_live):
+        os.remove(ml_live)
+    old_db, old_cfg, old_k = M.DB_PATH, M.CONFIG_PATH, M.KAIROS_DB_PATH
+    try:
+        M.DB_PATH, M.CONFIG_PATH, M.KAIROS_DB_PATH = ml_live, A.CONFIG_PATH, kairos_log_db.DB_PATH
+        M.init_db()
+        tid = M.write_trade_open("SELFTEST", "BUY", 10, 100.0)
+        M.write_trade_close(tid, 110.0)
+        conn = M.get_connection()
+        raw = conn.execute("SELECT exit_params_snapshot FROM trade_outcomes "
+                           "WHERE trade_id = ?", (tid,)).fetchone()[0]
+        conn.close()
+        check("write_trade_close stamps a snapshot", raw is not None)
+        snap = json.loads(raw or "{}")
+        check("live snapshot key order matches the stored corpus",
+              list(snap.keys()) == ["params", "axis_weights", "reconstructed",
+                                    "trailing_stop", "captured_at"])
+        check("live snapshot is flagged reconstructed=False",
+              snap.get("reconstructed") is False)
+        check("snapshot records the live value at every whitelisted path",
+              all(snap["params"].get(p) == A._current_param_value(p)
+                  for p in M.SNAPSHOT_PARAM_PATHS))
+        check("_in_regime accepts a freshly written snapshot",
+              A._in_regime(raw, "params", TRAIL, A._current_param_value(TRAIL)))
+        # A reconstruction must stay comparable to a live capture: same two
+        # sections, read by the same _in_regime, no trailing_stop block.
+        rec = M.build_exit_params_snapshot(
+            reconstructed=True,
+            param_overrides={TRAIL: 8.0, FLOOR: 1.0},
+            weight_overrides={"exit_timing": 0.3626},
+            as_of="2026-05-27 13:37:55 UTC")
+        check("reconstructed snapshot omits the trailing_stop block",
+              list(rec.keys()) == ["params", "axis_weights", "reconstructed",
+                                   "captured_at"])
+        check("reconstructed snapshot preserves as_of as captured_at",
+              rec["captured_at"] == "2026-05-27 13:37:55 UTC")
+        check("_in_regime reads both shapes identically",
+              A._in_regime(json.dumps(rec), "params", TRAIL, 8.0)
+              and not A._in_regime(json.dumps(rec), "params", TRAIL, 6.0))
+    finally:
+        M.DB_PATH, M.CONFIG_PATH, M.KAIROS_DB_PATH = old_db, old_cfg, old_k
+
+    # ── starvation diagnostics (sample=0 must say why) ──────────────
+    print("\n[starvation diagnostics]")
+    # Every row out of regime -> sample 0. The message must name the cause, not
+    # just the count, or a starved loop is indistinguishable from a young one.
+    starved = [{"trail": 4.0, "mfe": 18.0, "pnl": 2.0, "forgone": 3.0}] * 12
+    _env(tmp, starved, trail=8.0)
+    rs = A.compute_param(TRAIL)
+    st = rs["evidence"]["starvation"]
+    check("sample is 0 when nothing is in regime", rs["sample_size"] == 0)
+    check("starvation counts out-of-regime rows", st["n_wrong_regime"] == 12)
+    check("gate_reason on an EMPTY sample carries the cause",
+          "closed under different parameters" in (rs["gate_reason"] or ""))
+    # Unstamped rows are the unrecoverable case and must be counted separately.
+    conn = sqlite3.connect(A.ML_DB_PATH)
+    conn.execute("UPDATE trade_outcomes SET exit_params_snapshot = NULL")
+    conn.commit()
+    conn.close()
+    rn = A.compute_param(TRAIL)
+    check("rows with no snapshot are counted as no_snapshot, not wrong_regime",
+          rn["evidence"]["starvation"]["n_no_snapshot"] == 12
+          and rn["evidence"]["starvation"]["n_wrong_regime"] == 0)
+    check("summary names the missing-snapshot cause",
+          "lack a regime snapshot" in rn["evidence"]["starvation"]["summary"])
+    check("Slack note flags an empty sample with a reason",
+          "sample is 0 — " in A._format_slack_propose_params(
+              "r", [{"path": TRAIL, "sample_size": 0, "gated": True,
+                     "skipped": None, "prior_weight": 8.0, "new_weight": 8.0,
+                     "proposed_delta": 0.0, "computed_score": 0.0,
+                     "history_id": None, "evidence": rn["evidence"]}], []))
+    # The loud case: empty across MULTIPLE runs while trades were closing.
+    check("repeated empty samples across real closes escalate to :rotating_light:",
+          ":rotating_light:" in A._format_slack_propose_params(
+              "r", [{"path": TRAIL, "sample_size": 0, "gated": True,
+                     "skipped": None, "prior_weight": 8.0, "new_weight": 8.0,
+                     "proposed_delta": 0.0, "computed_score": 0.0,
+                     "history_id": None,
+                     "evidence": {"starvation": {
+                         "summary": "x",
+                         "zero_sample_streak": {"runs": 4, "since": "2026-07-29",
+                                                "closes_since": 55}}}}], []))
+    check("a single empty run stays a :warning:, not an alarm",
+          ":rotating_light:" not in A._format_slack_propose_params(
+              "r", [{"path": TRAIL, "sample_size": 0, "gated": True,
+                     "skipped": None, "prior_weight": 8.0, "new_weight": 8.0,
+                     "proposed_delta": 0.0, "computed_score": 0.0,
+                     "history_id": None,
+                     "evidence": {"starvation": {
+                         "summary": "x",
+                         "zero_sample_streak": {"runs": 1, "since": "2026-07-29",
+                                                "closes_since": 55}}}}], []))
+
     # ── exit_timing regime window (2g) ──────────────────────────────
     print("\n[exit_timing regime window]")
     et_rows = ([{"trail": 8.0, "mfe": 12.0, "pnl": 2.0, "forgone": 1.0,
@@ -251,6 +388,43 @@ def main():
     et = A.compute_exit_timing()
     check("exit_timing regime window keeps only current-weight trades (n_in_regime==11)",
           et["evidence"]["n_in_regime"] == 11)
+
+    # ── snapshot coverage: every proposable path is recorded ────────
+    # A path the loop can propose on but write_trade_close does not stamp has no
+    # value in any snapshot, so _in_regime is False for every trade and the param
+    # sits gated at n=0 forever — failing closed, but indistinguishably from a
+    # regime that simply has not filled in yet.
+    print("\n[snapshot coverage]")
+    import kairos_ml_outcomes as M
+    check("every PARAM_WHITELIST path is recorded in SNAPSHOT_PARAM_PATHS",
+          set(A.PARAM_WHITELIST) <= set(M.SNAPSHOT_PARAM_PATHS))
+    live = M.build_exit_params_snapshot()
+    check("a live snapshot carries every proposable path",
+          all(p in live["params"] for p in A.PARAM_WHITELIST))
+    check("a live snapshot is flagged as not reconstructed",
+          live["reconstructed"] is False)
+
+    # ── propose_all_params survives a freshness SKIP ────────────────
+    # The skip return used to omit the keys propose_all_params projects, so every
+    # skip raised KeyError and was reported to Slack as a param-loop FAILURE.
+    print("\n[skip does not read as an error]")
+    _env(tmp, rows_tight, trail=8.0)
+    _frozen = A.PROPOSALS_FROZEN
+    A.PROPOSALS_FROZEN = False          # in-process only; the file is untouched
+    try:
+        A.propose_all_params(run_id="selftest_skip_1")        # writes rows
+        skip = A.propose_all_params(run_id="selftest_skip_2")  # identical evidence
+    finally:
+        A.PROPOSALS_FROZEN = _frozen
+    check("a skipped run reports no errors", not skip["errors"])
+    check("a skipped run still returns one summary per param",
+          len(skip["proposals"]) == len(A.PARAM_WHITELIST))
+    check("skipped summaries carry every projected key",
+          all(k in p for p in skip["proposals"]
+              for k in A.PARAM_PROPOSAL_SUMMARY_KEYS))
+    check("Slack renders the skip as skipped, not as an error",
+          "skipped — no new evidence" in skip["slack_text"]
+          and "error —" not in skip["slack_text"])
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n==== selftest: {_checks['pass']} passed, {_checks['fail']} failed "
