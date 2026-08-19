@@ -95,6 +95,9 @@ from kairos_arbiter import (  # noqa: E402  (path inserted above)
     MISTRAL_MODEL,
     MISTRAL_TIMEOUT,
 )
+from kairos_command_registry import (  # noqa: E402  (path inserted above)
+    is_structured_command,
+)
 
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "kairos_config.json")
 COMMANDER_LOG = os.path.join(SCRIPT_DIR, "kairos_arbiter_commander.log")
@@ -434,6 +437,24 @@ def handle_human_message(text: str, say) -> None:
     stripped = text.strip()
     if not stripped:
         return
+
+    # ── Not ours: kairos_commander.py owns the structured commands ───
+    # kairos_commander.py polls this channel too and answers anything in
+    # STRUCTURED_COMMANDS (`!status`, `!proposals`, …). Return before doing
+    # ANYTHING — no Mistral call, no reply, no history append — so the human
+    # sees exactly one answer. Silence here is the whole mechanism; the two
+    # processes split this channel by vocabulary, not by message.
+    #
+    # This runs ahead of the pending-change block on purpose: issuing a
+    # command is not an answer to "APPROVE or IGNORE?", so it must neither be
+    # treated as one nor discard the pending change. No command in the
+    # registry collides with APPROVE/IGNORE/YES/NO/CANCEL/SKIP, so an
+    # in-flight approval can still always be resolved.
+    if is_structured_command(stripped):
+        log.info("Ignoring %r — structured command, kairos_commander handles it",
+                 stripped)
+        return
+
     first = stripped.split()[0].upper()
 
     # ── Pending-change resolution takes priority ────────────────────

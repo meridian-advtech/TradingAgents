@@ -54,6 +54,11 @@ sys.path.insert(0, SCRIPT_DIR)
 os.environ.setdefault("no_proxy", "*")
 os.environ.setdefault("NO_PROXY", "*")
 
+from kairos_command_registry import (  # noqa: E402 — needs SCRIPT_DIR on path
+    is_structured_command,
+    split_command,
+)
+
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "kairos_config.json")
 KAIROS_DB = os.path.join(SCRIPT_DIR, "kairos.db")
 ML_DB = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
@@ -116,7 +121,7 @@ def get_commands_channel_id() -> Optional[str]:
 
 
 def get_arbiter_channel() -> str:
-    """Channel that approval cards live in — where !pending re-posts them.
+    """Channel that approval cards live in — where !proposals re-posts them.
 
     Prefers the configured channel ID; falls back to the literal name
     kairos_arbiter.py posts to, so a re-post lands in the same conversation as
@@ -125,6 +130,21 @@ def get_arbiter_channel() -> str:
     cfg = load_config()
     channels = cfg.get("slack", {}).get("channels", {}) if isinstance(cfg.get("slack"), dict) else {}
     return channels.get(ARBITER_CHANNEL_KEY) or ARBITER_CHANNEL_NAME
+
+
+def get_arbiter_channel_id() -> Optional[str]:
+    """Arbiter channel ID for POLLING, or None if only a name is configured.
+
+    Distinct from get_arbiter_channel(): that one is for *posting* cards and
+    happily falls back to the literal "#kairos-arbiter" name, which Slack
+    accepts as a chat.postMessage target. conversations.history needs a real
+    channel ID, so a name-only config means we simply do not poll that channel
+    (logged once at startup) rather than spinning on an API error.
+    """
+    cfg = load_config()
+    channels = cfg.get("slack", {}).get("channels", {}) if isinstance(cfg.get("slack"), dict) else {}
+    cid = channels.get(ARBITER_CHANNEL_KEY)
+    return cid or None
 
 
 # ── Pause flag persistence ───────────────────────────────────────────
@@ -297,9 +317,12 @@ def cmd_help() -> str:
         "  !ipo            IPO watchlist status + recent S-1 matches\n"
         "  !chain          AI value-chain Tier 1 movers + HOT-CHAIN signals\n"
         "  !watchlist ...  add TICKER | remove TICKER | list (Tier C)\n"
-        "  !pending        Re-post pending approval cards (tap from your phone)\n"
+        "  !proposals      Re-post pending approval cards (tap from your phone)\n"
         "  !help           This list\n"
         "```"
+        "_Works in #kairos-commands and #kairos-arbiter. In #kairos-arbiter "
+        "use the `!` form — anything else there is a question for the Arbiter, "
+        "not a command. `!run` / `!dry-run` are #kairos-commands only._"
     )
 
 
@@ -758,7 +781,7 @@ def cmd_resume() -> str:
     return ":arrow_forward: *Pipeline resumed.* New BUY orders re-enabled."
 
 
-def cmd_pending(say) -> None:
+def cmd_proposals(say) -> None:
     """Re-post every pending proposal as a fresh tappable approval card.
 
     The daily/weekly arbiter run posts cards as proposals are created; this
@@ -772,15 +795,15 @@ def cmd_pending(say) -> None:
     try:
         from kairos_slack_cards import list_pending_proposals, post_proposal_card
     except Exception as exc:
-        log.exception("!pending: kairos_slack_cards import failed")
-        say(text=f":x: `!pending` unavailable — card module import failed: `{exc}`")
+        log.exception("!proposals: kairos_slack_cards import failed")
+        say(text=f":x: `!proposals` unavailable — card module import failed: `{exc}`")
         return
 
     try:
         proposals = list_pending_proposals()
     except Exception as exc:
-        log.exception("!pending: list_pending_proposals failed")
-        say(text=f":x: `!pending` could not read proposals: `{exc}`")
+        log.exception("!proposals: list_pending_proposals failed")
+        say(text=f":x: `!proposals` could not read proposals: `{exc}`")
         return
 
     if not proposals:
@@ -797,9 +820,9 @@ def cmd_pending(say) -> None:
             if post_proposal_card(prop, channel):
                 posted += 1
         except Exception:
-            log.exception("!pending: post_proposal_card failed for proposal %s",
+            log.exception("!proposals: post_proposal_card failed for proposal %s",
                           prop.get("id"))
-    log.info("!pending re-posted %d/%d card(s) to %s",
+    log.info("!proposals re-posted %d/%d card(s) to %s",
              posted, len(proposals), channel)
     if posted < len(proposals):
         say(text=f":warning: Posted {posted}/{len(proposals)} card(s) — see "
@@ -870,43 +893,53 @@ def trigger_cycle(say, thread_ts: Optional[str], dry_run: bool) -> None:
 
 # ── Command parsing ──────────────────────────────────────────────────
 
-_BANG = re.compile(r"^\s*!\s*([a-z\-]+)\s*(.*?)\s*$", re.IGNORECASE)
-
-
 def parse_command(text: str) -> Optional[tuple[str, str]]:
     """Return (command, args) for a bang-prefixed message. None otherwise.
 
     Recognizes leading `!` or natural-language forms like
     "@kairos status" / "status please".
+
+    The parsing itself lives in kairos_command_registry.split_command, which is
+    also what kairos_arbiter_commander.py checks before it answers anything in
+    #kairos-arbiter. Sharing one parser is what stops the two processes from
+    both replying to the same message, or neither replying.
     """
-    if not text:
-        return None
-
-    # Strip leading Slack user/channel mentions so "<@UXXX> !status" works.
-    cleaned = re.sub(r"<[@#][A-Z0-9]+(?:\|[^>]*)?>", "", text).strip()
-    if not cleaned:
-        return None
-
-    m = _BANG.match(cleaned)
-    if m:
-        return m.group(1).lower(), m.group(2).strip()
-
-    # Bare keyword fallback (case-insensitive).
-    stripped = cleaned.lower()
-    first = stripped.split()[0]
-    rest = stripped[len(first):].strip()
-    if first in {
-        "status", "positions", "performance", "why", "run",
-        "dry-run", "dryrun", "pause", "resume", "regime", "ipo", "chain",
-        "watchlist", "pending", "help",
-    }:
-        return first, rest
-    return None
+    return split_command(text)
 
 
-def handle_message(text: str, say, thread_ts: Optional[str]) -> None:
+def handle_message(text: str, say, thread_ts: Optional[str],
+                   structured_only: bool = False) -> None:
+    """Dispatch one human message.
+
+    structured_only switches the unmatched-input behavior by channel:
+
+      False (#kairos-commands, the default and the historical behavior) —
+        this is a dedicated command channel, so anything unrecognized gets
+        the ":grey_question: … try `!help`" nudge.
+
+      True (#kairos-arbiter) — we are a GUEST in a conversational channel
+        owned by kairos_arbiter_commander.py. Only an explicit `!command` in
+        STRUCTURED_COMMANDS is ours; everything else — bare words included —
+        must be met with total silence, because the arbiter is replying to it.
+        Two exclusions are deliberate: bare prose ("why did you flag AMAT?"
+        is a question, not `!why`), and `!run` / `!dry-run`, which are not
+        structured commands and must not be reachable from the discussion
+        channel. See kairos_command_registry for both.
+
+    The gate below calls the same is_structured_command() that
+    kairos_arbiter_commander.py checks, so the two processes cannot disagree
+    about who owns a message.
+
+    The default keeps every existing caller, and #kairos-commands, unchanged.
+    """
+    if structured_only and not is_structured_command(text):
+        log.debug("ignoring %r — not ours in a shared channel", text)
+        return
+
     parsed = parse_command(text)
     if parsed is None:
+        if structured_only:
+            return
         say(text=":grey_question: I didn't understand that — try `!help`.",
             thread_ts=thread_ts)
         return
@@ -949,8 +982,8 @@ def handle_message(text: str, say, thread_ts: Optional[str]) -> None:
             say(text=cmd_chain(), thread_ts=thread_ts)
         elif cmd_norm == "watchlist":
             say(text=cmd_watchlist(args), thread_ts=thread_ts)
-        elif cmd_norm == "pending":
-            cmd_pending(say)
+        elif cmd_norm == "proposals":
+            cmd_proposals(say)
         elif cmd_norm == "pause":
             say(text=cmd_pause(), thread_ts=thread_ts)
         elif cmd_norm == "resume":
@@ -959,7 +992,7 @@ def handle_message(text: str, say, thread_ts: Optional[str]) -> None:
             trigger_cycle(say, thread_ts, dry_run=False)
         elif cmd_norm == "dry-run":
             trigger_cycle(say, thread_ts, dry_run=True)
-        else:
+        elif not structured_only:
             say(text=":grey_question: I didn't understand that — try `!help`.",
                 thread_ts=thread_ts)
     except Exception as exc:
@@ -1177,7 +1210,7 @@ def start_socket_mode(token: str):
     app_token = (os.environ.get("SLACK_APP_TOKEN") or "").strip()
     if not app_token:
         log.warning("SLACK_APP_TOKEN unset — Socket Mode disabled. Approve/"
-                    "Reject buttons will not respond; !pending still re-posts "
+                    "Reject buttons will not respond; !proposals still re-posts "
                     "cards and every other command is unaffected. Set "
                     "SLACK_APP_TOKEN (xapp-…) in ~/.zshrc or the launchd plist.")
         return None
@@ -1237,8 +1270,6 @@ def main():
                   "nothing to poll.", COMMAND_CHANNEL_NAME)
         sys.exit(1)
 
-    say = _make_say(token, channel_id)
-
     # Additive: if the app token is unset or slack_bolt is missing this returns
     # None after logging why, and the poll loop below runs exactly as before.
     start_socket_mode(token)
@@ -1246,49 +1277,88 @@ def main():
     log.info("Kairos Commander starting (curl long-poll, paused=%s)…",
              get_paused())
 
-    # Seed cursor to now so we only process NEW messages. Slack timestamps
+    # Seed cursors to now so we only process NEW messages. Slack timestamps
     # use exactly 6 fractional digits; str(time.time()) emits 7, which Slack's
     # conversations.history `oldest` filter rejects (returns nothing), leaving
     # the cursor permanently stuck. Format to 6 decimals to match Slack.
-    last_ts = f"{time.time():.6f}"
-    log.info("Polling channel %s, seed last_ts=%s", channel_id, last_ts)
+    seed_ts = f"{time.time():.6f}"
+
+    # Each feed is one channel with its own cursor, its own say() (so replies
+    # land where the command was typed) and its own unmatched-input policy.
+    #
+    # #kairos-commands is the dedicated command channel: unchanged behavior,
+    # unrecognized input gets the `!help` nudge.
+    #
+    # #kairos-arbiter is shared with kairos_arbiter_commander.py, which is
+    # conversational and answers everything else there. We only claim
+    # STRUCTURED_COMMANDS in it and stay silent otherwise —
+    # structured_only=True. See kairos_command_registry for the contract.
+    feeds = [{
+        "name": COMMAND_CHANNEL_NAME,
+        "channel_id": channel_id,
+        "say": _make_say(token, channel_id),
+        "structured_only": False,
+        "last_ts": seed_ts,
+    }]
+
+    arbiter_id = get_arbiter_channel_id()
+    if arbiter_id:
+        feeds.append({
+            "name": ARBITER_CHANNEL_NAME,
+            "channel_id": arbiter_id,
+            "say": _make_say(token, arbiter_id),
+            "structured_only": True,
+            "last_ts": seed_ts,
+        })
+    else:
+        log.warning("No channel ID configured for %s (slack.channels.%s) — "
+                    "structured commands will work in #%s only.",
+                    ARBITER_CHANNEL_NAME, ARBITER_CHANNEL_KEY,
+                    COMMAND_CHANNEL_NAME)
+
+    for feed in feeds:
+        log.info("Polling %s (%s), structured_only=%s, seed last_ts=%s",
+                 feed["name"], feed["channel_id"], feed["structured_only"],
+                 feed["last_ts"])
 
     poll_count = 0
     while True:
-        try:
-            resp = _slack_api_call(
-                "conversations.history", token,
-                {"channel": channel_id, "oldest": last_ts, "limit": 10},
-            )
-            poll_count += 1
-            if poll_count % 10 == 0:
-                log.info("Heartbeat: poll #%d ok=%s n_msgs=%d last_ts=%s",
-                         poll_count, resp.get("ok"),
-                         len(resp.get("messages", [])), last_ts)
-            if not resp.get("ok"):
-                log.warning("conversations.history failed: %s",
-                            resp.get("error"))
-                time.sleep(POLL_INTERVAL_SECONDS)
-                continue
+        poll_count += 1
+        for feed in feeds:
+            try:
+                resp = _slack_api_call(
+                    "conversations.history", token,
+                    {"channel": feed["channel_id"],
+                     "oldest": feed["last_ts"], "limit": 10},
+                )
+                if poll_count % 10 == 0:
+                    log.info("Heartbeat: poll #%d %s ok=%s n_msgs=%d last_ts=%s",
+                             poll_count, feed["name"], resp.get("ok"),
+                             len(resp.get("messages", [])), feed["last_ts"])
+                if not resp.get("ok"):
+                    log.warning("conversations.history failed for %s: %s",
+                                feed["name"], resp.get("error"))
+                    continue
 
-            # Slack returns newest-first; process oldest-first.
-            for msg in reversed(resp.get("messages", [])):
-                ts = msg.get("ts", "0")
-                if float(ts) <= float(last_ts):
-                    continue
-                last_ts = ts  # advance regardless of message type
-                if msg.get("bot_id") or msg.get("subtype"):
-                    continue
-                text = (msg.get("text") or "").strip()
-                if not text:
-                    continue
-                log.info("Received: %s", text)
-                try:
-                    handle_message(text, say=say, thread_ts=ts)
-                except Exception:
-                    log.exception("handle_message crashed")
-        except Exception as exc:
-            log.warning("Poll error: %s", exc)
+                # Slack returns newest-first; process oldest-first.
+                for msg in reversed(resp.get("messages", [])):
+                    ts = msg.get("ts", "0")
+                    if float(ts) <= float(feed["last_ts"]):
+                        continue
+                    feed["last_ts"] = ts  # advance regardless of message type
+                    if msg.get("bot_id") or msg.get("subtype"):
+                        continue
+                    text = (msg.get("text") or "").strip()
+                    if not text:
+                        continue
+                    log.info("Received on %s: %s", feed["name"], text)
+                    try:
+                        handle_message(text, say=feed["say"], thread_ts=ts,
+                                       structured_only=feed["structured_only"])
+                    except Exception:
+                        log.exception("handle_message crashed")
+            except Exception as exc:
+                log.warning("Poll error on %s: %s", feed["name"], exc)
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
