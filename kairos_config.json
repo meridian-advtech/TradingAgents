@@ -77,11 +77,11 @@
     "cli_path": "/opt/homebrew/bin/claude",
     "reasoning_timeout_s": 240,
     "poll_interval_s": 5,
-    "model": "claude-sonnet-5",
+    "model": "claude-opus-5",
     "effort_decision": "high",
     "effort_router": "medium",
     "effort_thesis": "low",
-    "_comment": "Claude Code CLI invoked via subprocess for Phase 2 reasoning. Set cli_path if claude is not on PATH. model: claude-sonnet-5 (June 2026, intro pricing thru Aug 31). effort_*: Sonnet 5 effort levels per call type \u2014 decision=high (main trading JSON), router=medium (task dispatch), thesis=low (YES/NO invalidation check). API default is high; passed via output_config={'effort': ...}."
+    "_comment": "Claude Code CLI invoked via subprocess for Phase 2 reasoning. Set cli_path if claude is not on PATH. model: claude-opus-5 (2026-08-03, upgraded from claude-sonnet-5) \u2014 used ONLY for the main decision call in kairos_run.py, which reads cfg.claude.model. kairos_router.py and kairos_thesis_review.py have claude-sonnet-5 hardcoded independently and are unaffected by this key \u2014 router/thesis stay on Sonnet 5 by design (cost-appropriate for volume; decision call gets Opus 5 depth). effort_*: per call type \u2014 decision=high, router=medium, thesis=low. API default is high; passed via output_config={'effort': ...}."
   },
   "slack": {
     "bot_token": "",
@@ -93,9 +93,10 @@
       "log": "C0APKEES12Q",
       "trades": "C0B1LPGCA9L",
       "watchlist": "C0A6HHKMM8S",
-      "arbiter": "C0BAQH32LTS"
+      "arbiter": "C0BAQH32LTS",
+      "model_watch": "C0BQT9WRRGW"
     },
-    "_comment": "Slack Bot API (slack_sdk). Values are channel IDs. kairos-alerts=C0AQA4ZH0P2, kairos-reports=C0AP9F2P10T, kairos-commands=C0APFSF09U2, kairos-log=C0APKEES12Q, kairos-trades=, kairos-watchlist= (was #new-channel)."
+    "_comment": "Slack Bot API (slack_sdk). Values are channel IDs. kairos-alerts=C0AQA4ZH0P2, kairos-reports=C0AP9F2P10T, kairos-commands=C0APFSF09U2, kairos-log=C0APKEES12Q, kairos-trades=, kairos-watchlist= (was #new-channel), kairos-model-watch=C0BQT9WRRGW (weekly Tier 1 model-release check, see kairos_model_watch.py)."
   },
   "options_signal": {
     "vol_oi_threshold": 3.0,
@@ -224,7 +225,7 @@
       "_ipo_note": "Young IPOs whip-saw on day-1/2 noise. For the first ipo_window_days HOLDING days, the trailing-stop trail (and thus the intraday backstop = trail x intraday_mult) is widened by ipo_multiplier so normal IPO volatility does not trigger a profit-capture exit. IPO identity is read from kairos_ipo_cache.json (detected set), NOT the signal tag, which is lost once a position is held.",
       "target_armed": {
         "enabled": true,
-        "trail_pct": 8.0
+        "trail_pct": 6.9469
       },
       "_target_armed_note": "TARGET-ARMED trail (backtest-verified, +31.6pts over flat tiers on n=49): no trail arms until peak_gain_pct reaches the position's own logged thesis target (predicted_return_pct from thesis_predictions); THEN a flat trail_pct trail arms, harvesting only the give-back on the SURPLUS above what the thesis promised. Falls back to the flat tiers above for any ticker with no logged target. enabled=false ships as a no-op; J flips true after reviewing dry-run output.",
       "profit_floor_pp": 1.1552,
@@ -487,6 +488,30 @@
       "cik": "2110117",
       "accession": "0001193125-26-276672",
       "ipo_score": 75
+    },
+    {
+      "name": "Evmand Corp",
+      "expected_ticker": "PENDING",
+      "alt_tickers": [],
+      "sector": "Technology",
+      "status": "watch",
+      "notes": "Auto-discovered S-1 (score 53/100, WATCH). Score 53/100: $1.2B rev; led by UBS; $0M raise; high-signal sector",
+      "discovered_at": "2026-08-03T13:31:56Z",
+      "cik": "2136571",
+      "accession": "0002136571-26-000003",
+      "ipo_score": 53
+    },
+    {
+      "name": "Securitize Corp.",
+      "expected_ticker": "PENDING",
+      "alt_tickers": [],
+      "sector": "Technology",
+      "status": "watch",
+      "notes": "Auto-discovered S-1 (score 55/100, WATCH). Score 55/100: $6M rev; +2468% growth; led by Morgan Stanley, J.P. Morgan; high-signal sector",
+      "discovered_at": "2026-08-03T13:31:56Z",
+      "cik": "2094496",
+      "accession": "0001628280-26-051182",
+      "ipo_score": 55
     }
   ],
   "ai_value_chain": [
