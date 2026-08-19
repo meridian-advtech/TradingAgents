@@ -851,12 +851,96 @@ def _post_slack(text: str) -> bool:
 # ── Orchestration ────────────────────────────────────────────────────────────
 
 
+# ── Check 5 — recent segfault/crash reports ──────────────────────────────────
+
+CRASH_REPORT_DIR = os.path.expanduser("~/Library/Logs/DiagnosticReports")
+CRASH_LOOKBACK_MINUTES = 40  # 30m cycle + slack, so consecutive runs don't gap
+
+
+def check_recent_crashes(now_utc: datetime) -> CheckResult:
+    """Catches the class of failure that motivated this whole file: a Kairos
+    process (usually a fork()-in-a-multithreaded-process crash — see
+    kairos_alerts.py's posix_spawn rewrite, 2026-08-18) segfaults, and until
+    now nothing noticed except a macOS crash dialog popping up in front of J.
+    A crashed cycle can still exit with output that LOOKS like a clean run
+    from the outside (2026-08-19: 1 crash, trading recovered and filled fine)
+    — this check exists so 'nothing looked wrong' stops being the only signal.
+    """
+    try:
+        if not os.path.isdir(CRASH_REPORT_DIR):
+            return CheckResult("Recent crashes", "no crash report directory found (nothing to check)")
+        cutoff = now_utc.timestamp() - CRASH_LOOKBACK_MINUTES * 60
+        hits = []
+        for fname in os.listdir(CRASH_REPORT_DIR):
+            if not (fname.startswith("Python-") and fname.endswith(".ips")):
+                continue
+            path = os.path.join(CRASH_REPORT_DIR, fname)
+            try:
+                if os.path.getmtime(path) >= cutoff:
+                    hits.append((fname, path))
+            except OSError:
+                continue
+    except Exception as exc:
+        return CheckResult("Recent crashes", f"could not scan crash reports: {exc}", skipped=True)
+
+    if not hits:
+        return CheckResult("Recent crashes", f"none in the last {CRASH_LOOKBACK_MINUTES}m")
+
+    # Pull a bit of context from the most recent one — coalition + whether it's
+    # the known fork/atfork signature, so the alert is specific, not just a count.
+    coalition, signature = "unknown", "unknown"
+    try:
+        with open(sorted(hits, key=lambda h: os.path.getmtime(h[1]))[-1][1]) as fh:
+            head = fh.read(4000)
+        m = re.search(r'"coalitionName"\s*:\s*"([^"]+)"', head)
+        if m:
+            coalition = m.group(1)
+        if "multi-threaded process forked" in head or "subprocess_fork_exec" in head:
+            signature = "fork() in a multi-threaded process (known class, see kairos_alerts.py)"
+        elif "EXC_BAD_ACCESS" in head:
+            signature = "EXC_BAD_ACCESS (segfault, cause not yet classified)"
+    except Exception:
+        pass
+
+    names = sorted(set(f for f, _ in hits))
+    return CheckResult(
+        "Recent crashes",
+        f"{len(hits)} in the last {CRASH_LOOKBACK_MINUTES}m",
+        [
+            Finding(
+                key="crash:" + ",".join(names),
+                headline=(
+                    f"{len(hits)} Python crash report(s) in the last "
+                    f"{CRASH_LOOKBACK_MINUTES} minutes, most recent from "
+                    f"coalition '{coalition}'."
+                ),
+                impact=(
+                    f"Signature: {signature}. A crashed process can still let the "
+                    "cycle recover and trade normally (as on 2026-08-19), so this "
+                    "can be quiet-but-real degradation rather than an outage — "
+                    "worth a look even if nothing else looks broken."
+                ),
+                fix=(
+                    "Check ~/Library/Logs/DiagnosticReports/ for the file(s): "
+                    f"{', '.join(names)}. If the signature above is the known "
+                    "fork class, find which subprocess.run() call site is still "
+                    "unconverted to posix_spawn (kairos_commander.py, "
+                    "kairos_dashboard_server.py, and this file's own launchctl/"
+                    "sysctl calls are the known remaining candidates as of "
+                    "2026-08-19)."
+                ),
+            )
+        ],
+    )
+
+
 def run_checks(now_et: datetime, now_utc: datetime) -> list[CheckResult]:
     return [
         check_launch_agents(),
         check_ollama(),
         check_ibkr_gateway(now_et),
         check_scheduler_progress(now_et, now_utc),
+        check_recent_crashes(now_utc),
     ]
 
 
