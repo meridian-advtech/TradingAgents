@@ -20,6 +20,7 @@ secrets.*
 .eod_crypto_last_run
 .eod_equity_last_run
 .ibkr_last_ok
+.kairos_healthcheck_state.json
 kairos_state.json
 kairos_scheduler.log*
 
