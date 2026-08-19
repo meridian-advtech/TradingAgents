@@ -44,6 +44,16 @@ from typing import Optional
 SCRIPT_DIR = "/Users/jelmore/Kairos"
 sys.path.insert(0, SCRIPT_DIR)
 
+# macOS fork-safety workaround: this daemon curl-subprocesses constantly
+# (long-poll + every Slack reply, via kairos_alerts._slack_api_call) from a
+# multi-threaded, already-networked process. On recent macOS builds, the
+# fork() that spawns each curl child can SIGSEGV in Network.framework's
+# atfork handler (os_log_preferences_refresh) before exec() replaces it.
+# Disabling proxy auto-detection skips that code path. Set before any
+# networking libs import so every subprocess this daemon spawns inherits it.
+os.environ.setdefault("no_proxy", "*")
+os.environ.setdefault("NO_PROXY", "*")
+
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "kairos_config.json")
 KAIROS_DB = os.path.join(SCRIPT_DIR, "kairos.db")
 ML_DB = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")

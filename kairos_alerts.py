@@ -31,11 +31,26 @@ Usage:
 import argparse
 import json
 import os
+import shutil
+import signal
 import sys
+import tempfile
+import time
 from datetime import datetime, timezone
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 MONITOR_LOG = os.path.join(SCRIPT_DIR, "kairos_monitor.log")
+
+# ── Slack transport ───────────────────────────────────────────────────
+# Slack is reached by spawning curl (see _slack_api_call for why curl, and
+# why posix_spawn rather than subprocess). /usr/bin/curl is preferred
+# explicitly: it is the Apple-signed binary the host's network filter
+# permits, and posix_spawn needs an absolute path anyway.
+_CURL = "/usr/bin/curl" if os.path.exists("/usr/bin/curl") else (
+    shutil.which("curl") or "")
+_CURL_TIMEOUT_S = 15      # curl's own -m, the network-level timeout
+_OUTER_TIMEOUT_S = 20     # our backstop if curl itself wedges
+_SLACK_TRANSPORT = "os.posix_spawn"   # diagnostics only; see _slack_api_call
 
 
 # ── Config ────────────────────────────────────────────────────────────
@@ -162,33 +177,152 @@ def _slack_api_call(method: str, token: str, payload: dict) -> dict:
     Apple-signed curl is permitted. slack_sdk, requests, and raw sockets all
     fail identically; curl is the only transport that reaches Slack here.
 
+    Why os.posix_spawn instead of subprocess.run: subprocess launches children
+    via fork()+exec(), and fork() runs every pthread_atfork child handler in
+    the child before exec() replaces it. This process is large, multi-threaded
+    and heavily networked (numpy/pandas/scipy/sklearn loaded, live sockets
+    open), and on this host Little Snitch and Tailscale both install
+    NetworkExtension filters -- so Network.framework registers an atfork child
+    handler that walks its own global state. On 2026-08-18 that handler
+    segfaulted 27 times in a 20-minute window:
+
+        EXC_BAD_ACCESS in os_log_preferences_refresh
+          <- NEFlowDirectorDestroy <- nw_settings_child_has_forked
+          <- _pthread_atfork_child_handlers <- fork
+          <- _posixsubprocess.subprocess_fork_exec
+
+    Each crash is a silently dropped Slack message: the child dies pre-exec,
+    so curl never runs and the parent just sees exit -11.
+
+    posix_spawn(2) is not fork() -- it does not duplicate the parent's threads
+    or address space and it does not run atfork handlers, so this crash class
+    is unreachable through it rather than merely less likely. Note that
+    subprocess could not have been coaxed onto its own posix_spawn fast path
+    here: that path requires close_fds=False (the default is True) and an
+    executable containing a directory separator, so subprocess.run(["curl",
+    ...]) always took fork_exec.
+
+    stdin/stdout/stderr go through short-lived 0600 tempfiles rather than
+    pipes: posix_spawn has no built-in pipe plumbing, and files also remove
+    any chance of a pipe-buffer deadlock on a large response body. The extra
+    filesystem round-trip is irrelevant at this call rate.
+
     Returns the parsed JSON response, or {"ok": False, "error": ...} on any
     transport failure.
     """
-    import subprocess
+    if not _CURL:
+        return {"ok": False, "error": "curl not found on this host"}
 
     url = f"https://slack.com/api/{method}"
-    try:
-        proc = subprocess.run(
-            [
-                "curl", "-sS", "-m", "15", "-X", "POST", url,
-                "-H", f"Authorization: Bearer {token}",
-                "-H", "Content-Type: application/json; charset=utf-8",
-                "--data-binary", "@-",
-            ],
-            input=json.dumps(payload),
-            capture_output=True, text=True, timeout=20,
-        )
-    except (subprocess.SubprocessError, OSError) as exc:
-        return {"ok": False, "error": f"curl transport failed: {exc}"}
+    body = json.dumps(payload)
 
-    if proc.returncode != 0:
-        return {"ok": False,
-                "error": f"curl exit {proc.returncode}: {proc.stderr.strip()}"}
+    # Mirror subprocess's restore_signals=True, which resets these to default
+    # in the child (see _Py_RestoreSignals in Python/pylifecycle.c).
+    setsigdef = [s for s in (getattr(signal, n, None)
+                             for n in ("SIGPIPE", "SIGXFZ", "SIGXFSZ"))
+                 if s is not None]
+
+    in_fd, in_path = tempfile.mkstemp(prefix="kairos-slack-req-")
+    out_fd, out_path = tempfile.mkstemp(prefix="kairos-slack-out-")
+    err_fd, err_path = tempfile.mkstemp(prefix="kairos-slack-err-")
+    for fd in (in_fd, out_fd, err_fd):
+        os.close(fd)
+
     try:
-        return json.loads(proc.stdout)
-    except (json.JSONDecodeError, ValueError):
-        return {"ok": False, "error": f"non-JSON response: {proc.stdout[:200]}"}
+        with open(in_path, "w") as f:
+            f.write(body)
+
+        argv = [
+            "curl", "-sS", "-m", str(_CURL_TIMEOUT_S), "-X", "POST", url,
+            "-H", f"Authorization: Bearer {token}",
+            "-H", "Content-Type: application/json; charset=utf-8",
+            "--data-binary", f"@{in_path}",
+        ]
+        file_actions = (
+            (os.POSIX_SPAWN_OPEN, 0, os.devnull, os.O_RDONLY, 0o666),
+            (os.POSIX_SPAWN_OPEN, 1, out_path,
+             os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
+            (os.POSIX_SPAWN_OPEN, 2, err_path,
+             os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
+        )
+
+        try:
+            pid = os.posix_spawn(_CURL, argv, os.environ,
+                                 file_actions=file_actions,
+                                 setsigdef=setsigdef)
+        except (OSError, ValueError) as exc:
+            return {"ok": False, "error": f"curl spawn failed: {exc}"}
+
+        rc, reap_err = _reap(pid, _OUTER_TIMEOUT_S)
+        if reap_err:
+            return {"ok": False, "error": reap_err}
+
+        stdout = _read_text(out_path)
+        if rc != 0:
+            stderr = _read_text(err_path).strip()
+            return {"ok": False, "error": f"curl exit {rc}: {stderr}"}
+        try:
+            return json.loads(stdout)
+        except (json.JSONDecodeError, ValueError):
+            return {"ok": False, "error": f"non-JSON response: {stdout[:200]}"}
+    except OSError as exc:
+        return {"ok": False, "error": f"curl transport failed: {exc}"}
+    finally:
+        for p in (in_path, out_path, err_path):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+
+def _reap(pid: int, timeout_s: float) -> tuple:
+    """Wait for pid, SIGKILLing it past timeout_s.
+
+    Returns (exit_code, None) on a normal exit -- negative for a terminating
+    signal, matching subprocess -- or (None, reason) if the child had to be
+    killed or its status could not be collected.
+
+    posix_spawn gives back a bare pid, so the timeout that subprocess.run()
+    provided has to be done by hand: poll with WNOHANG rather than block, so
+    a wedged curl can still be killed.
+    """
+    deadline = time.monotonic() + timeout_s
+    delay = 0.002
+    while True:
+        try:
+            done, status = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            # Something else already reaped it (a stray SIGCHLD handler, or
+            # SIGCHLD set to SIG_IGN somewhere in this process). curl may well
+            # have succeeded, but its status is gone -- report a transport
+            # failure rather than trusting an unverified stdout.
+            return None, "curl status unavailable (child already reaped)"
+        if done == pid:
+            return os.waitstatus_to_exitcode(status), None
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(delay)
+        delay = min(delay * 1.5, 0.05)
+
+    # Timed out: kill, then reap so we never leave a zombie behind.
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
+    try:
+        os.waitpid(pid, 0)
+    except (ChildProcessError, OSError):
+        pass
+    return None, f"curl timed out after {timeout_s}s"
+
+
+def _read_text(path: str) -> str:
+    """Read a spawned child's output file. Never raises."""
+    try:
+        with open(path, "rb") as f:
+            return f.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
 
 
 def log_monitor_event(event: str, **fields) -> None:

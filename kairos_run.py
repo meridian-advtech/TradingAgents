@@ -44,6 +44,27 @@ from datetime import datetime, timezone
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 
+# macOS fork-safety workaround: subprocess.run() calls made later in this
+# pipeline (kairos_alerts.py curl posts, kairos_healthcheck.py launchctl
+# checks, etc.) fork a child process from this heavy, multi-threaded,
+# already-networked process. On recent macOS builds, Network.framework's
+# atfork child handler can SIGSEGV in os_log_preferences_refresh while doing
+# proxy-detection work in that forked child, before exec() replaces it.
+# Disabling proxy auto-detection (no_proxy='*') skips that code path.
+# Set here, at the very top before any networking libs import, so every
+# subprocess launched anywhere downstream in this process tree inherits it.
+os.environ.setdefault("no_proxy", "*")
+os.environ.setdefault("NO_PROXY", "*")
+
+# Same crash class, wider net. Belt-and-braces only: the known offender was
+# kairos_alerts.py's Slack posts, and that is fixed properly by spawning curl
+# with os.posix_spawn (which runs no atfork handlers at all) rather than by
+# suppressing what those handlers do. But every other subprocess.run()
+# anywhere in this process tree still forks, so tell the ObjC runtime not to
+# abort or reinitialize unsafely in a forked child. This is not a substitute
+# for not forking in the first place.
+os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
+
 W = 72
 DECISIONS_LOG = os.path.join(SCRIPT_DIR, "kairos_decisions.log")
 CRYPTO_PROMPT_FILE = os.path.join(SCRIPT_DIR, "kairos_crypto_prompt.txt")
