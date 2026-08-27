@@ -499,7 +499,8 @@ def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -
             conn.execute("PRAGMA busy_timeout = 2000")
             rows = conn.execute(
                 "SELECT t.ticker, t.pnl_pct, t.pnl_dollar, t.signals_fired, "
-                "       t.mfe_pct, t.timestamp_exit, "
+                "       t.mfe_pct, t.timestamp_exit, t.exit_reason, "
+                "       t.forgone_gain_30d_pct AS fg30, "
                 "       p.predicted_return_pct AS pred "
                 "FROM trade_outcomes t "
                 "LEFT JOIN thesis_predictions p ON t.trade_id = p.decision_id "
@@ -548,6 +549,37 @@ def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -
     lines.append("")
     lines.append("Confluence trades count under every signal that fired, so trade")
     lines.append("counts sum to more than the book.")
+
+    # Post-exit path. The Arbiter already uses forgone gain to tune the
+    # exit_timing axis, but the reasoner making hold/sell calls has never seen
+    # it. Every exit type leaves money on the table (2026-08-27: median +9.5%
+    # 30d after exit, n=173), and the two "the thesis broke" exits are the
+    # worst offenders — they are capitulating near lows, not cutting losses.
+    fg = [(r["exit_reason"] or "none").split(":")[0].strip() for r in rows
+          if r["fg30"] is not None]
+    fgv = [r["fg30"] for r in rows if r["fg30"] is not None]
+    if len(fgv) >= 20:
+        by: dict = {}
+        for r in rows:
+            if r["fg30"] is None:
+                continue
+            k = (r["exit_reason"] or "none").split(":")[0].strip() or "none"
+            by.setdefault(k, []).append(r["fg30"])
+        med = sorted(fgv)[len(fgv) // 2]
+        lines.append("")
+        lines.append("AFTER WE SELL — where the stock went in the next 30 days:")
+        lines.append(f"  Across {len(fgv)} closed trades: median {med:+.1f}%, "
+                     f"mean {sum(fgv)/len(fgv):+.1f}%")
+        for k, v in sorted(by.items(), key=lambda kv: -sum(kv[1]) / len(kv[1])):
+            if len(v) >= 5:
+                lines.append(f"    {k:<22}{len(v):>4} exits   {sum(v)/len(v):+7.1f}% after")
+        lines.append("")
+        lines.append("Some of this is market drift, not mistimed exits — compare against")
+        lines.append("the index over the same window before concluding an exit was wrong.")
+        lines.append("But exits that fire BECAUSE the thesis was judged broken should show")
+        lines.append("the SMALLEST subsequent gain. Where they show the largest, the")
+        lines.append("judgement is firing near lows. Weigh that when deciding to abandon a")
+        lines.append("thesis on price action alone.")
 
     if candidate_tickers:
         want = {str(t).strip().upper() for t in candidate_tickers}
