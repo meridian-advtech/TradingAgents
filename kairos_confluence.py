@@ -197,14 +197,7 @@ def compute_confluence(
 
     score = sum(signals_detail.values())
 
-    tier_name = "None"
-    nlv_pct = 0.0
-
-    if score > 0:
-        for tier in tiers:
-            if score >= tier["min_score"]:
-                tier_name = tier["name"]
-                nlv_pct = tier["nlv_pct"]
+    tier_name, nlv_pct = _tier_and_size(score, tiers)
 
     return {
         "score": score,
@@ -212,6 +205,56 @@ def compute_confluence(
         "nlv_pct": nlv_pct,
         "signals_detail": signals_detail,
     }
+
+
+def _tier_and_size(score: float, tiers: list) -> tuple[str, float]:
+    """Map a confluence score to (tier name, nlv_pct), interpolating size.
+
+    The tier NAME is still a step function — it labels a band, and the
+    reasoning prompt, alerts and the ML ledger all read it as a category.
+
+    The SIZE is piecewise-linear between tier anchors rather than a step.
+    Signal points are floats (evidence adjusts them; see kairos_axis_weights),
+    and a step function makes that lever lumpy in exactly the wrong way: with
+    anchors at 1/2/4/6, moving HOT-INSIDER 2.0 -> 1.9 would cut a single-signal
+    position 33% (1.5% -> 1.0% NLV) while 2.0 -> 3.0 would change nothing at
+    all. Small evidence, no effect; slightly larger evidence, a cliff. That is
+    the same shape as the July ratchet incident.
+
+    Interpolation preserves current behaviour EXACTLY at whole-number scores
+    (1 -> 1.0%, 2 -> 1.5%, 4 -> 2.0%, 6 -> 2.5%) — it is a strict superset of
+    the step behaviour, so nothing changes until a point value moves off an
+    integer. Below the first anchor: no position. Above the last: clamped.
+    """
+    if score <= 0 or not tiers:
+        return "None", 0.0
+
+    anchors = sorted(
+        ((float(t["min_score"]), float(t["nlv_pct"]), str(t["name"])) for t in tiers),
+        key=lambda a: a[0],
+    )
+
+    # Below the lowest anchor is not a fractional position — it is no signal.
+    if score < anchors[0][0]:
+        return "None", 0.0
+
+    # Tier name: highest anchor whose threshold the score has reached.
+    tier_name = anchors[0][2]
+    for min_score, _pct, name in anchors:
+        if score >= min_score:
+            tier_name = name
+
+    # At or past the top anchor, clamp — do not extrapolate size upward.
+    if score >= anchors[-1][0]:
+        return tier_name, anchors[-1][1]
+
+    for (lo_s, lo_p, _ln), (hi_s, hi_p, _hn) in zip(anchors, anchors[1:]):
+        if lo_s <= score < hi_s:
+            span = hi_s - lo_s
+            frac = 0.0 if span <= 0 else (score - lo_s) / span
+            return tier_name, lo_p + frac * (hi_p - lo_p)
+
+    return tier_name, anchors[-1][1]
 
 
 def compute_position_size(

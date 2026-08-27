@@ -70,8 +70,8 @@
   },
   "ollama": {
     "screen_model": "phi4-mini",
-    "reason_model": "qwen3.6:35b-a3b",
-    "_comment": "screen_model: phi4-mini ~2.3GB, better instruction following than llama3.2 for Tier 1 batch classification. reason_model: qwen3.6:35b-a3b ~23GB MoE (~3B active per token), upgraded from qwen3:30b-a3b \u2014 next-gen Qwen3.6 family, stronger routing/filtering. qwen3:30b-a3b kept installed as fallback pending validation. Load/unload architecture means screener and router never share RAM simultaneously. thinking mode disabled in kairos_ollama.py ask()."
+    "reason_model": "qwen3.8:27b-mlx",
+    "_comment": "screen_model: phi4-mini ~2.3GB, better instruction following than llama3.2 for Tier 1 batch classification. reason_model: qwen3.8:27b-mlx ~18GB dense (all params active per token), swapped from qwen3.6:35b-a3b (2026-08-19) after live swap thrashing was observed (23GB resident, 30.9GB/32GB used, 20.65GB swap) once the headline pipeline started actually feeding it real data. qwen3.8:27b-mlx's footprint is comparable to the older qwen3:30b-a3b, which never caused this problem \u2014 but it's dense, not MoE, so per-token generation may be slower despite the smaller memory footprint. Watch both memory pressure AND cycle duration on the next live cycle. Fallback: qwen3:30b-a3b (proven safe for weeks). Load/unload architecture means screener and router never share RAM simultaneously. thinking mode disabled in kairos_ollama.py ask()."
   },
   "claude": {
     "cli_path": "/opt/homebrew/bin/claude",
@@ -139,7 +139,17 @@
         "nlv_pct": 0.015
       },
       {
+        "min_score": 3,
+        "name": "Medium",
+        "nlv_pct": 0.015
+      },
+      {
         "min_score": 4,
+        "name": "High",
+        "nlv_pct": 0.02
+      },
+      {
+        "min_score": 5,
         "name": "High",
         "nlv_pct": 0.02
       },
@@ -512,6 +522,30 @@
       "cik": "2094496",
       "accession": "0001628280-26-051182",
       "ipo_score": 55
+    },
+    {
+      "name": "Rubber Leaf Inc",
+      "expected_ticker": "PENDING",
+      "alt_tickers": [],
+      "sector": "Unknown",
+      "status": "watch",
+      "notes": "Auto-discovered S-1 (score 65/100, WATCH). Score 65/100: $1.2B rev; +20351% growth; led by UBS",
+      "discovered_at": "2026-08-19T13:34:39Z",
+      "cik": "1893657",
+      "accession": "0001493152-26-038751",
+      "ipo_score": 65
+    },
+    {
+      "name": "Alliance Laundry Holdings Inc.",
+      "expected_ticker": "PENDING",
+      "alt_tickers": [],
+      "sector": "Technology",
+      "status": "watch",
+      "notes": "Auto-discovered S-1 (score 55/100, WATCH). Score 55/100: $1.7B rev; led by J.P. Morgan, BofA; high-signal sector",
+      "discovered_at": "2026-08-19T13:34:41Z",
+      "cik": "1317685",
+      "accession": "0001104659-26-097534",
+      "ipo_score": 55
     }
   ],
   "ai_value_chain": [
@@ -754,10 +788,9 @@
       "upstream_dependency": "NVDA,AMD,AAPL,MSFT"
     }
   ],
-  "paused_signals": {
-    "HOT-OPTIONS": "hard",
-    "HOT-CONGRESS": "hard"
-  },
+  "paused_signals": [
+    "HOT-CONGRESS"
+  ],
   "axis_weights": {
     "learning_rate": 0.3,
     "per_run_cap": 0.15,
