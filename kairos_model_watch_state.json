@@ -1,0 +1,9 @@
+{
+  "flagged_models": [
+    "Qwen3.8-2.4T-A95B",
+    "Qwen3.8-27B",
+    "DeepSeek-V4-Pro-0813",
+    "NVIDIA-Nemotron-3.5-Lightning-30B-A3B (NVFP4 / NVFP4-DSpark / NVFP4-DFlash / BF16)"
+  ],
+  "last_run": "2026-08-19T15:59:47.243220+00:00"
+}

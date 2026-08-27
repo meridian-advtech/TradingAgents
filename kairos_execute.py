@@ -628,6 +628,19 @@ def log_execution(decision: dict, trade: dict, execution: dict,
                         pass
                 ml_sector = trade.get("sector") or _lookup_sector(ticker)
 
+                # Own-data capture at entry (added 2026-08-19): conviction is
+                # Kairos's own confidence in THIS trade; the ml_* fields are
+                # the model's prediction, stored so it can be scored against
+                # the realized outcome later; regime enables per-regime
+                # performance analysis. All were previously discarded.
+                ml_conviction = trade.get("conviction")
+                try:
+                    ml_conviction = int(ml_conviction) if ml_conviction not in (None, "") else None
+                except (TypeError, ValueError):
+                    ml_conviction = None
+                ml_pred_conf, ml_pred_signal, ml_pred_trained_on = _ml_prediction_for(ticker)
+                ml_regime = _current_market_regime()
+
                 # ML Outcomes: record trade open. A trade that executes but fails
                 # to log is a corpus-integrity event — alert, never swallow.
                 ml_trade_id = None
@@ -642,6 +655,11 @@ def log_execution(decision: dict, trade: dict, execution: dict,
                         timestamp_entry=timestamp,
                         signals_fired=ml_signals if ml_signals else None,
                         confluence_score=ml_confluence,
+                        conviction=ml_conviction,
+                        ml_confidence_at_entry=ml_pred_conf,
+                        ml_signal_at_entry=ml_pred_signal,
+                        ml_trained_on_at_entry=ml_pred_trained_on,
+                        market_regime=ml_regime,
                         sector=ml_sector,
                         entry_price_provisional=price_provisional,
                         signal_attribution_source=ml_attr_source,
@@ -649,7 +667,11 @@ def log_execution(decision: dict, trade: dict, execution: dict,
                     print(f"    ML Outcomes: trade open {ml_trade_id[:8]}... "
                           f"(signals={ml_signals or 'none'}, "
                           f"source={ml_attr_source}, "
-                          f"confluence={ml_confluence})")
+                          f"confluence={ml_confluence}, "
+                          f"conviction={ml_conviction}, "
+                          f"ml_pred={ml_pred_signal or 'n/a'}"
+                          f"{f'/{ml_pred_conf}' if ml_pred_conf is not None else ''}, "
+                          f"regime={ml_regime or 'n/a'})")
                 except Exception as ml_exc:
                     _alert_ml_log_failure(
                         ticker, qty, f"write_trade_open failed: {ml_exc}")
@@ -789,6 +811,54 @@ _KNOWN_RATIONALE_TAGS = (
     "HOT-EARNINGS", "HOT-RSI", "HOT-INSIDER", "HOT-CONGRESS",
     "HOT-REVERSION", "HOT-KALSHI", "HOT-OPTIONS", "HOT-CATALYST", "HOT-IPO",
 )
+
+
+def _current_market_regime() -> str | None:
+    """Regime label for stamping onto a trade at entry.
+
+    Reads kairos.db regime_log (written fresh by Phase 0R every cycle) rather
+    than .kairos_regime_state.json, which was last written 2026-04-23 and is
+    NOT a reliable current-regime source. Returns None rather than guessing —
+    an unstamped trade is honest; a wrong regime label would poison exactly
+    the per-regime performance analysis this field exists to enable.
+    """
+    try:
+        import sqlite3
+        conn = sqlite3.connect(os.path.join(SCRIPT_DIR, "kairos.db"))
+        row = conn.execute(
+            "SELECT regime FROM regime_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        conn.close()
+        return row[0] if row and row[0] else None
+    except Exception:
+        return None
+
+
+def _ml_prediction_for(ticker: str) -> tuple[float | None, str | None, int | None]:
+    """This cycle's ML prediction for a ticker, as (confidence, signal, trained_on).
+
+    Captured at ENTRY so the model's prediction can later be scored against the
+    realized outcome. Without this the ML loop is open — predictions are made
+    every cycle and then discarded, so there is no way to answer "do STRONG
+    picks actually win more often than WEAK ones", i.e. no way to validate or
+    calibrate the model against reality. Returns (None, None, None) when the
+    ticker wasn't scored this cycle (e.g. exit-engine or IPO-route entries that
+    never passed through Phase 0.7).
+    """
+    try:
+        path = os.path.join(SCRIPT_DIR, "kairos_ml_result.json")
+        if not os.path.exists(path):
+            return None, None, None
+        with open(path) as f:
+            data = json.load(f)
+        for cand in data.get("candidates", []):
+            if str(cand.get("ticker", "")).upper() == ticker.upper():
+                return (cand.get("ml_confidence"),
+                        cand.get("ml_signal"),
+                        cand.get("ml_trained_on"))
+    except Exception:
+        pass
+    return None, None, None
 
 
 def _derive_entry_signals_with_source(trade: dict, ticker: str) -> tuple[list[str], str]:

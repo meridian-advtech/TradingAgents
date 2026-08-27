@@ -47,30 +47,54 @@ def fmt_usd(val: float) -> str:
 
 # ── data fetchers (each returns a list of formatted lines) ───────────
 
-def fetch_finnhub() -> list[str]:
-    """Finnhub: recent AAPL news headlines."""
+def fetch_finnhub(tickers: list[str] | None = None) -> list[str]:
+    """Finnhub: recent news headlines for the given tickers.
+
+    FIX (2026-08-19): was hardcoded to AAPL only, regardless of what
+    Kairos was actually screening/holding. Now pulls per-ticker news
+    for up to 5 shortlisted tickers (3 headlines each, in shortlist
+    order) via parallel requests. Falls back to AAPL if no tickers
+    are passed, so this stays backward-compatible for any standalone
+    callers (e.g. `python kairos_snapshot.py` with no shortlist).
+    """
     key = os.environ.get("FINNHUB_API_KEY")
     if not key:
         return ["  ⚠ FINNHUB_API_KEY not set — skipped"]
 
+    symbols = list(dict.fromkeys(tickers))[:5] if tickers else ["AAPL"]
     today = NOW.strftime("%Y-%m-%d")
     week_ago = (NOW - timedelta(days=7)).strftime("%Y-%m-%d")
-    resp = requests.get(
-        "https://finnhub.io/api/v1/company-news",
-        params={"symbol": "AAPL", "from": week_ago, "to": today, "token": key},
-        timeout=TIMEOUT,
-    )
-    resp.raise_for_status()
-    articles = resp.json()[:8]
 
-    if not articles:
-        return ["  No recent headlines found."]
+    def _fetch_one(symbol: str) -> tuple[str, list[dict]]:
+        try:
+            resp = requests.get(
+                "https://finnhub.io/api/v1/company-news",
+                params={"symbol": symbol, "from": week_ago, "to": today, "token": key},
+                timeout=TIMEOUT,
+            )
+            resp.raise_for_status()
+            return symbol, resp.json()[:3]
+        except Exception:
+            return symbol, []
+
+    results_by_symbol: dict[str, list[dict]] = {}
+    with ThreadPoolExecutor(max_workers=min(5, len(symbols))) as pool:
+        futures = {pool.submit(_fetch_one, s): s for s in symbols}
+        for fut in as_completed(futures):
+            symbol, articles = fut.result()
+            results_by_symbol[symbol] = articles
 
     lines = []
-    for i, a in enumerate(articles, 1):
-        ts = datetime.fromtimestamp(a["datetime"], tz=timezone.utc).strftime("%m-%d %H:%M")
-        lines.append(f"  {i}. [{ts}] {truncate(a['headline'])}")
-        lines.append(f"     Source: {a.get('source', 'N/A')}")
+    counter = 1
+    for symbol in symbols:  # preserve shortlist order, not completion order
+        for a in results_by_symbol.get(symbol, []):
+            ts = datetime.fromtimestamp(a["datetime"], tz=timezone.utc).strftime("%m-%d %H:%M")
+            lines.append(f"  {counter}. [{symbol}] [{ts}] {truncate(a['headline'])}")
+            lines.append(f"     Source: {a.get('source', 'N/A')}")
+            counter += 1
+
+    if not lines:
+        return ["  No recent headlines found."]
     return lines
 
 
@@ -228,7 +252,7 @@ def fetch_coingecko() -> list[str]:
 
 
 SOURCES = {
-    "Finnhub — AAPL News Headlines": fetch_finnhub,
+    "Finnhub — Shortlist News Headlines": fetch_finnhub,
     "FRED — Federal Funds Rate": fetch_fred,
     "Kalshi — Prediction Markets": fetch_kalshi,
     "Congress.gov — Recent Finance Bills": fetch_congress,
@@ -238,11 +262,18 @@ SOURCES = {
 
 # ── main ─────────────────────────────────────────────────────────────
 
-def run_snapshot(print_report: bool = True, save_file: bool = True) -> tuple[str, dict[str, list[str]]]:
+def run_snapshot(
+    print_report: bool = True,
+    save_file: bool = True,
+    tickers: list[str] | None = None,
+) -> tuple[str, dict[str, list[str]]]:
     """Run all data fetchers and return (report_text, results_dict).
 
     Can be imported by other scripts to get structured snapshot data
     without printing or saving to disk.
+
+    tickers: shortlisted tickers to pull Finnhub news for (falls back
+    to AAPL if omitted — see fetch_finnhub()).
     """
     timestamp = NOW.strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -250,7 +281,12 @@ def run_snapshot(print_report: bool = True, save_file: bool = True) -> tuple[str
     errors: dict[str, str] = {}
 
     with ThreadPoolExecutor(max_workers=5) as pool:
-        futures = {pool.submit(fn): name for name, fn in SOURCES.items()}
+        futures = {}
+        for name, fn in SOURCES.items():
+            if fn is fetch_finnhub:
+                futures[pool.submit(fn, tickers)] = name
+            else:
+                futures[pool.submit(fn)] = name
         for fut in as_completed(futures):
             name = futures[fut]
             try:

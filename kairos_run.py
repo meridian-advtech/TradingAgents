@@ -943,7 +943,7 @@ def run_gather(use_ollama: bool = True, shortlist: list[str] | None = None):
         gather_tax_context, gather_tax_efficiency, gather_ledger, write_prompt,
     )
 
-    market_data = gather_market_data()
+    market_data = gather_market_data(tickers=shortlist)
     portfolio = gather_portfolio(shortlist)
     tax_ctx = gather_tax_context()
     tax_eff = gather_tax_efficiency(portfolio, shortlist=shortlist)
@@ -1197,24 +1197,67 @@ def _ollama_postprocess_snapshot(market_data: str, portfolio: dict):
 
 
 def _extract_headlines(market_data: str) -> list[str]:
-    """Best-effort extraction of news headlines from the snapshot text."""
+    """Best-effort extraction of news headlines from the snapshot text.
+
+    FIX (2026-08-19), two bugs fixed together (verified against a live
+    snapshot before/after — both were required to get any real output):
+
+    1. The old digit-first-char exclusion rejected every real headline,
+       since kairos_snapshot.py's fetch_finnhub() numbers each one
+       ("1. [08-19 10:23] ..."). That numbering is now stripped instead
+       of used as a rejection filter. Also excludes "Source: ..."
+       attribution lines and placeholder/warning lines (missing API
+       key, "no recent headlines") that were previously slipping
+       through unfiltered whenever they happened to be >20 chars.
+
+    2. The section header ("Finnhub — AAPL News Headlines") is
+       immediately followed by its OWN opening "━" divider line, but
+       the old state machine treated any "━" line seen while inside
+       the section as the closing divider — so it exited the section
+       one line after entering it, before ever reaching a headline.
+       Now the divider immediately after the header is recognized as
+       the opener and skipped without exiting the section.
+    """
     headlines = []
     in_news_section = False
+    just_entered_header = False
 
     for line in market_data.splitlines():
         stripped = line.strip()
 
-        if "finnhub" in stripped.lower() or "news" in stripped.lower():
+        if not in_news_section and (
+            "finnhub" in stripped.lower() or "news" in stripped.lower()
+        ):
             in_news_section = True
+            just_entered_header = True
             continue
 
         if in_news_section and stripped.startswith("━") and len(stripped) > 10:
+            if just_entered_header:
+                # Opening divider right after the header — stay in section.
+                just_entered_header = False
+                continue
             in_news_section = False
             continue
 
-        if in_news_section and stripped and len(stripped) > 20:
-            if not stripped[0].isdigit() and "http" not in stripped:
-                headlines.append(stripped.lstrip("•-→ "))
+        if not in_news_section or not stripped:
+            continue
+
+        just_entered_header = False
+
+        # Skip source-attribution lines and placeholder/warning text.
+        if stripped.lower().startswith("source:"):
+            continue
+        if stripped.startswith("⚠") or "not set" in stripped.lower():
+            continue
+        if stripped.lower().startswith("no recent headlines"):
+            continue
+
+        # Real headlines are numbered: "1. [08-19 10:23] Apple announces..."
+        # Strip the leading "N. " so downstream consumers get clean text.
+        m = re.match(r"^\d+\.\s*(.+)$", stripped)
+        if m and len(m.group(1)) > 15 and "http" not in m.group(1):
+            headlines.append(m.group(1))
 
     return headlines[:20]
 

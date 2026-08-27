@@ -39,7 +39,22 @@ SCHEDULER_LOG="${KAIROS_DIR}/kairos_scheduler.log"
 # ── Logging ──────────────────────────────────────────────────────────────────
 
 log() {
-    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*" | tee -a "$SCHEDULER_LOG"
+    # FIX (2026-08-19): the old `echo | tee -a` wrote every line twice under
+    # launchd — once via tee's direct file append, once via launchd's own
+    # StandardOutPath capture of this function's stdout (which points at the
+    # same file). That silently doubled kairos_scheduler.log and skewed
+    # anything computing gaps between log lines (e.g. the dashboard's cycle-
+    # timing estimate — every other computed gap was 0.0 minutes from the
+    # duplicate). Fix: append to the file directly (single write), and only
+    # ALSO echo to stdout when stdout is a real terminal (`-t 1`) — i.e. a
+    # manual/interactive run (`bash kairos_scheduler.sh`, see file header).
+    # Under launchd, stdout isn't a tty, so nothing gets echoed there and
+    # launchd's own capture has nothing left to duplicate.
+    local msg="[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*"
+    echo "$msg" >> "$SCHEDULER_LOG"
+    if [ -t 1 ]; then
+        echo "$msg"
+    fi
 }
 
 # Rotate log if it exceeds 5MB

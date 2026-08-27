@@ -473,7 +473,21 @@ def _load_previous_regime() -> str | None:
 
 
 def _save_regime_state(regime: str, reason: str, data: dict) -> None:
-    """Persist regime to kairos.db regime_log table."""
+    """Persist regime to kairos.db regime_log AND .kairos_regime_state.json.
+
+    FIX (2026-08-19): this function only ever wrote regime_log. REGIME_STATE_FILE
+    was declared at module top for the JSON half but nothing wrote it, so the
+    file sat frozen at its 2026-04-23 contents while regime_log stayed current.
+    Five modules read that stale JSON for live guardrails — kairos_execute
+    (_load_regime_guardrails), kairos_exits, kairos_stoploss, kairos_confluence
+    (mode-C gating), and kairos_dashboard. All default to "NORMAL" when the read
+    fails, which is why this stayed invisible: regime has been NORMAL throughout.
+    Had it shifted to CAUTION/RISK-OFF/EXTREME-FEAR, none of those consumers
+    would have tightened — equity_buys_allowed, max_position_mult and
+    mode_c_min_conviction would all have stayed at NORMAL values while the
+    actual regime said otherwise. Written atomically (tmp + os.replace) so a
+    concurrent reader never sees a half-written file.
+    """
     try:
         import sqlite3
         db_path = os.path.join(os.path.dirname(__file__), "kairos.db")
@@ -503,6 +517,24 @@ def _save_regime_state(regime: str, reason: str, data: dict) -> None:
         conn.close()
     except Exception as e:
         print(f"WARNING: Could not save regime state: {e}")
+
+    # JSON state file — the half that was missing. Separate try block so a DB
+    # failure never suppresses the file write (and vice versa).
+    try:
+        import json as _json
+        from datetime import datetime as _dt, timezone as _tz
+        payload = {
+            "regime": regime,
+            "reason": reason,
+            "timestamp": _dt.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "data": data,
+        }
+        tmp = REGIME_STATE_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            _json.dump(payload, f, indent=2)
+        os.replace(tmp, REGIME_STATE_FILE)
+    except Exception as e:
+        print(f"WARNING: Could not write {REGIME_STATE_FILE}: {e}")
 
 
 def _log_regime_to_db(regime: str, reason: str, data: dict) -> None:
