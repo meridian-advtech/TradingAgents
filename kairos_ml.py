@@ -44,8 +44,56 @@ MIN_TRAINING_ROWS = 20
 
 # Feature names
 CATEGORICAL_FEATURES = ["news", "macro", "legis_sentiment", "sector", "day_of_week", "hour_of_day"]
-NUMERICAL_FEATURES = ["hold_days"]
+# Signal types confirmed present in the actual outcomes DB (2026-08-19) — kept
+# data-driven rather than assumed from the broader signal catalog, since not
+# every HOT-* type generates a closed trade yet (e.g. HOT-IPO isn't present).
+OWN_SIGNAL_TYPES = [
+    "HOT-CATALYST", "HOT-CHAIN", "HOT-CONGRESS", "HOT-EARNINGS",
+    "HOT-INSIDER", "HOT-OPTIONS", "HOT-REVERSION",
+]
+# NUMERICAL_FEATURES: per-signal-type multi-hot presence + confluence_score.
+# This is the "learn from our own data" layer — was our own confirmed signal
+# combination (not a news-sentiment proxy) actually present on this trade.
+# hold_days used to live here; removed 2026-08-19, see note below.
+#
+# hold_days was a train/serve-skew bug: strongest real predictor of outcome
+# in closed-trade history (winners run via trailing stop, losers get cut
+# fast), yet score_candidate() -> _build_candidate_features() always sets
+# hold_days=0.0 for a NEW candidate, since you don't know how long you'll
+# hold a position before you've entered it. The model was learning >50% of
+# its signal from a feature that's a fixed, meaningless zero at the one
+# moment it's actually used. Removed after a retrain (47->215 trades)
+# surfaced this — CV accuracy dropped 0.68->0.51 with more data, which is
+# what exposed it.
+# NOT ML FEATURES — deliberately excluded, do not add (2026-08-19):
+#   conviction             — produced by Claude in Phase 2, AFTER this model
+#                            scores in Phase 0.7. Unavailable at scoring time,
+#                            so using it would repeat the hold_days train/serve
+#                            skew bug exactly. It is an ANALYSIS field (measure
+#                            conviction-vs-outcome calibration), not a feature.
+#   ml_*_at_entry          — these are this model's OWN past predictions,
+#                            stored to score it against reality. Feeding them
+#                            back in would be circular.
+# LEGITIMATE future feature: market_regime — computed in Phase 0R, which runs
+# BEFORE Phase 0.7, so it IS available at scoring time. Not yet usable: the
+# column was only wired up 2026-08-19 and is 0% filled historically. Add it to
+# CATEGORICAL_FEATURES once enough trades carry a regime stamp.
+NUMERICAL_FEATURES = [f"sig_{t.replace('-', '_')}" for t in OWN_SIGNAL_TYPES] + ["confluence_score"]
 ALL_FEATURES = CATEGORICAL_FEATURES + NUMERICAL_FEATURES
+
+
+def _extract_own_signal_features(signal_tags: list[str] | None) -> dict:
+    """Multi-hot presence of each OWN_SIGNAL_TYPES tag on this trade.
+
+    A trade can have multiple signals fire together (e.g. both HOT-INSIDER
+    and HOT-CONGRESS) — this is deliberately multi-hot (0/1 per type), not
+    a single categorical pick, since presence of each signal is independent.
+    """
+    tags_upper = {t.strip().upper() for t in (signal_tags or [])}
+    return {
+        f"sig_{t.replace('-', '_')}": 1.0 if t in tags_upper else 0.0
+        for t in OWN_SIGNAL_TYPES
+    }
 
 # Global model cache
 _model_cache: dict = {"model": None, "encoder": None, "feature_names": None, "trade_count": 0}
@@ -153,33 +201,45 @@ def _get_hour_of_day(ts: str) -> str:
         return "Unknown"
 
 
-def _compute_hold_days(hold_duration_mins: int | None) -> float:
-    """Convert hold duration minutes to days."""
-    if hold_duration_mins is None or hold_duration_mins <= 0:
-        return 0.0
-    return round(hold_duration_mins / (24 * 60), 2)
-
-
 def _prepare_training_data():
     """Query DB for closed trades and prepare features + labels.
     
-    Returns (X, y, row_count) or (None, None, 0) if insufficient data.
+    Returns (X, y, row_count, clean_only) or (None, None, 0, False) if
+    insufficient data.
+
+    Self-adjusting data-quality gate (2026-08-19): if enough trades have
+    clean, single-tier signal attribution (signal_attribution_source =
+    'confluence' — see _derive_entry_signals_with_source in kairos_execute.py)
+    to meet MIN_TRAINING_ROWS on their own, train on ONLY those and drop the
+    legacy_mixed majority entirely. Every trade closed since ~2026-08-03 gets
+    clean attribution automatically going forward, so this switches itself on
+    the moment there's enough clean volume — no manual intervention needed,
+    same self-adjusting pattern as the dashboard's median-cadence calc.
+    Falls back to all labeled rows (old behavior) until that threshold hits.
     """
     conn = _load_db_connection()
-    
+
+    clean_count = conn.execute(
+        "SELECT COUNT(*) FROM trade_outcomes "
+        "WHERE outcome_label IS NOT NULL AND signal_attribution_source = 'confluence'"
+    ).fetchone()[0]
+    clean_only = clean_count >= MIN_TRAINING_ROWS
+
     query = """
-        SELECT ticker, signals_fired, sector, hold_duration_mins, 
+        SELECT ticker, signals_fired, confluence_score, sector, hold_duration_mins, 
                timestamp_entry, outcome_label, pnl_pct
         FROM trade_outcomes 
-        WHERE outcome_label IS NOT NULL 
-        ORDER BY timestamp_entry
+        WHERE outcome_label IS NOT NULL
     """
-    
+    if clean_only:
+        query += " AND signal_attribution_source = 'confluence'"
+    query += " ORDER BY timestamp_entry"
+
     rows = conn.execute(query).fetchall()
     conn.close()
     
     if len(rows) < MIN_TRAINING_ROWS:
-        return None, None, len(rows)
+        return None, None, len(rows), clean_only
     
     X = []
     y = []  # 1=WIN, 0=LOSS (binary classification)
@@ -190,13 +250,20 @@ def _prepare_training_data():
         # Extract signal features
         signal_features = _extract_signal_tags_to_features(row["signals_fired"])
         features.update(signal_features)
+
+        # Own-data layer: raw signal-type multi-hot + confluence score.
+        try:
+            raw_tags = json.loads(row["signals_fired"]) if row["signals_fired"] else []
+            if isinstance(raw_tags, str):
+                raw_tags = [raw_tags]
+        except (json.JSONDecodeError, TypeError):
+            raw_tags = []
+        features.update(_extract_own_signal_features(raw_tags))
+        features["confluence_score"] = float(row["confluence_score"] or 0)
         
         # Sector
         features["sector"] = row["sector"] or "Unknown"
-        
-        # Hold days
-        features["hold_days"] = _compute_hold_days(row["hold_duration_mins"])
-        
+
         # Time features
         features["day_of_week"] = _get_day_of_week(row["timestamp_entry"])
         features["hour_of_day"] = _get_hour_of_day(row["timestamp_entry"])
@@ -207,7 +274,7 @@ def _prepare_training_data():
         label = 1 if row["outcome_label"] == "WIN" else 0
         y.append(label)
     
-    return X, y, len(rows)
+    return X, y, len(rows), clean_only
 
 
 def _encode_features(X: list[dict], encoder: OneHotEncoder | None = None, 
@@ -333,7 +400,7 @@ def train_model(force_retrain: bool = False) -> dict:
             logger.info(f"Failed to load model from disk: {e}")
     
     # Prepare data
-    X, y, trade_count = _prepare_training_data()
+    X, y, trade_count, clean_only = _prepare_training_data()
     
     if trade_count < MIN_TRAINING_ROWS:
         logger.info(f"Insufficient data for training: {trade_count} closed trades (need {MIN_TRAINING_ROWS}+)")
@@ -343,7 +410,8 @@ def train_model(force_retrain: bool = False) -> dict:
             "feature_names": None,
             "trade_count": trade_count,
             "accuracy": None,
-            "feature_importances": None
+            "feature_importances": None,
+            "clean_only": clean_only
         }
         return _model_cache
     
@@ -377,7 +445,8 @@ def train_model(force_retrain: bool = False) -> dict:
         "feature_names": feature_names,
         "trade_count": trade_count,
         "accuracy": accuracy,
-        "feature_importances": feature_importances
+        "feature_importances": feature_importances,
+        "clean_only": clean_only
     }
     
     # Save to disk
@@ -389,14 +458,16 @@ def train_model(force_retrain: bool = False) -> dict:
         logger.info(f"Failed to save model: {e}")
     
     # Log training details
-    _log_training_session(trade_count, accuracy, feature_importances)
+    _log_training_session(trade_count, accuracy, feature_importances, clean_only)
     
-    logger.info(f"Trained on {trade_count} closed trades | CV Accuracy: {accuracy:.3f}")
+    quality_note = "CLEAN attribution only" if clean_only else "all attribution sources (legacy_mixed included)"
+    logger.info(f"Trained on {trade_count} closed trades ({quality_note}) | CV Accuracy: {accuracy:.3f}")
     
     return _model_cache
 
 
-def _log_training_session(trade_count: int, accuracy: float, feature_importances: dict) -> None:
+def _log_training_session(trade_count: int, accuracy: float, feature_importances: dict,
+                           clean_only: bool = False) -> None:
     """Log training session details to kairos_decisions.log."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     
@@ -410,6 +481,7 @@ def _log_training_session(trade_count: int, accuracy: float, feature_importances
         "type": "ML_TRAINING",
         "timestamp": ts,
         "trade_count": trade_count,
+        "clean_attribution_only": clean_only,
         "model_type": "RandomForestClassifier",
         "cv_accuracy": round(accuracy, 4),
         "n_estimators": 100,
@@ -504,10 +576,10 @@ def _build_candidate_features(ticker: str, signals: dict | None) -> dict:
         "macro": "stable",
         "legis_sentiment": "neutral",
         "sector": "Unknown",
-        "hold_days": 0.0,
         "day_of_week": "Unknown",
         "hour_of_day": "Unknown"
     }
+    features.update(_extract_own_signal_features(None))  # sane all-zero default
     
     # Try to get sector from universe file
     try:
@@ -523,17 +595,26 @@ def _build_candidate_features(ticker: str, signals: dict | None) -> dict:
     except Exception:
         pass
     
-    # Use provided signals if available
+    # Use provided signals if available. Also resolve raw_tags (the actual
+    # HOT-* tag list) wherever it's found, for the own-data multi-hot +
+    # confluence layer — this is separate from the news/macro/legis
+    # enrichment mapping below, which only handles specific dict keys.
+    raw_tags: list[str] = []
     if signals:
         if isinstance(signals, dict):
             # Direct mapping
             for key in ["news", "macro", "legis_sentiment", "sector"]:
                 if key in signals:
                     features[key] = signals[key]
+            for key in ["tags", "signal_tags", "signals_fired"]:
+                if key in signals and isinstance(signals[key], list):
+                    raw_tags = signals[key]
+                    break
         elif isinstance(signals, list):
             # Convert list of tags to feature dict
             signal_features = _extract_signal_tags_to_features(signals)
             features.update(signal_features)
+            raw_tags = signals
     else:
         # Try to load from screen result
         try:
@@ -544,6 +625,15 @@ def _build_candidate_features(ticker: str, signals: dict | None) -> dict:
                 if ticker in signal_tags:
                     signal_features = _extract_signal_tags_to_features(signal_tags[ticker])
                     features.update(signal_features)
+                    raw_tags = signal_tags[ticker]
+        except Exception:
+            pass
+
+    if raw_tags:
+        features.update(_extract_own_signal_features(raw_tags))
+        try:
+            from kairos_confluence import compute_confluence
+            features["confluence_score"] = float(compute_confluence(raw_tags)["score"])
         except Exception:
             pass
     

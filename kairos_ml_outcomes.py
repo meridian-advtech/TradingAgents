@@ -51,6 +51,19 @@ CREATE TABLE IF NOT EXISTS trade_outcomes (
     hold_duration_mins      INTEGER,
     signals_fired           TEXT,
     confluence_score        INTEGER,
+    conviction              INTEGER,
+    ml_confidence_at_entry  REAL,
+    ml_signal_at_entry      TEXT,
+    ml_trained_on_at_entry  INTEGER,
+    -- VESTIGIAL (verified 0/315 filled, 2026-08-19). These seven date from the
+    -- original multi-model council design (two voting members + an arbiter tie
+    -- breaker) that was never built that way. The shipped architecture makes a
+    -- single Claude decision call, so nothing ever populates them. Retained
+    -- rather than dropped: DROP COLUMN would rewrite a live trading table for
+    -- no functional gain, and the write path already passes them as None.
+    -- Do NOT wire these to synthetic values to "fill them in" — an empty column
+    -- is honest, a fabricated one corrupts the corpus. Revisit only if a true
+    -- multi-member council is ever implemented.
     council_member_1_rec    TEXT,
     council_member_1_confidence REAL,
     council_member_2_rec    TEXT,
@@ -261,6 +274,10 @@ def write_trade_open(
     timestamp_entry: Optional[str] = None,
     signals_fired: Optional[list[str]] = None,
     confluence_score: Optional[int] = None,
+    conviction: Optional[int] = None,
+    ml_confidence_at_entry: Optional[float] = None,
+    ml_signal_at_entry: Optional[str] = None,
+    ml_trained_on_at_entry: Optional[int] = None,
     council_member_1_rec: Optional[str] = None,
     council_member_1_confidence: Optional[float] = None,
     council_member_2_rec: Optional[str] = None,
@@ -292,15 +309,19 @@ def write_trade_open(
         """INSERT INTO trade_outcomes
            (trade_id, timestamp_entry, ticker, action, quantity, price_entry,
             signals_fired, confluence_score,
+            conviction, ml_confidence_at_entry, ml_signal_at_entry,
+            ml_trained_on_at_entry,
             council_member_1_rec, council_member_1_confidence,
             council_member_2_rec, council_member_2_confidence,
             council_agreement, arbiter_invoked, arbiter_rec,
             market_regime, sector, entry_price_provisional,
             signal_attribution_source)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             trade_id, timestamp_entry, ticker, action, quantity, price_entry,
             signals_json, confluence_score,
+            conviction, ml_confidence_at_entry, ml_signal_at_entry,
+            ml_trained_on_at_entry,
             council_member_1_rec, council_member_1_confidence,
             council_member_2_rec, council_member_2_confidence,
             council_agreement, arbiter_invoked, arbiter_rec,
@@ -430,6 +451,40 @@ def build_exit_params_snapshot(reconstructed: bool = False,
 
 # ── Write: trade close ───────────────────────────────────────────────
 
+def _canonical_ts(ts: Optional[str]) -> Optional[str]:
+    """Coerce any Kairos timestamp spelling to the canonical '…THH:MM:SSZ'.
+
+    FIX (2026-08-20): timestamp_exit accumulated THREE spellings across the
+    corpus — 173 '…T…Z' (write_trade_close's own default), 39 'space, no
+    suffix', and 29 '…T…' with no Z — because record_exit_outcome takes
+    timestamp_exit as a caller-supplied argument and callers formatted it
+    however they liked. Mixed spellings are not cosmetic: several consumers
+    compare these values as SQL strings, and lexicographic order is not
+    chronological order across formats ('T' is ASCII 84, ' ' is 32), so a
+    T-format exit sorts ABOVE a space-format cutoff from later the same day.
+    That silently mis-windows evidence. Normalising at the write boundary
+    stops new rows adding to the problem; the 68 legacy rows are untouched
+    (a bulk rewrite of live trade history is a separate, explicit decision).
+
+    Unparseable input is returned unchanged rather than dropped — losing an
+    exit timestamp is worse than storing an odd one, and the downstream
+    _parse_utc is tolerant.
+    """
+    if not ts:
+        return ts
+    raw = (str(ts).strip()
+           .replace(" UTC", "")
+           .replace("Z", "")
+           .replace("T", " ")
+           .strip())
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            continue
+    return ts
+
+
 def write_trade_close(
     trade_id: str,
     price_exit: float,
@@ -441,6 +496,8 @@ def write_trade_close(
     """
     if timestamp_exit is None:
         timestamp_exit = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    else:
+        timestamp_exit = _canonical_ts(timestamp_exit)
 
     conn = get_connection()
     row = conn.execute(
@@ -702,6 +759,9 @@ def record_exit_outcome(
     Returns the trade_id updated, or None if no open row matched. Callers MUST
     wrap this so a DB failure never blocks or raises into the trade path.
     """
+    # Callers supply this string in whatever spelling they happen to use; this
+    # is the write path that produced the corpus's three timestamp formats.
+    timestamp_exit = _canonical_ts(timestamp_exit)
     conn = get_connection()
     try:
         row = conn.execute(
@@ -771,12 +831,28 @@ def get_thesis_target(ticker: str) -> Optional[float]:
 # reader is deliberately conservative: anything it cannot read cleanly returns
 # None and the position falls through to the other exit conditions untouched.
 
-# "below $165" / "above $12.50"
+# Direction form: "closes below $228.00", "trades under $120",
+# "breaks below pre-earnings support levels (~$950)", "closes below 228.00".
+# The 40-char gap absorbs the words filers put between the direction and the
+# number; the spec's literal `(below|above)\s*\$` matches NONE of the 239
+# theses actually logged, because every real phrasing has words in between.
+#
+# The `$` is optional, which is the risky half of this pattern: without a
+# guard, "breaks below 50-day MA" parses 50 as a price. Two lookaheads close
+# that. `(?![\d.])` forces the number to END where it matches — otherwise the
+# engine happily takes "5" of "50" and finds nothing objectionable after it —
+# and the second rejects period/ratio/percent units that are never prices.
 _INVAL_DIR_RE = re.compile(
-    r"\b(below|above)\b[^$\d\n]{0,20}\$\s*([\d,]+(?:\.\d+)?)", re.IGNORECASE)
-# "$165 support" / "$12.50 resistance"
+    r"\b(below|under)\b[^$\d\n]{0,40}?"
+    r"(?:\$\s*)?"
+    r"([\d,]+(?:\.\d+)?)"
+    r"(?![\d.])"
+    r"(?!\s*(?:-?\s*(?:day|week|month|yr|year)|d\b|%|bps|x\b|MA\b|SMA|EMA|DMA))",
+    re.IGNORECASE)
+# "$165 support" / "$75 technical support" / "$12.50 resistance"
 _INVAL_LEVEL_RE = re.compile(
-    r"\$\s*([\d,]+(?:\.\d+)?)\s*(support|resistance)\b", re.IGNORECASE)
+    r"\$\s*([\d,]+(?:\.\d+)?)\s*(technical support|support|resistance)\b",
+    re.IGNORECASE)
 
 # Economic sanity band for a parsed level, as implied move from entry price.
 # Rejects misparses in both directions: a level at or above entry (-0.5% floor)
@@ -804,7 +880,8 @@ def _parse_invalidation_levels(text: str) -> list:
         return levels
 
     for direction, raw in _INVAL_DIR_RE.findall(text):
-        if direction.lower() != "below":
+        # Only downside breaks invalidate a long thesis.
+        if direction.lower() not in ("below", "under"):
             continue
         try:
             levels.append(float(raw.replace(",", "")))
@@ -812,7 +889,7 @@ def _parse_invalidation_levels(text: str) -> list:
             continue
 
     for raw, kind in _INVAL_LEVEL_RE.findall(text):
-        if kind.lower() != "support":
+        if "resistance" in kind.lower():
             continue
         try:
             levels.append(float(raw.replace(",", "")))
@@ -842,6 +919,7 @@ def get_invalidation_level(ticker: str, entry_price: float) -> Optional[float]:
     try:
         if entry_price and entry_price > 0:
             conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+            conn.execute("PRAGMA busy_timeout = 2000")
             try:
                 row = conn.execute(
                     """SELECT invalidation_conditions FROM thesis_predictions
