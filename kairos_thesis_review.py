@@ -284,6 +284,42 @@ def _recent_contradiction_streak(ticker: str) -> int:
         return 0
 
 
+def _get_thesis_conditions(ticker: str) -> tuple[str, str]:
+    """(key_conditions, invalidation_conditions) recorded for this position.
+
+    Captured at entry on 99% of trades since June and never read back. The
+    review below asks Claude whether the thesis is invalidated but only hands
+    it the free-text entry rationale — so it re-derives from scratch what the
+    reasoner already wrote down explicitly. These are the stated preconditions
+    ("fuel margins remain healthy", "no guidance cut behind the gap") and the
+    stated kill criteria. Checking against them makes invalidation a specific,
+    falsifiable question rather than a vibe.
+
+    Most recent thesis for the ticker; ("", "") if unavailable.
+    """
+    import sqlite3 as _sq
+    path = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
+    if not os.path.exists(path):
+        return "", ""
+    try:
+        conn = _sq.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
+        try:
+            conn.execute("PRAGMA busy_timeout = 2000")
+            row = conn.execute(
+                "SELECT key_conditions, invalidation_conditions "
+                "FROM thesis_predictions WHERE UPPER(ticker) = ? "
+                "ORDER BY timestamp_entry DESC LIMIT 1",
+                (ticker.strip().upper(),),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return "", ""
+    if not row:
+        return "", ""
+    return (row[0] or "").strip(), (row[1] or "").strip()
+
+
 def _ask_claude_thesis(ticker: str, entry_rationale: str,
                        entry_signals: list[str], current_signals: list[str],
                        current_price: float, entry_price: float,
@@ -297,6 +333,23 @@ def _ask_claude_thesis(ticker: str, entry_rationale: str,
     else:
         pnl_pct = (current_price - entry_price) / entry_price * 100
 
+    key_cond, inval_cond = _get_thesis_conditions(ticker)
+    conditions_block = ""
+    if key_cond:
+        conditions_block += (
+            f"\nPreconditions this thesis depends on (recorded at entry):\n{key_cond}\n")
+    if inval_cond:
+        conditions_block += (
+            f"\nKill criteria recorded at entry:\n{inval_cond}\n")
+    if conditions_block:
+        conditions_block += (
+            "\nJudge against these specifically. A precondition that has BROKEN is "
+            "invalidation. Price moving against the position is NOT, by itself, "
+            "invalidation — across 173 closed trades, positions exited on judged "
+            "thesis-breakage rose a further +16.5% on average over the next 30 "
+            "days, meaning that judgement has been firing near lows. Require a "
+            "named precondition to have actually failed.\n")
+
     prompt = (
         f"You are reviewing an open equity position for thesis invalidation.\n\n"
         f"Ticker: {ticker}\n"
@@ -305,7 +358,8 @@ def _ask_claude_thesis(ticker: str, entry_rationale: str,
         f"Holding period: {holding_days} days\n"
         f"Entry signals: {', '.join(entry_signals) if entry_signals else 'none recorded'}\n"
         f"Current signals: {', '.join(current_signals) if current_signals else 'none active'}\n"
-        f"Original entry thesis: {entry_rationale}\n\n"
+        f"Original entry thesis: {entry_rationale}\n"
+        f"{conditions_block}\n"
         f"Has the original entry thesis been invalidated? "
         f"Respond with EXACTLY one line: YES or NO followed by a one-sentence explanation.\n"
         f"Example: YES — Insider selling pressure has reversed the bullish thesis.\n"
