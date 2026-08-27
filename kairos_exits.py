@@ -368,13 +368,44 @@ def evaluate_position(
     gain_pct = (current_price - avg_cost) / avg_cost * 100.0
     closing_stop, intraday_stop = hard_stop_threshold(signal, regime, cfg)
 
-    # ── Condition 1: Hard stop-loss (always fires) ───────────────────
-    if gain_pct <= intraday_stop:
-        return (f"STOP-LOSS: {gain_pct:.1f}% <= intraday backstop "
-                f"{intraday_stop:.1f}% ({signal}, {regime})")
-    if is_close_eval and gain_pct <= closing_stop:
-        return (f"STOP-LOSS: {gain_pct:.1f}% <= closing stop "
-                f"{closing_stop:.1f}% ({signal}, {regime})")
+    # ── Condition 0: armed positions defer to the trailing stop ──────
+    # The hard stop used to preempt the trailing stop unconditionally, which
+    # silently defeated the profit floor on positions that had already
+    # delivered their thesis. VST (2026-08-24) peaked +8.19% against a 6.0%
+    # target — armed, so the floor guaranteed a worst exit of about +1.19% —
+    # and instead exited at -6.2% because the stop-loss was evaluated first and
+    # returned before the floor was ever consulted. 15 of the 28 stop-loss
+    # exits in the book were armed positions, average peak +11.9%, average exit
+    # -7.6%.
+    #
+    # For an ARMED position the floor is the tighter, more specific constraint
+    # and must win. For an unarmed one the hard stop still fires first, exactly
+    # as before — a stop has to be able to cut a trade that never worked.
+    #
+    # This only reorders evaluation; it does not change either mechanism's
+    # arithmetic, and it cannot make an exit LATER than the old behaviour,
+    # because the armed trail caps give-back well inside the hard stop.
+    armed_defer = False
+    if peak_gain_pct is not None:
+        _ts = cfg.get("trailing_stop", {})
+        _ta = _ts.get("target_armed", {})
+        if _ta.get("enabled", False):
+            try:
+                from kairos_ml_outcomes import get_thesis_target
+                _tgt = get_thesis_target(ticker)
+                if _tgt is not None and peak_gain_pct >= _tgt:
+                    armed_defer = True
+            except Exception:
+                armed_defer = False
+
+    # ── Condition 1: Hard stop-loss (always fires, unless armed) ─────
+    if not armed_defer:
+        if gain_pct <= intraday_stop:
+            return (f"STOP-LOSS: {gain_pct:.1f}% <= intraday backstop "
+                    f"{intraday_stop:.1f}% ({signal}, {regime})")
+        if is_close_eval and gain_pct <= closing_stop:
+            return (f"STOP-LOSS: {gain_pct:.1f}% <= closing stop "
+                    f"{closing_stop:.1f}% ({signal}, {regime})")
 
     # ── Condition 1.5: Price-level thesis invalidation ───────────────
     # After the hard stop (a breached stop always wins and is cheaper to
