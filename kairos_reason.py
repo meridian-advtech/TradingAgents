@@ -163,9 +163,9 @@ def banner(text: str) -> str:
 
 # ── Step 1: Market snapshot ──────────────────────────────────────────
 
-def gather_market_data() -> str:
+def gather_market_data(tickers: list[str] | None = None) -> str:
     print(banner("Step 1 — Gathering Market Snapshot (5 sources)"))
-    report, _ = run_snapshot(print_report=False, save_file=False)
+    report, _ = run_snapshot(print_report=False, save_file=False, tickers=tickers)
     print("  Done.")
     return report
 
@@ -466,6 +466,117 @@ def axis_weights_snapshot(weights: list[dict] | None = None) -> dict:
     return {w["axis"]: round(w["weight"], 6) for w in weights}
 
 
+def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -> str:
+    """SECTION 4b — entry-time evidence from the reconciled ML ledger.
+
+    Everything the council saw about past outcomes before this existed was
+    either (a) exit-reason patterns, which are not knowable at entry, or (b)
+    per-ticker ML confidence scores. Neither told it how the SIGNAL driving a
+    candidate has actually performed, or whether this specific ticker has been
+    traded before and how that went.
+
+    Sourced from kairos_ml_outcomes.db (append-only, P&L frozen at exit) —
+    NOT kairos.db holdings, whose closed lots the reconciler rewrites at
+    broker cost, decaying their realized P&L toward zero. That source made
+    HOT-INSIDER read -$1,306 when it has actually earned +$33,052 (2026-08-27).
+
+    Two blocks:
+      - Per-signal realized performance AND thesis accuracy (how often price
+        ever reached the predicted target). A signal can be accurate and
+        unprofitable, which is worth seeing separately.
+      - Prior trades in the candidate tickers specifically.
+
+    Read-only, best-effort: any failure returns "" and the prompt is unchanged.
+    """
+    import sqlite3 as _sq
+    ml_path = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
+    if not os.path.exists(ml_path):
+        return ""
+    try:
+        conn = _sq.connect(f"file:{ml_path}?mode=ro", uri=True, timeout=2)
+        conn.row_factory = _sq.Row
+        try:
+            conn.execute("PRAGMA busy_timeout = 2000")
+            rows = conn.execute(
+                "SELECT t.ticker, t.pnl_pct, t.pnl_dollar, t.signals_fired, "
+                "       t.mfe_pct, t.timestamp_exit, "
+                "       p.predicted_return_pct AS pred "
+                "FROM trade_outcomes t "
+                "LEFT JOIN thesis_predictions p ON t.trade_id = p.decision_id "
+                "WHERE t.timestamp_exit IS NOT NULL AND t.pnl_pct IS NOT NULL"
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+
+    agg: dict = {}
+    for r in rows:
+        try:
+            sigs = json.loads(r["signals_fired"]) if r["signals_fired"] else []
+        except (json.JSONDecodeError, TypeError):
+            sigs = []
+        for s in ([str(x) for x in sigs if x] or ["(no signal logged)"]):
+            a = agg.setdefault(s, {"n": 0, "w": 0, "pct": 0.0, "usd": 0.0,
+                                   "hit": 0, "hit_n": 0})
+            a["n"] += 1
+            a["w"] += 1 if r["pnl_pct"] > 0 else 0
+            a["pct"] += r["pnl_pct"]
+            a["usd"] += r["pnl_dollar"] or 0.0
+            if r["pred"] is not None and r["mfe_pct"] is not None:
+                a["hit_n"] += 1
+                a["hit"] += 1 if r["mfe_pct"] >= r["pred"] else 0
+
+    lines = [
+        "Realized outcomes by entry signal (closed trades, P&L frozen at exit).",
+        "'Thesis hit' = price reached the predicted target at some point, even",
+        "if the trade later closed lower — high accuracy with low return means",
+        "the signal predicts direction but the move is small or given back.",
+        "",
+        f"  {'signal':<22}{'trades':>7}{'win':>6}{'avg':>9}{'thesis hit':>12}{'realized':>12}",
+    ]
+    for s, a in sorted(agg.items(), key=lambda kv: -kv[1]["usd"]):
+        if a["n"] < 3:
+            continue
+        hit = f"{a['hit']/a['hit_n']*100:.0f}%" if a["hit_n"] else "n/a"
+        lines.append(
+            f"  {s:<22}{a['n']:>7}{a['w']/a['n']*100:>5.0f}%"
+            f"{a['pct']/a['n']:>8.2f}%{hit:>12}{a['usd']:>+12,.0f}"
+        )
+    lines.append("")
+    lines.append("Confluence trades count under every signal that fired, so trade")
+    lines.append("counts sum to more than the book.")
+
+    if candidate_tickers:
+        want = {str(t).strip().upper() for t in candidate_tickers}
+        prior: dict = {}
+        for r in rows:
+            tk = (r["ticker"] or "").strip().upper()
+            if tk in want:
+                p = prior.setdefault(tk, {"n": 0, "w": 0, "usd": 0.0, "last": ""})
+                p["n"] += 1
+                p["w"] += 1 if r["pnl_pct"] > 0 else 0
+                p["usd"] += r["pnl_dollar"] or 0.0
+                ts = str(r["timestamp_exit"])[:10]
+                if ts > p["last"]:
+                    p["last"] = ts
+        if prior:
+            lines.append("")
+            lines.append("PRIOR TRADES IN TODAY'S CANDIDATES:")
+            for tk, p in sorted(prior.items(), key=lambda kv: kv[1]["usd"]):
+                lines.append(
+                    f"  {tk:<6} {p['n']} prior trade(s), {p['w']}W/{p['n']-p['w']}L, "
+                    f"net {p['usd']:+,.0f} (last exit {p['last']})"
+                )
+            lines.append("")
+            lines.append("Prior loss in a name is not itself a reason to avoid it — the")
+            lines.append("setup may differ. It is context, not a veto.")
+
+    return "\n".join(lines)
+
+
 def format_axis_weights_section(weights: list[dict] | None = None) -> str:
     """Render the LEARNED CALIBRATION prompt block, or "" when none qualify.
 
@@ -662,12 +773,26 @@ def _build_pattern_summary(trade_lines: list[str]) -> str:
     ranked = sorted(combo_stats.items(),
                     key=lambda kv: kv[1]["total_pnl"])
 
-    # Show losing combos
-    losers = [(k, v) for k, v in ranked if v["losses"] >= 2]
-    winners = [(k, v) for k, v in ranked if v["wins"] >= 2 and v["losses"] == 0]
+    # Classify by PROFITABILITY, not by loss count.
+    #
+    # This previously read `losses >= 2` for AVOID and `losses == 0` for
+    # REPEAT, which is wrong in both directions at any real sample size: on
+    # 2026-08-27 it labelled TRAILING-STOP (45W/22L, +281% cumulative),
+    # REALLOCATION (40W/15L, +252%) and THESIS-INVALID (22W/16L, +63%) as
+    # "← AVOID" — three of the six flagged patterns were strongly profitable —
+    # while REPEAT was unreachable for anything traded more than a handful of
+    # times. The council was being told to avoid its winners.
+    #
+    # A pattern needs enough trades to mean anything and must actually lose
+    # money to be worth avoiding.
+    MIN_N = 5
+    losers = [(k, v) for k, v in ranked
+              if (v["wins"] + v["losses"]) >= MIN_N and v["total_pnl"] < 0]
+    winners = [(k, v) for k, v in reversed(ranked)
+               if (v["wins"] + v["losses"]) >= MIN_N and v["total_pnl"] > 0]
 
     if losers:
-        lines.append(f"  LOSING PATTERNS ({len(losers)} occurrences):")
+        lines.append(f"  LOSING PATTERNS ({len(losers)}):")
         for tags, stats in losers:
             n = stats["wins"] + stats["losses"]
             lines.append(f"    [{tags}]  {stats['wins']}W / {stats['losses']}L / {n} total  "
@@ -675,7 +800,7 @@ def _build_pattern_summary(trade_lines: list[str]) -> str:
         lines.append("")
 
     if winners:
-        lines.append(f"  WINNING PATTERNS ({len(winners)} occurrences):")
+        lines.append(f"  WINNING PATTERNS ({len(winners)}):")
         for tags, stats in winners:
             n = stats["wins"] + stats["losses"]
             lines.append(f"    [{tags}]  {stats['wins']}W / {stats['losses']}L / {n} total  "
@@ -683,7 +808,16 @@ def _build_pattern_summary(trade_lines: list[str]) -> str:
         lines.append("")
 
     if not losers and not winners:
-        lines.append("  No dominant patterns yet (need 2+ occurrences).")
+        lines.append(f"  No dominant patterns yet (need {MIN_N}+ trades).")
+
+    # The pattern keys above are dominated by EXIT REASON, which is not known
+    # when a buy decision is made — they describe how trades ended, not what to
+    # enter. Say so, so the reasoner weighs them accordingly rather than
+    # treating them as entry criteria.
+    lines.append("")
+    lines.append("  NOTE: pattern keys include exit reason, which is not knowable")
+    lines.append("  at entry. Treat these as post-hoc description, not entry criteria.")
+    lines.append("  For entry-time evidence see SECTION 4b (per-signal performance).")
 
     # Per-signal-type stats
     signal_types = ["REVERSION", "HOT-EARNINGS", "HOT-RSI",
@@ -1118,6 +1252,24 @@ CONFLUENCE SCORING (position sizing is automatic — do NOT set quantities):
     candidates_on_shortlist = [t for t in candidate_tickers if t not in held_symbols]
     held_on_shortlist = [t for t in candidate_tickers if t in held_symbols]
 
+    # SECTION 4b — per-signal realized performance + prior trades in these
+    # names, from the reconciled ML ledger. Needs candidate_tickers, so it is
+    # built here rather than alongside the other sections above. Best-effort:
+    # a failure yields "" and the prompt is unchanged.
+    evidence_section = ""
+    try:
+        _ev = format_signal_evidence_section(candidate_tickers)
+        if _ev:
+            evidence_section = f"""
+{'=' * W}
+SECTION 4b: SIGNAL EVIDENCE (realized outcomes)
+{'=' * W}
+
+{_ev}
+"""
+    except Exception as _ev_err:
+        print(f"  WARNING: signal evidence section failed: {_ev_err}")
+
     cand_lines = []
     for t in candidate_tickers:
         price = ticker_prices.get(t)
@@ -1313,7 +1465,7 @@ SECTION 2b: CANDIDATE TICKERS FOR EVALUATION (evaluate ALL of these)
 
 {candidates_block}
 
-{tax_section}{tax_eff_section}{axis_section}{ledger_section}{screen_section}{ml_section}
+{tax_section}{tax_eff_section}{axis_section}{ledger_section}{evidence_section}{screen_section}{ml_section}
 {'=' * W}
 REASONING FRAMEWORK
 {'=' * W}
@@ -1468,7 +1620,7 @@ def main():
     shortlist = load_shortlist()
     print(f"  Evaluating {len(shortlist)} ticker(s): {', '.join(shortlist)}")
 
-    market_data = gather_market_data()
+    market_data = gather_market_data(tickers=shortlist)
     portfolio = gather_portfolio(shortlist)
     tax_ctx = gather_tax_context()
     tax_eff = gather_tax_efficiency(portfolio, shortlist=shortlist)
