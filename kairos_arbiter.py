@@ -1138,11 +1138,60 @@ def _refresh_proposals_and_post_cards(run_id: str) -> None:
     except Exception as exc:
         print(f"  WARNING: exit-param auto-propose failed: {exc}", file=sys.stderr)
 
+    # ── Autonomy (2026-08-20) ────────────────────────────────────────
+    # Order matters. Rollback is judged FIRST so a change that already proved
+    # harmful is reverted before today's proposals are acted on — otherwise a
+    # bad weight compounds for one more cycle. Auto-apply then acts only on
+    # axes in kairos_autonomy.AUTO_APPLY_AXES; everything else still routes to
+    # the human cards below. Both are wrapped: autonomy must never be able to
+    # break the proposal loop it rides on.
+    auto_applied_ids: set = set()
+    autonomy_lines: list = []
+    try:
+        from kairos_autonomy import check_rollbacks, auto_apply
+        rb = check_rollbacks(dry_run=False)
+        for v in rb.get("verdicts", []):
+            if v.get("verdict") == "rolled_back":
+                autonomy_lines.append(
+                    f":rewind: *reverted* `{v['axis']}` — error worsened "
+                    f"{v.get('baseline_error')}pp → {v.get('post_error')}pp "
+                    f"over {v.get('closes_since')} closes")
+            elif v.get("verdict") == "kept":
+                autonomy_lines.append(
+                    f":white_check_mark: kept `{v['axis']}` — "
+                    f"held up over {v.get('closes_since')} closes")
+
+        aa = auto_apply(dry_run=False)
+        for a in aa.get("applied", []):
+            auto_applied_ids.add(a["id"])
+            autonomy_lines.append(
+                f":robot_face: *auto-applied* `{a['axis']}` "
+                f"{a['prior']:+.4f} → {a['new']:+.4f} (no human gate)")
+        for s in aa.get("skipped", []):
+            if "not approved for autonomy" not in s.get("reason", ""):
+                autonomy_lines.append(
+                    f":hand: held `{s['axis']}` for review — {s['reason']}")
+        print(f"  Autonomy: {len(aa.get('applied', []))} auto-applied, "
+              f"{len(rb.get('verdicts', []))} rollback verdict(s)")
+    except Exception as exc:
+        print(f"  WARNING: autonomy step failed: {exc}", file=sys.stderr)
+
+    if autonomy_lines:
+        try:
+            post_to_slack(ARBITER_CHANNEL,
+                          ":brain: *Autonomy report*\n" + "\n".join(autonomy_lines))
+        except Exception as exc:
+            print(f"  WARNING: autonomy Slack post failed: {exc}", file=sys.stderr)
+
     # Only actionable proposals get a tappable card: gated / zero-Δ rows are still
     # written 'proposed' (auditable) but an Approve card for a no-op is noise.
     # Report the skip count so nothing is silently dropped.
     actionable, skipped = [], 0
     for p in proposals:
+        # An auto-applied proposal is already decided — a card for it would
+        # invite approving something that has already taken effect.
+        if p.get("history_id") in auto_applied_ids:
+            continue
         if p.get("gated") or abs(p.get("proposed_delta") or 0.0) < 1e-9:
             skipped += 1
         else:

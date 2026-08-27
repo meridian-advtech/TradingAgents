@@ -103,6 +103,22 @@ PARAM_GIVEBACK_REF = 15.0
 PARAM_CUMULATIVE_WINDOW_DAYS = 7
 PARAM_CUMULATIVE_BAND_FRAC = 0.40
 
+# Axis-side equivalents of the two post-ratchet guards (added 2026-08-20).
+# The 2026-08-03 unfreeze shipped the cumulative band + freshness gate to the
+# PARAM path only. Axes got neither, and exit_timing is the sole auto-proposing
+# axis — so the one surface that generates proposals unattended was the one
+# running unguarded. Replaying 2026-07-08..11 shows why: exit_timing moved
+# +0.3626 -> +0.5179 across four consecutive days on an UNCHANGED n=37 sample
+# (five writes, same 37 trade_ids), a +43% drift that nothing bounded.
+#
+# The band is ADDITIVE here, not multiplicative like PARAM_CUMULATIVE_BAND_FRAC.
+# Axis weights are additive offsets in [-weight_bound, +weight_bound] and are
+# legitimately 0.0 (exit_timing was exactly 0.0000 on 2026-06-30). A
+# multiplicative band anchored at 0.0 collapses to lo == hi == 0.0 and would
+# freeze the axis permanently.
+AXIS_CUMULATIVE_WINDOW_DAYS = 7
+AXIS_CUMULATIVE_BAND_ABS = 0.20
+
 # Horizon over which forgone gain (the too-EARLY pole) is measured, in calendar
 # days. Must be one of kairos_ml_outcomes.FORGONE_HORIZONS.
 #
@@ -530,6 +546,68 @@ def propose_update(run_id: str | None = None, axis: str = DEFAULT_AXIS) -> dict:
         prior_weight = _get_prior_weight(conn, axis)
         delta = compute_delta(computed_score, prior_weight, sample_size, cfg)
 
+        # ── Ratchet guards (ported to the axis path 2026-08-20) ──────
+        # Both were previously PARAM-only. See AXIS_CUMULATIVE_BAND_ABS.
+        # Every bind is recorded in evidence["guards"] with the value that
+        # WOULD have been written, so the guards are auditable and their cost
+        # measurable — a guard that quietly suppresses good moves has to be
+        # visible before it can be tuned.
+        evidence = dict(result["evidence"])
+        guards: dict = {}
+
+        new_weight = delta["new_weight"]
+        proposed_delta = delta["proposed_delta"]
+        gated = delta["gated"]
+
+        ev_hash = _evidence_hash(
+            evidence.get("trade_ids") or [], prior_weight, new_weight)
+        evidence["evidence_hash"] = ev_hash
+
+        band = _axis_cumulative_band(axis, prior_weight)
+        evidence["cumulative_band"] = band
+
+        # Freshness: an unchanged corpus landing on the same value is not new
+        # information. This is the guard that would have stopped four of the
+        # five 2026-07-08..11 exit_timing writes outright (identical n=37).
+        prev = conn.execute(
+            "SELECT evidence FROM axis_weight_history "
+            "WHERE axis = ? AND status IN ('proposed','approved','superseded') "
+            "ORDER BY id DESC LIMIT 1",
+            (axis,),
+        ).fetchone()
+        if prev is not None and prev["evidence"]:
+            try:
+                prev_hash = (json.loads(prev["evidence"]) or {}).get("evidence_hash")
+            except (json.JSONDecodeError, TypeError):
+                prev_hash = None
+            if prev_hash and prev_hash == ev_hash and abs(proposed_delta) > 1e-9:
+                guards["freshness"] = {
+                    "bound": True,
+                    "reason": "evidence unchanged since last proposal",
+                    "would_have_been": round(new_weight, 6),
+                    "evidence_hash": ev_hash,
+                }
+                new_weight = prior_weight
+                proposed_delta = 0.0
+                gated = True
+
+        # Cumulative band: bounds drift across many individually-legal steps.
+        if (band.get("lo") is not None and abs(proposed_delta) > 1e-9):
+            clamped = min(max(new_weight, band["lo"]), band["hi"])
+            if abs(clamped - new_weight) > 1e-9:
+                guards["cumulative_band"] = {
+                    "bound": True,
+                    "reason": (f"outside 7d band "
+                               f"[{band['lo']:+.4f}, {band['hi']:+.4f}] "
+                               f"anchored at {band['base_7d']:+.4f}"),
+                    "would_have_been": round(new_weight, 6),
+                    "clamped_to": round(clamped, 6),
+                }
+                new_weight = clamped
+                proposed_delta = round(clamped - prior_weight, 6)
+
+        evidence["guards"] = guards
+
         # Supersede any still-pending proposal for this axis.
         conn.execute(
             "UPDATE axis_weight_history SET status = 'superseded' "
@@ -543,8 +621,8 @@ def propose_update(run_id: str | None = None, axis: str = DEFAULT_AXIS) -> dict:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?)",
             (
                 axis, run_id, computed_score, sample_size,
-                json.dumps(result["evidence"]), prior_weight,
-                delta["proposed_delta"], delta["new_weight"], _now(),
+                json.dumps(evidence), prior_weight,
+                proposed_delta, new_weight, _now(),
             ),
         )
         conn.commit()
@@ -559,10 +637,11 @@ def propose_update(run_id: str | None = None, axis: str = DEFAULT_AXIS) -> dict:
         "computed_score": computed_score,
         "sample_size": sample_size,
         "prior_weight": prior_weight,
-        "proposed_delta": delta["proposed_delta"],
-        "new_weight": delta["new_weight"],
-        "gated": delta["gated"],
-        "evidence": result["evidence"],
+        "proposed_delta": proposed_delta,
+        "new_weight": new_weight,
+        "gated": gated,
+        "guards": guards,
+        "evidence": evidence,
     }
 
 
@@ -659,6 +738,16 @@ def _format_slack_propose_all(run_id: str, proposals: list[dict],
         "'proposed' rows only._",
     ]
     for p in proposals:
+        # Plain-English block first: the raw-number line below is retained as a
+        # precise audit trail, but the reviewer needs to know what the change
+        # MEANS before they see the internals. Failure here must never break
+        # the proposal loop, so the whole thing degrades to raw numbers only.
+        try:
+            from kairos_arbiter_explain import explain_axis_proposal
+            lines.extend(explain_axis_proposal(p))
+        except Exception as _exc:
+            lines.append(f"  _(plain-English render unavailable: {_exc})_")
+
         if p["gated"]:
             detail = (f"gated — insufficient data "
                       f"(sample {p['sample_size']} < min_sample); no change")
@@ -670,6 +759,22 @@ def _format_slack_propose_all(run_id: str, proposals: list[dict],
                       f"(Δ {p['proposed_delta']:+.4f}; score {p['computed_score']:+.4f}, "
                       f"n={p['sample_size']})  [id {p['history_id']}]")
         lines.append(f"  • `{p['axis']}`: {detail}")
+
+        # Surface any ratchet guard that bound, with the value it suppressed.
+        # A guard that silently blocks good moves is as costly as one that is
+        # too loose, so the cost is always stated and never inferred.
+        for name, g in (p.get("guards") or {}).items():
+            if not g.get("bound"):
+                continue
+            if name == "freshness":
+                lines.append(
+                    f"      :lock: freshness — {g['reason']}; "
+                    f"would have written {g['would_have_been']:+.4f}")
+            elif name == "cumulative_band":
+                lines.append(
+                    f"      :lock: 7d band — {g['reason']}; "
+                    f"{g['would_have_been']:+.4f} → clamped "
+                    f"{g['clamped_to']:+.4f}")
 
         # Same rule as the param loop: an empty sample must say why it is empty.
         if not p["sample_size"]:
@@ -829,8 +934,21 @@ def _zero_sample_streak(axis: str) -> dict:
             conn = _ml_connect_ro()
             try:
                 out["closes_since"] = conn.execute(
+                    # Normalise BOTH sides before comparing. timestamp_exit is
+                    # stored in three formats across the corpus (173 '…T…Z',
+                    # 39 'space, no suffix', 29 '…T…' no Z) while `since` comes
+                    # from axis_weight_history.created_at as '… UTC'. A raw
+                    # string >= is lexicographic, and 'T' (ASCII 84) sorts above
+                    # ' ' (32) — so '2026-08-19T09:00:00Z' compares GREATER than
+                    # a 10:26 cutoff despite being an hour earlier, silently
+                    # counting closes that precede the window. Latent today only
+                    # because no T-format exit has yet landed earlier in the day
+                    # than a cutoff; that is luck, not correctness.
                     "SELECT COUNT(*) FROM trade_outcomes "
-                    "WHERE timestamp_exit IS NOT NULL AND timestamp_exit >= ?",
+                    "WHERE timestamp_exit IS NOT NULL "
+                    "  AND REPLACE(REPLACE(REPLACE(timestamp_exit,'T',' '),"
+                    "'Z',''),' UTC','') >= "
+                    "      REPLACE(REPLACE(REPLACE(?,'T',' '),'Z',''),' UTC','')",
                     (out["since"],)).fetchone()[0]
             finally:
                 conn.close()
@@ -929,6 +1047,53 @@ def _cumulative_band(axis: str, current) -> dict:
         "hi": round(base * (1.0 + PARAM_CUMULATIVE_BAND_FRAC), 6),
         "window_days": PARAM_CUMULATIVE_WINDOW_DAYS,
         "band_frac": PARAM_CUMULATIVE_BAND_FRAC,
+    }
+
+
+def _axis_cumulative_band(axis: str, current) -> dict:
+    """Additive rolling-window bounds for an AXIS weight.
+
+    Same anchoring rule as _cumulative_band (the prior_weight of the earliest
+    approved change inside the window, else the current value), but the bounds
+    are base ± AXIS_CUMULATIVE_BAND_ABS rather than a percentage of base — see
+    the AXIS_CUMULATIVE_BAND_ABS comment for why a multiplicative band is
+    unusable on a quantity that is legitimately 0.0.
+
+    Degrades to an unbounded-but-reported band if history cannot be read, so a
+    DB problem never silently removes the guard's visibility.
+    """
+    base = None if current is None else float(current)
+    try:
+        from kairos_log_db import get_connection
+        cutoff = (datetime.now(timezone.utc)
+                  - timedelta(days=AXIS_CUMULATIVE_WINDOW_DAYS)
+                  ).strftime("%Y-%m-%d %H:%M:%S UTC")
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                "SELECT prior_weight FROM axis_weight_history "
+                "WHERE axis = ? AND status = 'approved' AND decided_at IS NOT NULL "
+                "  AND decided_at >= ? "
+                "ORDER BY decided_at ASC LIMIT 1",
+                (axis, cutoff),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is not None and row["prior_weight"] is not None:
+            base = float(row["prior_weight"])
+    except Exception:
+        pass
+
+    if base is None:
+        return {"base_7d": None, "lo": None, "hi": None,
+                "window_days": AXIS_CUMULATIVE_WINDOW_DAYS,
+                "band_abs": AXIS_CUMULATIVE_BAND_ABS}
+    return {
+        "base_7d": round(base, 6),
+        "lo": round(base - AXIS_CUMULATIVE_BAND_ABS, 6),
+        "hi": round(base + AXIS_CUMULATIVE_BAND_ABS, 6),
+        "window_days": AXIS_CUMULATIVE_WINDOW_DAYS,
+        "band_abs": AXIS_CUMULATIVE_BAND_ABS,
     }
 
 
@@ -1353,6 +1518,15 @@ def _format_slack_propose_params(run_id: str, proposals: list[dict],
     ]
     for p in proposals:
         n = p["sample_size"]
+        # Plain-English block first — same rationale as the axis card: the
+        # reviewer needs the meaning before the internals. Degrades to raw
+        # numbers only if the renderer fails; never breaks the proposal loop.
+        try:
+            from kairos_arbiter_explain import explain_param_proposal
+            lines.extend(explain_param_proposal(p))
+        except Exception as _exc:
+            lines.append(f"  _(plain-English render unavailable: {_exc})_")
+
         # Skipped is its OWN bucket. It used to surface as an error (KeyError on
         # the summary projection) or get read as a gate; it is neither — it means
         # the standing proposal still stands and nothing changed underneath it.
