@@ -94,3 +94,4 @@ kairos_ml_result.json
 
 # Arbiter reports — generated nightly/weekly, not source
 arbiter_reports/
+kairos_news_summary.txt

@@ -273,7 +273,7 @@
     },
     "_comment": "Exit Architecture v2 \u2014 five-condition exit engine (kairos_exits.py). stop_loss: signal-aware closing % + 1.5x intraday backstop; the regime threshold (kairos_stoploss.STOP_LOSS_THRESHOLDS) is applied as a tighter-of-the-two floor in RISK-OFF/EXTREME-FEAR. trailing_stop: peak-gain tiers [min_gain, trail%] (15/30/50 -> 8/10/12), closing eval + 1.5x intraday backstop. tax_gate: delay non-stop exits within 30d of the 12-mo anniversary while profitable; exempt if >20% retreat from peak. conviction_decay: per-signal linear decay of confluence base points over decay_days; below liberation_threshold a position is liberation-eligible (replaces the old hold-window runway gate). reentry: no-higher-price guard unless a genuinely new signal fired. hot_reversion_time_gate: the ONLY time-based exit (7d). close_window_et: the cycle landing in this ET window is treated as the 'close' for closing-price stops.",
     "price_invalidation": {
-      "enabled": false,
+      "enabled": true,
       "confirm_closes": 2,
       "min_age_days": 1
     },
