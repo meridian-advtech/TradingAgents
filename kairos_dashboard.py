@@ -928,6 +928,72 @@ def load_ml_trade_stats(since: str | None = None) -> dict | None:
     }
 
 
+def load_ml_signal_attribution(since: str | None = None) -> list | None:
+    """Per-signal realized performance from the reconciled ML ledger.
+
+    Same authoritative-source argument as load_ml_trade_stats above, and for
+    the same reason: the Signal attribution panel previously built its numbers
+    from kairos.db holdings lots joined to decisions.data_inputs. Those lots
+    are rewritten at broker cost by the daily reconciler, so recorded profit
+    decays toward zero over time. On 2026-08-27 that made HOT-INSIDER read
+    -$1,306 over 79 trades in the panel while the ledger showed +$33,052 over
+    66 — the panel's single largest earner displayed as its single largest
+    loser. Attribution feeding a learning loop off that source would have
+    down-weighted the best signal in the book.
+
+    signals_fired is a JSON list; a confluence trade counts under every signal
+    that fired, so bars sum to more than the book (same as the old panel).
+    Trades with no logged signal group under "(unattributed)".
+
+    Returns a list of {name, n, win, avg, pnl, hold} sorted by pnl desc,
+    or None on any error so the caller can fall back.
+    """
+    if not os.path.exists(ML_DB_PATH):
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{ML_DB_PATH}?mode=ro", uri=True, timeout=2)
+        try:
+            conn.execute("PRAGMA busy_timeout = 2000")
+            rows = conn.execute(
+                "SELECT signals_fired, pnl_pct, pnl_dollar, hold_duration_mins, "
+                "timestamp_exit FROM trade_outcomes "
+                "WHERE timestamp_exit IS NOT NULL AND pnl_pct IS NOT NULL"
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception as exc:
+        print(f"  WARNING: ML signal attribution unavailable ({exc})")
+        return None
+
+    if since:
+        rows = [r for r in rows if str(r[4])[:10] >= since]
+    if not rows:
+        return None
+
+    groups: dict[str, list] = {}
+    for sigs_raw, pct, usd, mins, _ts in rows:
+        try:
+            sigs = json.loads(sigs_raw) if sigs_raw else []
+        except (json.JSONDecodeError, TypeError):
+            sigs = []
+        sigs = [str(s) for s in sigs if s] or ["(unattributed)"]
+        for s in sigs:
+            groups.setdefault(s, []).append((float(pct), float(usd or 0.0), mins))
+
+    out = []
+    for name, items in groups.items():
+        holds = [m for _, _, m in items if m is not None]
+        out.append({
+            "name": name,
+            "n":    len(items),
+            "win":  round(sum(1 for p, _, _ in items if p > 0) / len(items) * 100, 1),
+            "avg":  round(sum(p for p, _, _ in items) / len(items), 2),
+            "pnl":  round(sum(u for _, u, _ in items), 2),
+            "hold": round(sum(holds) / len(holds) / 1440.0, 1) if holds else None,
+        })
+    return sorted(out, key=lambda r: -r["pnl"])
+
+
 # ── Era baseline (measure the CURRENT system, keep full history) ───────
 
 def load_performance_config() -> dict:
@@ -2271,6 +2337,78 @@ def _next_rth_open(dt_utc: datetime):
     return open_et.astimezone(timezone.utc), same_day
 
 
+def _cycle_timing() -> dict:
+    """Parse RUN and PASS/FAIL lines together for real cycle timing.
+
+    FIX (2026-08-19): _typical_cycle_minutes() blended two different
+    quantities into one "cadence" number — how long a cycle takes to run,
+    and how long the system idles before the next one fires — then
+    anchored that blend to the LAST COMPLETION time. That produced a
+    "Next" estimate that didn't know a cycle was already running, and
+    could predict a time LATER than a cycle that had already started
+    (observed: predicted ~14:39, actual next cycle started 14:17).
+
+    This returns, separately:
+      running:           bool — is a cycle currently in progress
+      last_run_ts:        UTC datetime of the most recent RUN line
+      median_duration:    RUN -> that same cycle's own PASS/FAIL (minutes)
+      median_start_gap:   RUN -> the NEXT cycle's RUN (minutes)
+    so the caller can give an ETA for an in-progress cycle using duration,
+    and a next-fire estimate for an idle system using the start-to-start
+    gap — instead of one blended number for both cases.
+    """
+    events = []  # (ts, "run"|"done"), deduped for the known double-logged lines
+    try:
+        with open(_SCHED_LOG) as f:
+            for line in f:
+                if "] RUN  —" in line:
+                    kind = "run"
+                elif "] PASS —" in line or "] FAIL —" in line:
+                    kind = "done"
+                else:
+                    continue
+                if not line.startswith("["):
+                    continue
+                stamp = line[1:line.index("]")].rstrip("Z")
+                try:
+                    ts = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+                except ValueError:
+                    continue
+                if events and events[-1] == (ts, kind):
+                    continue
+                events.append((ts, kind))
+    except FileNotFoundError:
+        pass
+
+    durations, start_gaps = [], []
+    last_run_ts = None
+    prev_run_ts = None
+    running = False
+    for ts, kind in events:
+        if kind == "run":
+            if prev_run_ts is not None:
+                gap = (ts - prev_run_ts).total_seconds() / 60.0
+                if 5 <= gap <= 150:
+                    start_gaps.append(gap)
+            prev_run_ts = ts
+            last_run_ts = ts
+            running = True
+        else:
+            if last_run_ts is not None:
+                dur = (ts - last_run_ts).total_seconds() / 60.0
+                if 1 <= dur <= 120:
+                    durations.append(dur)
+            running = False
+
+    durations, start_gaps = durations[-15:], start_gaps[-15:]
+    return {
+        "running": running,
+        "last_run_ts": last_run_ts,
+        "median_duration": statistics.median(durations) if len(durations) >= 3 else 30.0,
+        "median_start_gap": statistics.median(start_gaps) if len(start_gaps) >= 3 else 30.0,
+    }
+
+
 def build_system_health(ibkr: dict) -> dict:
     """Ambient system-health facts for the top strip. Read-only; each item is
     {label, value, level} with level ∈ {ok, warn, down, info}. Every probe is
@@ -2311,17 +2449,22 @@ def build_system_health(ibkr: dict) -> dict:
     items["last_cycle"] = last
 
     # ── Next scheduled cycle: DERIVED estimate (not tracked anywhere) ────
-    # launchd fires every 1800s from load time, but a still-running cycle
-    # blocks the next fire, so real cadence runs longer — use the observed
-    # median (`cadence`) rather than the nominal 30min interval.
+    # Pure next-START prediction: last cycle's START time + the median
+    # observed START-to-START gap (which already bakes in real launchd
+    # behavior — a cycle running long simply pushes the next fire later).
+    # Deliberately ignores whether a cycle is currently mid-run; this is
+    # not an in-progress ETA, just "when does the next one start".
+    # See _cycle_timing() docstring for why this replaced the old
+    # completion-to-completion "cadence" number.
+    timing = _cycle_timing()
     nxt = {"label": "Next", "value": "—", "level": "info"}
     et = _et_zone()
     if et is not None:
         if _in_rth(now):
-            base = last_ts if last_ts else now
-            cand = base + timedelta(minutes=cadence)
+            base = timing["last_run_ts"] if timing["last_run_ts"] else now
+            cand = base + timedelta(minutes=timing["median_start_gap"])
             if cand < now:
-                cand = now + timedelta(minutes=cadence)
+                cand = now + timedelta(minutes=timing["median_start_gap"])
             if not _in_rth(cand):
                 cand = None  # would fall past the close → next open
             nxt["value"] = (f"~{_et_hhmm(cand)} (est)" if cand
@@ -2476,6 +2619,7 @@ def build_payload(perf: dict, db: dict, ibkr: dict) -> dict:
         "positions":      positions,
         "position_details": position_details,
         "closed_trades":  closed_trades,
+        "signal_attribution": load_ml_signal_attribution(),
         "sector_breakdown": _compute_sector_exposure(positions),
         "size_style_breakdown": _compute_size_style_exposure(positions),
         "short_positions": _compute_short_positions(positions),
@@ -2929,6 +3073,31 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     .rsub { font-size: 10px; color: var(--dim); margin-top: 4px; }
     /* ── Tables ── */
     .tbl-wrap { overflow-x: auto; }
+    /* ── Trading-lessons pane ─────────────────────────────────────────
+       The ledger is append-only and never truncated, so this table grew
+       without bound and pushed everything below it off the page. Same
+       treatment as .postbl-scroll: bound the pane, scroll inside it. Sized
+       smaller than the positions pane because this sits in a half-width
+       two-column card — at ~34px a row the clamp lands on ~12 rows at laptop
+       height and ~18 on a tall display, newest first. */
+    .ledger-scroll {
+      max-height: clamp(300px, 45vh, 620px);
+      overflow-y: auto; overflow-x: auto;
+      border-radius: 8px; border: 1px solid var(--border);
+    }
+    /* A nested pane taller than ~60vh fights the page scroll under a thumb. */
+    @media(max-width: 700px) {
+      .ledger-scroll { max-height: 60vh; }
+    }
+    .ledger-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+    .ledger-scroll::-webkit-scrollbar-thumb {
+      background: var(--border2); border-radius: 5px;
+      border: 2px solid var(--surface);
+    }
+    .ledger-scroll::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+    .ledger-scroll::-webkit-scrollbar-track { background: transparent; }
+    /* Header pins so the columns stay identified however far back you scroll. */
+    .ledger-scroll thead th { position: sticky; top: 0; z-index: 2; }
     table { width: 100%; border-collapse: collapse; font-size: 12px; }
     th {
       text-align: left; color: var(--dim); font-size: 11.5px; font-weight: 600;
@@ -3990,31 +4159,47 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     }
 
     const NO_SIGNAL = "(unattributed)";
-    const groups = {};
-    ALL.forEach(function (t) {
-      const sigs = (t.entry_signals && t.entry_signals.length)
-        ? t.entry_signals : [NO_SIGNAL];
-      sigs.forEach(function (sig) {
-        (groups[sig] = groups[sig] || []).push(t);
-      });
-    });
 
-    const stats = Object.keys(groups).map(function (sig) {
-      const ts = groups[sig];
-      let pnl = 0, wins = 0, sumPct = 0, holdN = 0, holdSum = 0;
-      ts.forEach(function (t) {
-        pnl += t.realized_pnl_usd || 0;
-        if ((t.realized_pnl_pct || 0) > 0) wins++;
-        sumPct += t.realized_pnl_pct || 0;
-        if (t.days_held != null) { holdSum += t.days_held; holdN++; }
+    // Prefer the reconciled ML ledger (DATA.signal_attribution, computed
+    // server-side in load_ml_signal_attribution). The holdings-lot path below
+    // is the legacy fallback and is NOT trustworthy for P&L — the reconciler
+    // rewrites closed lots at broker cost, so realized profit decays toward
+    // zero. On 2026-08-27 that showed HOT-INSIDER at -$1,306/79 trades here
+    // while the ledger had +$33,052/66 — best signal displayed as worst.
+    let stats = null;
+    if (Array.isArray(DATA.signal_attribution) && DATA.signal_attribution.length) {
+      stats = DATA.signal_attribution.map(function (r) {
+        return { name: r.name, n: r.n, pnl: r.pnl, win: r.win, avg: r.avg, hold: r.hold };
       });
-      return {
-        name: sig, n: ts.length, pnl: pnl,
-        win: wins / ts.length * 100,
-        avg: sumPct / ts.length,
-        hold: holdN ? holdSum / holdN : null,
-      };
-    }).sort(function (a, b) { return b.pnl - a.pnl; });
+    }
+
+    if (!stats) {
+      const groups = {};
+      ALL.forEach(function (t) {
+        const sigs = (t.entry_signals && t.entry_signals.length)
+          ? t.entry_signals : [NO_SIGNAL];
+        sigs.forEach(function (sig) {
+          (groups[sig] = groups[sig] || []).push(t);
+        });
+      });
+
+      stats = Object.keys(groups).map(function (sig) {
+        const ts = groups[sig];
+        let pnl = 0, wins = 0, sumPct = 0, holdN = 0, holdSum = 0;
+        ts.forEach(function (t) {
+          pnl += t.realized_pnl_usd || 0;
+          if ((t.realized_pnl_pct || 0) > 0) wins++;
+          sumPct += t.realized_pnl_pct || 0;
+          if (t.days_held != null) { holdSum += t.days_held; holdN++; }
+        });
+        return {
+          name: sig, n: ts.length, pnl: pnl,
+          win: wins / ts.length * 100,
+          avg: sumPct / ts.length,
+          hold: holdN ? holdSum / holdN : null,
+        };
+      }).sort(function (a, b) { return b.pnl - a.pnl; });
+    }
 
     const max = Math.max.apply(null, stats.map(function (r) {
       return Math.abs(r.pnl); })) || 1;
@@ -4047,20 +4232,29 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     // The chart is persuasive and the underlying attribution is not clean —
     // say so next to it, with the real recency so it does not read as a
     // closed historical gap.
-    const unattr = ALL.filter(function (t) {
-      return !(t.entry_signals && t.entry_signals.length); });
-    let last = null;
-    unattr.forEach(function (t) {
-      const d = String(t.entry_date || "").slice(0, 10);
-      if (d && (!last || d > last)) last = d;
-    });
-    if (unattr.length) {
-      html += '<div class="caveat">Attribution is reconstructed partly from '
-        + 'rationale text, so confluence trades count under every signal that '
-        + 'fired — the bars sum to more than the book. ' + unattr.length
-        + ' trades carry no entry signal at all'
-        + (last ? ', the most recent entered ' + esc(last) : "")
-        + ', so this is not a closed historical gap. Directional only.</div>';
+    const usingLedger = Array.isArray(DATA.signal_attribution)
+      && DATA.signal_attribution.length;
+    if (usingLedger) {
+      const un = stats.filter(function (r) { return r.name === NO_SIGNAL; })[0];
+      html += '<div class="caveat">Realized P&amp;L per signal, from the '
+        + 'reconciled ML ledger. A confluence trade counts under every signal '
+        + 'that fired, so the bars sum to more than the book.'
+        + (un ? ' ' + un.n + ' trades carry no logged entry signal.' : '')
+        + '</div>';
+    } else {
+      const unattr = ALL.filter(function (t) {
+        return !(t.entry_signals && t.entry_signals.length); });
+      let last = null;
+      unattr.forEach(function (t) {
+        const d = String(t.entry_date || "").slice(0, 10);
+        if (d && (!last || d > last)) last = d;
+      });
+      html += '<div class="caveat">ML ledger unavailable — falling back to '
+        + 'holdings lots, whose realized P&amp;L decays as the reconciler '
+        + 'rewrites closed lots at broker cost. Treat magnitudes as unreliable.'
+        + (unattr.length ? ' ' + unattr.length + ' trades carry no entry signal'
+            + (last ? ', the most recent entered ' + esc(last) : "") + '.' : '')
+        + '</div>';
     }
 
     wrap.innerHTML = html;
@@ -4594,7 +4788,9 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     }
     // Trade log table
     if (ledgerTrades.length > 0) {
-      lhtml += '<div class="tbl-wrap"><table><thead><tr>' +
+      lhtml += '<div style="font-size:11px;color:var(--dim);margin-bottom:6px">' +
+        ledgerTrades.length + ' closed trade(s) &mdash; newest first, scroll for history</div>';
+      lhtml += '<div class="tbl-wrap ledger-scroll"><table><thead><tr>' +
         '<th>Date</th><th>Ticker</th><th>Action</th><th>Signals</th><th>P&amp;L</th><th>Result</th>' +
         '</tr></thead><tbody>';
       ledgerTrades.slice().reverse().forEach(t => {
