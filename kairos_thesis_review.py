@@ -66,6 +66,29 @@ W = 72
 PRICE_CONTRADICTION_PCT = -3.0   # return below this counts as a contradiction
 PRICE_CONTRADICTION_DAYS = 3     # consecutive contradicting reviews → exit
 
+# DISABLED 2026-08-27 after measurement. This gate shipped with the note that
+# it was "the most aggressive new gate and is on watch for its first week
+# live"; the watch never happened. 27 exits later:
+#
+#   1 win out of 27.  Median realized -4.19%.
+#   After selling, median +14.8% in 30 days (mean +16.8%).
+#   14 of 15 measurable positions BEAT SPY after we sold, mean excess +14.2%.
+#   SMCI: dumped at -4.75%, then +73.1% (SPY +2.6%) over the next 30 days.
+#
+# That is not market drift — it is the rule systematically selling immediately
+# before outperformance. The cause is that it does not reference the thesis at
+# all despite its name: it is a naive -3% drawdown stop, and -3% across three
+# reviews on an average 16.5-day hold is ordinary noise, not a broken thesis.
+#
+# The territory is already covered better by three mechanisms that DO reference
+# something real: the hard stop-loss (genuine breakdowns at -6% to -12%),
+# price-invalidation (the thesis's OWN recorded level, enabled 2026-08-27), and
+# the LLM thesis review (now judging against recorded key_conditions).
+#
+# Left in place, config-gated and off, rather than deleted: re-enabling is one
+# flag if the reasoning above turns out to be wrong.
+PRICE_CONTRADICTION_ENABLED = False
+
 # Time BACKSTOPS only — never a primary sell. A position held this long with no
 # validity sell signal is force-flagged for review (defaults; overridable under
 # config `thesis_validity`).
@@ -574,8 +597,11 @@ def run_thesis_review(dry_run: bool = False, no_claude: bool = False) -> dict:
         sell_reason = None
 
         # ── Check 1: Price contradicting thesis for N consecutive reviews ──
-        # (Replaces the removed TAKE-PROFIT and STALE-THESIS time exits.)
-        if return_pct is not None and return_pct < PRICE_CONTRADICTION_PCT:
+        # DISABLED — see PRICE_CONTRADICTION_ENABLED above. 1 win in 27, and
+        # the positions it sold beat SPY by a mean of +14.2% over the next 30
+        # days. Kept behind a flag rather than deleted.
+        if (PRICE_CONTRADICTION_ENABLED
+                and return_pct is not None and return_pct < PRICE_CONTRADICTION_PCT):
             streak = _recent_contradiction_streak(ticker) + 1  # +1 for today
             if streak >= PRICE_CONTRADICTION_DAYS:
                 # Distinct PRICE-CONTRADICTION trigger (not generic THESIS-INVALID)
