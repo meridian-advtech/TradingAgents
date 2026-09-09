@@ -1186,7 +1186,16 @@ def _refresh_proposals_and_post_cards(run_id: str) -> None:
     # Only actionable proposals get a tappable card: gated / zero-Δ rows are still
     # written 'proposed' (auditable) but an Approve card for a no-op is noise.
     # Report the skip count so nothing is silently dropped.
-    actionable, skipped = [], 0
+    #
+    # MATERIALITY (2026-09-09): removing the min_sample gate means a proposal
+    # is emitted on nearly every run, most of them tiny. Surfacing all of them
+    # would bury the one that matters, and a human gate nobody reads is not a
+    # gate. Sub-threshold proposals are still written and still route their
+    # evidence — they just get one digest line instead of a card each, and
+    # kairos_axis_weights records a bound `materiality` guard on them so
+    # kairos_autonomy.auto_apply refuses them too. Recorded, reviewable via
+    # `--pending-minor`, never applied without someone asking for it.
+    actionable, skipped, minor = [], 0, 0
     for p in proposals:
         # An auto-applied proposal is already decided — a card for it would
         # invite approving something that has already taken effect.
@@ -1194,6 +1203,8 @@ def _refresh_proposals_and_post_cards(run_id: str) -> None:
             continue
         if p.get("gated") or abs(p.get("proposed_delta") or 0.0) < 1e-9:
             skipped += 1
+        elif not p.get("material", True):
+            minor += 1
         else:
             actionable.append(p)
 
@@ -1202,9 +1213,19 @@ def _refresh_proposals_and_post_cards(run_id: str) -> None:
         posted = sum(1 for p in actionable
                      if post_proposal_card(p, ARBITER_CHANNEL))
         print(f"  Interactive approval cards: posted {posted}/{len(actionable)} "
-              f"(skipped {skipped} gated/no-op proposal(s))")
+              f"(skipped {skipped} gated/no-op, {minor} sub-threshold)")
     except Exception as exc:
         print(f"  WARNING: posting proposal cards failed: {exc}", file=sys.stderr)
+
+    # One line for everything recorded but not surfaced.
+    try:
+        from kairos_axis_weights import format_minor_digest
+        digest = format_minor_digest(proposals)
+        if digest:
+            post_to_slack(ARBITER_CHANNEL, digest)
+            print(f"  {digest}")
+    except Exception as exc:
+        print(f"  WARNING: sub-threshold digest failed: {exc}", file=sys.stderr)
 
 
 def main() -> int:

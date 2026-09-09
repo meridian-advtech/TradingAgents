@@ -229,10 +229,20 @@ def main():
                    "contributing": False}] * 8)  # in-regime but non-contributing
     _env(tmp, rows_thin, trail=8.0)
     rg = A.compute_param(TRAIL)
-    check("contributing min_sample gates (5 < 10)", rg["gated"] is True)
-    check("gate_reason cites insufficient fresh evidence",
-          "insufficient fresh evidence" in (rg["gate_reason"] or ""))
-    check("gated proposal leaves value unchanged", rg["proposed_value"] == rg["current_value"])
+    # min_sample is no longer a THRESHOLD (2026-09-09) — only the _confidence
+    # scaling constant. 5 contributing closes used to propose nothing at all;
+    # they now buy a proportionally small step (confidence 5/(5+10) = 0.333).
+    check("thin-but-real evidence PROPOSES (no min_sample cliff)",
+          rg["gated"] is False and rg["gate_reason"] is None)
+    check("...and the step is proportionally small, not full strength",
+          abs(rg["proposed_value"] - rg["current_value"])
+          < A.PARAM_MAX_CHANGE_FRAC * abs(rg["current_value"]))
+    check("confidence at effective_n 5 is 5/(5+10) = 0.3333",
+          abs(rg["evidence"]["confidence"] - 1 / 3) < 1e-3)
+    check("the step scales by exactly that confidence",
+          abs(abs(rg["proposed_value"] - rg["current_value"])
+              - rg["evidence"]["severity"] * rg["evidence"]["confidence"]
+              * A.PARAM_MAX_CHANGE_FRAC * abs(rg["current_value"])) < 1e-3)
     check("non-contributing rows excluded from sample (==5)", rg["sample_size"] == 5)
     check("non-contributing rows are reported as such (==8)",
           rg["evidence"]["n_excluded_non_contributing"] == 8)
@@ -319,9 +329,20 @@ def main():
     d_lo = A.compute_delta(0.8, 0.0, 60, cfg_ax, effective_n=22.0)
     check("axis path: same score, smaller effective_n -> smaller delta",
           abs(d_lo["proposed_delta"]) < abs(d_hi["proposed_delta"]))
-    check("axis path: effective_n below min_sample still gates outright",
-          A.compute_delta(0.8, 0.0, 60, cfg_ax, effective_n=19.9)["gated"] is True)
-    check("axis path: confidence is exactly 0.5 at the gate threshold",
+    # The cliff is gone: thin evidence proposes a SMALL move, not nothing.
+    _thin = A.compute_delta(0.8, 0.0, 60, cfg_ax, effective_n=1.0)
+    check("axis path: effective_n BELOW min_sample no longer gates",
+          _thin["gated"] is False and abs(_thin["proposed_delta"]) > 0)
+    check("axis path: effective_n 1 buys ~1/21 of the untapered step",
+          abs(_thin["confidence"] - 1 / 21) < 1e-9)
+    check("axis path: MISSING evidence (effective_n 0) still gates",
+          A.compute_delta(0.8, 0.0, 60, cfg_ax, effective_n=0.0)["gated"] is True)
+    check("axis path: the delta is monotone in effective_n with no cliff",
+          all(abs(A.compute_delta(0.8, 0.0, 60, cfg_ax, effective_n=a)["proposed_delta"])
+              < abs(A.compute_delta(0.8, 0.0, 60, cfg_ax, effective_n=b)["proposed_delta"])
+              for a, b in ((0.5, 1.0), (1.0, 5.0), (5.0, 10.0), (10.0, 19.9),
+                           (19.9, 20.1), (20.1, 30.0))))
+    check("axis path: confidence is exactly 0.5 at effective_n == min_sample",
           abs(A.compute_delta(0.8, 0.0, 20, cfg_ax,
                               effective_n=20.0)["confidence"] - 0.5) < 1e-9)
     check("axis path: per_run_cap still binds regardless of confidence",
@@ -330,7 +351,7 @@ def main():
           <= cfg_ax["per_run_cap"] + 1e-12)
 
     # ── 6: cumulative 7-day band (compute + apply) ──────────────────
-    print("\n[cumulative 7-day ±40% band]")
+    print("\n[cumulative 7-day ±15% band]")
     # Approved change 8.0 -> 6.0 within the window makes base_7d = 8.0; config now 6.0.
     approved = [{"axis": "param:" + TRAIL, "prior": 8.0, "new": 6.0,
                  "decided_at": _now_utc(1)}]
@@ -338,9 +359,14 @@ def main():
     rc = A.compute_param(TRAIL)
     band = rc["evidence"]["cumulative_band"]
     check("cumulative band anchored at base_7d 8.0", abs(band["base_7d"] - 8.0) < 1e-6)
-    check("band low bound is 8.0*0.6 = 4.8", abs(band["lo"] - 4.8) < 1e-6)
-    check("compute clamps proposed to >= band low (>=4.8)",
-          rc["proposed_value"] >= 4.8 - 1e-9)
+    # TIGHTENED 0.40 -> 0.15 on 2026-09-09: with the min_sample gate removed
+    # this band is the primary drift bound, not a backstop behind a gate.
+    check("band low bound is 8.0*0.85 = 6.8", abs(band["lo"] - 6.8) < 1e-6)
+    check("compute clamps proposed to >= band low (>=6.8)",
+          rc["proposed_value"] >= 6.8 - 1e-9)
+    check("the tighter band actually BINDS here (0.40 would not have)",
+          rc["proposed_value"] >= 6.8 - 1e-9
+          and (rc["evidence"]["cumulative_band"]["band_frac"] == 0.15))
     # apply-side: a value that clears the 25% step but violates the band must raise.
     raised = False
     try:
@@ -544,17 +570,22 @@ def main():
     _env(tmp, starved, trail=8.0)
     rs = A.compute_param(TRAIL)
     st = rs["evidence"]["starvation"]
-    # Distant-ONLY evidence no longer reads as an empty sample — but 12 closes
-    # at ~0.35 weight is still only ~4.2 effective, so it still GATES. That is
-    # the property the redesign has to keep: weighting is not a bypass.
-    check("distant-only evidence still gates (effective ~4.2 < 10)",
-          rs["gated"] is True and rs["sample_size"] < A.PARAM_MIN_SAMPLE)
+    # Distant-ONLY evidence is thin, not missing: 12 closes at ~0.35 weight is
+    # ~4.2 effective, which now buys ~4.2/(4.2+10) = 30% of a step rather than
+    # nothing. Weighting is still not a bypass — the step is just small.
+    check("distant-only evidence PROPOSES a small step, not nothing",
+          rs["gated"] is False
+          and abs(rs["proposed_value"] - rs["current_value"]) > 0)
+    check("...sized well under a full step (confidence ~0.30)",
+          rs["evidence"]["confidence"] < 0.35
+          and abs(rs["proposed_value"] - rs["current_value"])
+          < 0.4 * A.PARAM_MAX_CHANGE_FRAC * abs(rs["current_value"]))
     check("distant-only evidence is no longer reported as sample 0",
           rs["sample_size"] > 0)
     check("starvation reports down-weighted rows, not discarded ones",
           st["n_downweighted"] == 12 and st["n_wrong_regime"] == 0)
-    check("gate_reason names the weighted basis",
-          "weighted by recency" in (rs["gate_reason"] or ""))
+    check("a thin-but-real pool carries NO gate reason at all",
+          rs["gate_reason"] is None)
     # Unstamped rows are the unrecoverable case and must be counted separately.
     conn = sqlite3.connect(A.ML_DB_PATH)
     conn.execute("UPDATE trade_outcomes SET exit_params_snapshot = NULL")
@@ -718,12 +749,135 @@ def main():
     _set_bounds(2.0, 4.0)
     applied_ok = False
     try:
-        A._apply_param_to_config(LO_PCT, 2.4)   # non-crossing, in bounds
-        applied_ok = abs(A._current_param_value(LO_PCT) - 2.4) < 1e-9
+        # 2.2, not 2.4: the tighter ±15% band around 2.0 is [1.70, 2.30], so
+        # 2.4 would now be refused by the BAND rather than proving the
+        # ordering guard lets a legitimate value through.
+        A._apply_param_to_config(LO_PCT, 2.2)   # non-crossing, in bounds+band
+        applied_ok = abs(A._current_param_value(LO_PCT) - 2.2) < 1e-9
     except ValueError:
         applied_ok = False
     check("a NON-crossing value on the same pair still applies normally",
           applied_ok)
+
+    # ── min_sample is a SCALING CONSTANT, not a threshold ───────────
+    print("\n[no min_sample cliff: thin evidence proposes proportionally]")
+    _cfgp = {"learning_rate": 0.3, "per_run_cap": 0.15, "min_sample": 10,
+             "weight_bound": 1.0}
+    curve = [(e, A.compute_delta(1.0, 0.0, 99, _cfgp, effective_n=float(e)))
+             for e in (0, 0.5, 1, 2, 5, 10, 20, 40)]
+    check("effective_n 0 GATES (missing evidence, nothing to scale)",
+          curve[0][1]["gated"] is True
+          and curve[0][1]["proposed_delta"] == 0.0)
+    check("effective_n 1 does NOT gate (thin evidence, small step)",
+          curve[2][1]["gated"] is False
+          and abs(curve[2][1]["proposed_delta"]) > 0)
+    check("confidence matches eff/(eff+min_sample) at every point",
+          all(abs(d["confidence"] - (e / (e + 10) if e > 0 else 0.0)) < 1e-9
+              for e, d in curve))
+    check("no discontinuity anywhere on the curve (strictly monotone)",
+          all(abs(curve[i][1]["proposed_delta"])
+              < abs(curve[i + 1][1]["proposed_delta"]) + 1e-12
+              for i in range(len(curve) - 1)))
+    check("nothing between 0 and min_sample is gated any more",
+          all(d["gated"] is False for e, d in curve if e > 0))
+    check("min_sample is untouched as a constant (still 10 / 20)",
+          A.PARAM_MIN_SAMPLE == 10 and A.load_config()["min_sample"] == 20)
+    check("_confidence itself is unchanged (0.5 at eff == min_sample)",
+          abs(A._confidence(10, 10) - 0.5) < 1e-12
+          and abs(A._confidence(40, 10) - 0.8) < 1e-12)
+
+    # A param with a real-but-tiny pool must PROPOSE; one with an empty pool
+    # must still GATE. That distinction is the whole point.
+    E1 = dict(mfe=18.0, pnl=2.0, forgone=3.0)
+    _env(tmp, [dict(E1)] * 1, trail=8.0)
+    r_one = A.compute_param(TRAIL)
+    check("ONE contributing close proposes a (tiny) move",
+          r_one["gated"] is False
+          and 0 < abs(r_one["proposed_value"] - r_one["current_value"])
+          < 0.12 * r_one["current_value"])
+    _env(tmp, [dict(E1, contributing=False)] * 12, trail=8.0)
+    r_zero = A.compute_param(TRAIL)
+    check("ZERO contributing closes still GATES",
+          r_zero["gated"] is True
+          and r_zero["proposed_value"] == r_zero["current_value"])
+    check("the gate reason distinguishes MISSING from thin evidence",
+          "MISSING evidence" in (r_zero["gate_reason"] or ""))
+
+    # ── Cumulative band tightened (now the primary drift bound) ─────
+    print("\n[tightened cumulative band]")
+    check("PARAM_CUMULATIVE_BAND_FRAC is 0.15", A.PARAM_CUMULATIVE_BAND_FRAC == 0.15)
+    check("AXIS_CUMULATIVE_BAND_ABS is 0.08", A.AXIS_CUMULATIVE_BAND_ABS == 0.08)
+    check("both windows stay at 7 days",
+          A.PARAM_CUMULATIVE_WINDOW_DAYS == 7 and A.AXIS_CUMULATIVE_WINDOW_DAYS == 7)
+    check("PARAM_MAX_CHANGE_FRAC and per_run_cap are UNCHANGED",
+          A.PARAM_MAX_CHANGE_FRAC == 0.25
+          and A.load_config()["per_run_cap"] == 0.15)
+    # Compounded worst-case drift: daily runs, full severity, every close in
+    # the week agreeing. Asserting the ACTUAL arithmetic rather than a
+    # hand-wave, because the exact crossover is the justification for 0.15.
+    def _drift7(eff):
+        step = A._confidence(eff, A.PARAM_MIN_SAMPLE) * A.PARAM_MAX_CHANGE_FRAC
+        return 1 - (1 - step) ** 7
+
+    check("the OLD 0.40 band never binds inside a week below effective_n 5 "
+          "— it was a backstop, not a bound",
+          _drift7(1) < 0.40 and _drift7(2) < 0.40 and _drift7(3) < 0.40)
+    check("the NEW 0.15 band binds inside the window from effective_n 2 up",
+          _drift7(2) > 0.15 and _drift7(3) > 0.15 and _drift7(5) > 0.15)
+    check(f"at effective_n 1 exactly, a full week reaches "
+          f"{_drift7(1) * 100:.2f}% and just fits (binds on day 8) — "
+          f"stated rather than glossed",
+          0.14 < _drift7(1) < 0.15)
+    check("drift is monotone in effective_n (thinner evidence drifts slower)",
+          _drift7(0.5) < _drift7(1) < _drift7(2) < _drift7(5) < _drift7(20))
+
+    # ── Materiality: compute always, surface selectively ────────────
+    print("\n[materiality: computing is not surfacing]")
+    check("param threshold is 5% of the current value",
+          abs(A.materiality_threshold("param:" + TRAIL, 6.2255)
+              - 0.05 * 6.2255) < 1e-9)
+    check("axis threshold is 0.02 absolute regardless of the weight",
+          A.materiality_threshold("exit_timing", 0.24) == 0.02
+          and A.materiality_threshold("exit_timing", 0.0) == 0.02)
+    check("a param at 0.0 falls back to the absolute threshold "
+          "(a relative one is meaningless there)",
+          A.materiality_threshold("param:" + TRAIL, 0.0) == A.AXIS_MATERIALITY_ABS)
+    check("a move at exactly the threshold IS material (>=, not >)",
+          A.is_material("exit_timing", 0.2, 0.02) is True)
+    check("a move just under is NOT material",
+          A.is_material("exit_timing", 0.2, 0.0199) is False)
+    check("a zero move is never material", A.is_material("exit_timing", 0.2, 0.0) is False)
+    check("sign does not matter, only magnitude",
+          A.is_material("exit_timing", 0.2, -0.05) is True)
+
+    # End to end: a tiny pool -> a recorded row with NO card and a bound guard.
+    _env(tmp, [dict(E1)] * 1, trail=8.0)
+    p_minor = A.propose_param_update(TRAIL, run_id="minor_run")
+    check("a sub-threshold proposal is still WRITTEN as 'proposed'",
+          p_minor["history_id"] is not None)
+    check("...is not gated (the evidence was usable)", p_minor["gated"] is False)
+    check("...carries a real non-zero delta", abs(p_minor["proposed_delta"]) > 0)
+    check("...is flagged immaterial, so no card is raised",
+          p_minor["material"] is False)
+    _g = (p_minor["evidence"].get("guards") or {}).get("materiality") or {}
+    check("...records a BOUND materiality guard, which is what stops "
+          "kairos_autonomy.auto_apply from applying an unsurfaced proposal",
+          _g.get("bound") is True)
+    check("...and the guard says so in words", "NOT auto-appliable" in _g.get("reason", ""))
+    # The digest, and only the digest.
+    digest = A.format_minor_digest([p_minor])
+    check("the digest names the count and the largest mover",
+          digest is not None and "sub-threshold proposal" in digest
+          and "trail_pct" in digest)
+    check("a material proposal produces NO digest line",
+          A.format_minor_digest([dict(p_minor, material=True)]) is None)
+    check("gated / deferred / skipped rows never appear in the digest",
+          A.format_minor_digest([dict(p_minor, gated=True)]) is None
+          and A.format_minor_digest([dict(p_minor, deferred="x")]) is None
+          and A.format_minor_digest([dict(p_minor, skipped="x")]) is None)
+    check("--pending-minor lists it and reports the auto-apply block",
+          any(q["id"] == p_minor["history_id"] and q["auto_apply_blocked"]
+              for q in A.pending_minor()))
 
     # ── ATR arm context: a FAILED measurement must not be frozen ────
     # Found live on 2026-09-09: a yfinance rate-limit burst made 14 held

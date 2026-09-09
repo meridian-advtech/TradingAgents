@@ -178,6 +178,67 @@ PARAM_MAX_CHANGE_FRAC = 0.25   # an approved proposal may move a value at most �
 # Net error (pp) that maps to a full-strength (100% of the allowed ±25%) nudge.
 PARAM_GIVEBACK_REF = 15.0
 
+# ── Materiality: computing is not the same as surfacing ──────────────
+# Removing the min_sample gate (2026-09-09) means a proposal is now emitted on
+# essentially every run, most of them tiny — an effective_n of 1 buys ~2.3% of
+# the current value. Every proposal used to raise an interactive Approve/Reject
+# card, and 4-6 sub-1%-confidence cards a day would bury the one that matters.
+# Alert fatigue is not a cosmetic problem here: the human gate is the last
+# thing standing between the loop and live capital, and a gate nobody reads is
+# not a gate.
+#
+# So: ALWAYS compute, ALWAYS record the row, ALWAYS route the evidence. Raise a
+# card only when the move is big enough for a human decision to be worth
+# making. Everything else is recorded, digested in one line, and reviewable on
+# demand via --pending-minor.
+#
+# PARAM threshold — 5% of the current value, chosen for two reasons:
+#   * it is exactly one fifth of PARAM_MAX_CHANGE_FRAC (0.25), so a proposal
+#     must be worth at least 20% of a maximum step to interrupt someone;
+#   * at trail_pct=6.2255 it is ±0.31pp of trail, which moves the intraday
+#     backstop by ~0.47pp. Below that the behavioural difference is smaller
+#     than the spread between where a stop triggers and where it fills, so
+#     there is nothing a human could meaningfully judge.
+# Working backwards through delta = severity x confidence x 0.25 x current, a
+# card needs severity x confidence >= 0.2 — i.e. effective_n >= ~2.5 even at
+# maximum severity, and more when the measured bias is milder.
+PARAM_MATERIALITY_FRAC = 0.05
+#
+# AXIS threshold — 0.02 absolute. Axis weights live in [-1, 1], so this is 1%
+# of the range and ~13% of per_run_cap (0.15). Absolute rather than relative
+# because an axis weight is legitimately 0.0, where a relative threshold is
+# either meaningless or infinite. The bar sits a little higher relative to the
+# cap than the param one because axis weights are still OBSERVED ONLY — not
+# injected into any reasoning prompt — so a small move has no live effect at
+# all and certainly does not warrant an interrupt.
+AXIS_MATERIALITY_ABS = 0.02
+
+
+def materiality_threshold(axis: str, prior_weight) -> float:
+    """Smallest |delta| worth raising an interactive card for, on this axis."""
+    if axis.startswith(PARAM_PREFIX):
+        base = abs(float(prior_weight)) if prior_weight else 0.0
+        # A param sitting at 0.0 has no meaningful relative scale; fall back to
+        # the axis threshold rather than surfacing every microscopic move.
+        return (base * PARAM_MATERIALITY_FRAC) if base > 0 else AXIS_MATERIALITY_ABS
+    return AXIS_MATERIALITY_ABS
+
+
+def is_material(axis: str, prior_weight, proposed_delta) -> bool:
+    """True iff this proposal is big enough to interrupt a human for.
+
+    Immaterial is NOT the same as gated, skipped or deferred. The evidence was
+    usable, the move is real and the row is written; it is simply too small to
+    be worth a decision. It stays reviewable via --pending-minor.
+    """
+    if proposed_delta is None:
+        return False
+    d = abs(float(proposed_delta))
+    if d < 1e-9:
+        return False
+    return d >= materiality_threshold(axis, prior_weight)
+
+
 # ── Ratchet guards (2026-07-11 postmortem) ───────────────────────────
 # The ratchet compounded trail_pct 8.0 → 4.0 across three days because each
 # day's proposal was legal in isolation: every step was within ±25% of the
@@ -187,7 +248,23 @@ PARAM_GIVEBACK_REF = 15.0
 # compute (clamp) and apply (refuse) — the apply side is what actually holds,
 # since a proposal can sit pending while other changes land.
 PARAM_CUMULATIVE_WINDOW_DAYS = 7
-PARAM_CUMULATIVE_BAND_FRAC = 0.40
+# TIGHTENED 0.40 -> 0.15 on 2026-09-09, when the min_sample gate was removed.
+#
+# The band used to be a backstop BEHIND a gate that refused to propose at all
+# below min_sample. With the gate gone it is the primary defence against drift,
+# and 0.40 never binds at the step sizes thin evidence now produces:
+#
+#   effective_n=1 -> confidence 0.091 x PARAM_MAX_CHANGE_FRAC 0.25
+#                 =  ~2.3% of the current value, per run
+#   run daily     -> ~16%/week compounding
+#
+# 16% fits inside a 40% band without ever touching it. On unbiased noise that
+# random-walks harmlessly; on BIASED thin evidence — say a week of closes all
+# from one regime, all saying "tighten" — it drifts steadily. That is the July
+# ratchet in slow motion: every individual step legal, the cumulative move
+# unbounded. 0.15 is chosen so that a week of maximally-biased 2.3% steps
+# binds partway through rather than never.
+PARAM_CUMULATIVE_BAND_FRAC = 0.15
 
 # Axis-side equivalents of the two post-ratchet guards (added 2026-08-20).
 # The 2026-08-03 unfreeze shipped the cumulative band + freshness gate to the
@@ -203,7 +280,12 @@ PARAM_CUMULATIVE_BAND_FRAC = 0.40
 # multiplicative band anchored at 0.0 collapses to lo == hi == 0.0 and would
 # freeze the axis permanently.
 AXIS_CUMULATIVE_WINDOW_DAYS = 7
-AXIS_CUMULATIVE_BAND_ABS = 0.20
+# TIGHTENED 0.20 -> 0.08 on 2026-09-09, same reasoning as
+# PARAM_CUMULATIVE_BAND_FRAC: this is now the primary drift bound, not a
+# backstop behind the min_sample gate. Additive rather than multiplicative
+# because an axis weight is legitimately 0.0 and a multiplicative band
+# anchored at zero collapses to lo == hi == 0 and freezes the axis.
+AXIS_CUMULATIVE_BAND_ABS = 0.08
 
 # Horizon over which forgone gain (the too-EARLY pole) is measured, in calendar
 # days. Must be one of kairos_ml_outcomes.FORGONE_HORIZONS.
@@ -697,19 +779,42 @@ def _get_prior_weight(conn: sqlite3.Connection, axis: str) -> float:
 def compute_delta(computed_score: float, prior_weight: float,
                   sample_size: int, cfg: dict,
                   effective_n: float | None = None) -> dict:
-    """Smoothed tracker toward the current statistic, with sample gate + caps.
+    """Smoothed tracker toward the current statistic, scaled by confidence.
 
     `effective_n` is the weighted sample (see the WEIGHT_* / CONFIDENCE block).
-    It is what the gate compares, and it scales the step through
-    _confidence — so the same measured bias moves the weight LESS when the
-    evidence behind it is thin or was gathered far from the current value.
-    Defaults to sample_size for axes that carry no regime weighting.
+    It scales the step through _confidence — so the same measured bias moves
+    the weight LESS when the evidence behind it is thin or was gathered far
+    from the current value. Defaults to sample_size for axes that carry no
+    regime weighting.
+
+    ── The min_sample CLIFF was removed 2026-09-09 ──
+    This used to early-return gated=True whenever eff < min_sample, which
+    threw away the very property _confidence was designed to have. Two
+    mechanisms were doing the same job and the cruder one won:
+
+        confidence = eff/(eff+min_sample)  ->  9% of a step at eff=1,
+        33% at 5, 50% at 10, 80% at 40.
+
+    That is already the correct treatment of thin evidence — a proportional
+    move, sized to what the evidence is worth. The gate replaced it with
+    "learn nothing", which on a loop seeing 3-8 closes a week means most weeks
+    teach the system nothing at all.
+
+    min_sample is RETAINED, unchanged, but now serves exactly one purpose: it
+    is the scaling constant in _confidence (the effective_n at which a step is
+    half strength). It is no longer a threshold.
+
+    What still gates is MISSING evidence, which is a different thing from thin
+    evidence: effective_n of exactly 0 means no contributing close exists, and
+    there is nothing to be proportional to. That returns gated=True as before.
 
     Returns {proposed_delta, new_weight, gated, confidence}.
     """
     eff = float(sample_size if effective_n is None else effective_n)
-    if eff < cfg["min_sample"]:
-        # Gated: not enough data to move the weight, but we still record a row.
+    if eff <= 0.0:
+        # MISSING evidence, not thin evidence. No close contributed, so there
+        # is no measurement to scale down — a zero-evidence "proportional
+        # step" would be a step taken on nothing.
         return {"proposed_delta": 0.0, "new_weight": prior_weight,
                 "gated": True, "confidence": 0.0}
 
@@ -797,6 +902,32 @@ def propose_update(run_id: str | None = None, axis: str = DEFAULT_AXIS) -> dict:
                 proposed_delta = 0.0
                 gated = True
 
+        # ── Materiality (2026-09-09) ─────────────────────────────────
+        # Recorded as a BOUND GUARD when the move is too small to surface.
+        # That is not cosmetic: kairos_autonomy.auto_apply skips any proposal
+        # whose evidence carries a bound guard ("escalating to human"), and
+        # exit_timing IS in AUTO_APPLY_AXES. Without this, a sub-threshold
+        # proposal that never raised a card could still auto-apply — a change
+        # to live exit behaviour that no human ever saw. Using the existing
+        # guard-bind contract achieves the block without touching
+        # kairos_autonomy.py, and it is honest: a guard did bind, and the
+        # documented consequence of a bind is that a human decides.
+        _material = is_material(axis, prior_weight, proposed_delta)
+        evidence["materiality"] = {
+            "threshold": round(materiality_threshold(axis, prior_weight), 6),
+            "delta": round(abs(proposed_delta), 6),
+            "material": bool(_material),
+            "basis": "absolute weight units",
+        }
+        if not _material and abs(proposed_delta) > 1e-9:
+            guards["materiality"] = {
+                "bound": True,
+                "reason": (f"|Δ| {abs(proposed_delta):.6f} < materiality "
+                           f"threshold {materiality_threshold(axis, prior_weight):.6f}"
+                           f" — recorded, not surfaced, and NOT auto-appliable"),
+                "would_have_been": round(new_weight, 6),
+            }
+
         # Cumulative band: bounds drift across many individually-legal steps.
         if (band.get("lo") is not None and abs(proposed_delta) > 1e-9):
             clamped = min(max(new_weight, band["lo"]), band["hi"])
@@ -846,6 +977,9 @@ def propose_update(run_id: str | None = None, axis: str = DEFAULT_AXIS) -> dict:
         "proposed_delta": proposed_delta,
         "new_weight": new_weight,
         "gated": gated,
+        "material": bool(evidence.get("materiality", {}).get("material")),
+        "materiality_threshold": evidence.get(
+            "materiality", {}).get("threshold"),
         "guards": guards,
         "evidence": evidence,
     }
@@ -955,8 +1089,8 @@ def _format_slack_propose_all(run_id: str, proposals: list[dict],
             lines.append(f"  _(plain-English render unavailable: {_exc})_")
 
         if p["gated"]:
-            detail = (f"gated — insufficient data "
-                      f"(sample {p['sample_size']} < min_sample); no change")
+            detail = (f"gated — no usable evidence "
+                      f"(effective sample {p['sample_size']}); no change")
         elif abs(p["proposed_delta"]) < 1e-9:
             detail = (f"no change (weight stays {p['new_weight']:+.4f}; "
                       f"score {p['computed_score']:+.4f}, n={p['sample_size']})")
@@ -1769,30 +1903,43 @@ def compute_param(path: str) -> dict:
     roundtrip_rate = _weighted_mean(
         [(1.0 if _is_round_trip(r) else 0.0, w) for r, w, _ in weighted])
 
-    # ── Gate (on the EFFECTIVE sample, not the exact-match count) ────
+    # ── Gate: MISSING evidence only (the min_sample cliff is gone) ───
+    # Removed 2026-09-09. `effective_n < PARAM_MIN_SAMPLE` used to gate the
+    # proposal outright, discarding the proportional scaling _confidence
+    # already applies. See compute_delta for the full reasoning; the short
+    # version is that thin evidence deserves a small step, not silence, and
+    # PARAM_MIN_SAMPLE is now purely the _confidence scaling constant.
+    #
+    # These three are genuinely-absent evidence, not thin evidence, and there
+    # is nothing for a proportional step to be proportional TO:
+    #   * no current value on disk        -> nothing to move
+    #   * effective_n exactly 0           -> no contributing close exists
+    #   * no contributing close carries a snapshot -> no measurable regime
     gate_reason = None
     if current is None:
         gate_reason = f"current value unavailable at config path {path!r}"
-    elif effective_n < PARAM_MIN_SAMPLE:
+    elif effective_n <= 0.0 or n_contributing == 0:
         _route_note = ("" if not routing["routed"] else
                        f", routed to the {routing['governs_bind_state']}-bound "
                        f"subset ({routing['n_after_routing']} of "
                        f"{routing['n_before_routing']})")
         gate_reason = (
-            f"insufficient fresh evidence: effective sample {effective_n:.2f} "
-            f"< {PARAM_MIN_SAMPLE} required "
-            f"({n_contributing} contributing of {len(all_rows)} trailing-stop "
-            f"closes, weighted by recency × parameter proximity"
-            f"{_route_note})")
+            f"no usable evidence: effective sample {effective_n:.2f} from "
+            f"{n_contributing} contributing close(s) of {len(all_rows)} "
+            f"trailing-stop closes{_route_note}. This is MISSING evidence, "
+            f"not thin evidence — a proportional step needs something to be "
+            f"proportional to")
         # A bare count says the loop is quiet; the cause says whether that is
         # expected. Always carried when the sample is EMPTY, where the ambiguity
         # between "young regime" and "broken pipeline" is total.
-        if starvation["summary"] and n == 0:
+        if starvation["summary"]:
             gate_reason += f" — {starvation['summary']}"
     gated = gate_reason is not None
 
     # Confidence from the effective sample — the anti-ratchet half of the
     # weighting trade. Weak or mostly-distant evidence buys a smaller step.
+    # This is now the ONLY thing standing between thin evidence and a full
+    # step, which is why Part 2 tightened the cumulative band underneath it.
     confidence = _confidence(effective_n, PARAM_MIN_SAMPLE)
 
     # Magnitude from the size of the net error; sign from which pole dominates.
@@ -1918,7 +2065,7 @@ def compute_param(path: str) -> dict:
 PARAM_PROPOSAL_SUMMARY_KEYS = (
     "axis", "path", "history_id", "computed_score", "sample_size",
     "prior_weight", "proposed_delta", "new_weight", "gated", "skipped",
-    "deferred", "deferral",
+    "deferred", "deferral", "material", "materiality_threshold",
 )
 
 
@@ -1955,6 +2102,12 @@ def _param_proposal_result(result: dict, run_id: str, history_id: int | None,
         "new_weight": new_weight,
         "gated": result["gated"],
         "gate_reason": result.get("gate_reason"),
+        # Big enough to raise an interactive card. Immaterial != gated: the
+        # row is written and the evidence routed either way.
+        "material": bool((result.get("evidence") or {}).get(
+            "materiality", {}).get("material")),
+        "materiality_threshold": (result.get("evidence") or {}).get(
+            "materiality", {}).get("threshold"),
         "evidence": result["evidence"],
         "evidence_hash": result["evidence"].get("evidence_hash"),
     }
@@ -2015,6 +2168,33 @@ def propose_param_update(path: str, run_id: str | None = None,
         new_weight = prior_weight
         proposed_delta = 0.0
         proposed = prior_weight
+
+    # ── Materiality (2026-09-09) ────────────────────────────────────
+    # Computed on the FINAL delta, i.e. after the coupled-family deferral has
+    # had its say — a deferred row carries a zero delta and is therefore
+    # neither material nor guard-bound here, because it is already withheld
+    # for its own reason and reads as "deferred", not "too small".
+    #
+    # Same contract as the axis path: an immaterial move is recorded but not
+    # surfaced, and the bound guard is what makes "not surfaced" also mean
+    # "not auto-appliable". Param axes are not in AUTO_APPLY_AXES today, but
+    # recording it keeps the two paths honest about the same thing, so adding
+    # a param to that list later cannot silently bypass the human gate.
+    _material = is_material(axis, prior_weight, proposed_delta)
+    result["evidence"]["materiality"] = {
+        "threshold": round(materiality_threshold(axis, prior_weight), 6),
+        "delta": round(abs(proposed_delta), 6),
+        "material": bool(_material),
+        "basis": f"{PARAM_MATERIALITY_FRAC:.0%} of the current value",
+    }
+    if not _material and abs(proposed_delta) > 1e-9 and not gated:
+        result["evidence"].setdefault("guards", {})["materiality"] = {
+            "bound": True,
+            "reason": (f"|Δ| {abs(proposed_delta):.6f} < materiality threshold "
+                       f"{materiality_threshold(axis, prior_weight):.6f} — "
+                       f"recorded, not surfaced, and NOT auto-appliable"),
+            "would_have_been": proposed,
+        }
 
     # ── Freshness gate ───────────────────────────────────────────────
     # If the contributing corpus and both endpoints are identical to the most
@@ -2251,9 +2431,14 @@ def _format_slack_propose_params(run_id: str, proposals: list[dict],
                          f"recomputed next run against the new routing)"
                          if _wb is not None else ""))
         elif p["gated"]:
-            detail = (f"gated — insufficient data (effective n {n} < "
-                      f"{PARAM_MIN_SAMPLE}); "
+            detail = (f"gated — no usable evidence (effective n {n}); "
                       f"no change (stays {p['prior_weight']:g})")
+        elif not p.get("material", True):
+            detail = (f"recorded, no card — |Δ| "
+                      f"{abs(p['proposed_delta']):g} below the "
+                      f"{PARAM_MATERIALITY_FRAC:.0%} materiality threshold "
+                      f"({p['prior_weight']:g} → {p['new_weight']:g}); "
+                      f"review with `--pending-minor`, cannot auto-apply")
         elif abs(p["proposed_delta"]) < 1e-9:
             detail = (f"no change (stays {p['new_weight']:g}; "
                       f"score {p['computed_score']:+.4f}, n={n})")
@@ -2352,6 +2537,17 @@ def _apply_param_to_config(path: str, value: float) -> str:
                 f"{path}: change {current} → {value} exceeds "
                 f"{PARAM_MAX_CHANGE_FRAC:.0%} of the current value — refusing to apply")
 
+    # Ordered-pair refusal, checked BEFORE the cumulative band. Both refuse a
+    # crossing value, but this message is the more specific diagnosis — "a
+    # floor above the ceiling is not a band" tells you the structure is wrong,
+    # where the band message only says the move was too big. Since the band
+    # tightened to 0.15 it now pre-empts most crossings, so without this
+    # reordering the structural error would always be reported as a drift
+    # error. Nothing changes about WHAT is refused, only which reason is given.
+    cross = _ordering_violation(path, value)
+    if cross is not None:
+        raise ValueError(f"{path}: {cross} — refusing to apply")
+
     # Cumulative window band. This is the guard the ratchet defeated: each of
     # its three steps was inside ±25% of the value the step before had written,
     # so the per-step check passed every time while the parameter halved. The
@@ -2363,14 +2559,6 @@ def _apply_param_to_config(path: str, value: float) -> str:
             f"{path}={value} violates the cumulative {PARAM_CUMULATIVE_WINDOW_DAYS}-day "
             f"band [{band['lo']}, {band['hi']}] anchored at {band['base_7d']} "
             f"(±{PARAM_CUMULATIVE_BAND_FRAC:.0%}) — refusing to apply")
-
-    # Ordered-pair refusal. The proposal path already gates a crossing value,
-    # but a proposal can sit pending while the OTHER bound moves, so the
-    # apply side is what actually holds — same reasoning as the cumulative
-    # band above.
-    cross = _ordering_violation(path, value)
-    if cross is not None:
-        raise ValueError(f"{path}: {cross} — refusing to apply")
 
     # Timestamped backup of the exact current file BEFORE any write.
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -2486,6 +2674,75 @@ def apply_decision(history_id: int, decision: str, decided_by: str) -> dict:
 
 # ── Slack + formatting ───────────────────────────────────────────────
 
+def format_minor_digest(proposals: list) -> str | None:
+    """One line summarising the sub-threshold proposals, or None if there are none.
+
+    Goes into the daily Arbiter post so that recorded-but-unsurfaced proposals
+    are visible without each one interrupting. The largest is named because
+    that is the only one a reader might want to go look at.
+    """
+    minor = [p for p in (proposals or [])
+             if not p.get("gated") and not p.get("skipped")
+             and not p.get("deferred")
+             and abs(p.get("proposed_delta") or 0.0) > 1e-9
+             and not p.get("material")]
+    if not minor:
+        return None
+
+    def _rel(p):
+        prior = abs(float(p.get("prior_weight") or 0.0))
+        d = abs(float(p["proposed_delta"]))
+        return (d / prior) if prior > 0 else d
+
+    biggest = max(minor, key=_rel)
+    name = (biggest.get("path") or biggest.get("axis", "?")).rsplit(".", 1)[-1]
+    prior = abs(float(biggest.get("prior_weight") or 0.0))
+    d = float(biggest["proposed_delta"])
+    size = (f"{d / prior * 100:+.1f}%" if prior > 0 else f"{d:+.4f}")
+    return (f":memo: {len(minor)} sub-threshold proposal(s) recorded, no card "
+            f"raised (largest: `{name}` {size}). Review with "
+            f"`--pending-minor`; none can auto-apply.")
+
+
+def pending_minor(limit: int = 50) -> list:
+    """Standing 'proposed' rows that were recorded but never surfaced.
+
+    Reads the materiality block written at propose time rather than
+    re-deriving the threshold, so this reports what was ACTUALLY decided at
+    the time — the threshold or the current value may have moved since.
+    """
+    from kairos_log_db import get_connection, init_db
+    init_db()
+    conn = get_connection()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM axis_weight_history WHERE status = 'proposed' "
+            "ORDER BY id DESC LIMIT ?", (limit,))]
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        try:
+            ev = json.loads(r["evidence"] or "{}") or {}
+        except (json.JSONDecodeError, TypeError):
+            ev = {}
+        m = ev.get("materiality") or {}
+        if m.get("material") is False and abs(r["proposed_delta"] or 0.0) > 1e-9:
+            out.append({
+                "id": r["id"], "axis": r["axis"], "run_id": r["run_id"],
+                "prior_weight": r["prior_weight"],
+                "new_weight": r["new_weight"],
+                "proposed_delta": r["proposed_delta"],
+                "threshold": m.get("threshold"),
+                "effective_n": ev.get("effective_n"),
+                "confidence": ev.get("confidence"),
+                "created_at": r["created_at"],
+                "auto_apply_blocked": bool(
+                    (ev.get("guards") or {}).get("materiality", {}).get("bound")),
+            })
+    return out
+
+
 def _post_slack(text: str) -> bool:
     try:
         sys.path.insert(0, SCRIPT_DIR)
@@ -2513,7 +2770,10 @@ def _bucket_table_lines(buckets: list[dict]) -> list[str]:
 
 def _format_slack_proposal(p: dict) -> str:
     ev = p["evidence"]
-    gated = " _(GATED: sample below min_sample → Δ forced to 0)_" if p["gated"] else ""
+    gated = (" _(GATED: no usable evidence → Δ forced to 0)_"
+             if p["gated"] else
+             ("" if p.get("material", True) else
+              " _(recorded only — below the materiality threshold, no card)_"))
     lines = [
         f":balance_scale: *Axis weight proposal — `{p['axis']}`*  |  run {p['run_id']}"
     ]
@@ -2633,7 +2893,8 @@ def _cli_compute(axis: str) -> int:
         print(f"  sample_size (either pole):            {result['sample_size']}"
               f"  (min_sample={cfg['min_sample']})")
     if delta["gated"]:
-        print(f"  would-be Δ: 0.000000 (GATED — effective sample < min_sample)")
+        print(f"  would-be Δ: 0.000000 (GATED — no usable evidence; "
+              f"thin evidence would propose proportionally)")
     print(f"  prior weight:   {prior:+.6f}")
     print(f"  would-be Δ:     {delta['proposed_delta']:+.6f}  "
           f"(lr={cfg['learning_rate']}, cap=±{cfg['per_run_cap']})")
@@ -2673,6 +2934,32 @@ def _cli_propose_all() -> int:
           f"{'OK' if result['slack_posted'] else 'FAILED'}")
     print("\n  ----- Slack message text -----")
     print(result["slack_text"])
+    return 0
+
+
+def _cli_pending_minor() -> int:
+    rows = pending_minor()
+    print("  Sub-threshold proposals — recorded, NOT surfaced, NOT auto-appliable.")
+    print(f"  Card thresholds: params {PARAM_MATERIALITY_FRAC:.0%} of the current "
+          f"value; axes {AXIS_MATERIALITY_ABS} absolute.\n")
+    if not rows:
+        print("  None standing.")
+        return 0
+    print(f"  {'id':>5} {'axis':<48}{'prior':>10}{'->new':>10}{'delta':>10}"
+          f"{'thresh':>9}{'eff_n':>8}{'conf':>7}  blocked")
+    print("  " + "-" * 112)
+    for r in rows:
+        eff = r["effective_n"]
+        conf = r["confidence"]
+        print(f"  {r['id']:>5} {r['axis']:<48}{(r['prior_weight'] or 0):>10.4f}"
+              f"{(r['new_weight'] or 0):>10.4f}{(r['proposed_delta'] or 0):>+10.4f}"
+              f"{(r['threshold'] or 0):>9.4f}"
+              f"{(eff if eff is not None else float('nan')):>8.2f}"
+              f"{(conf if conf is not None else float('nan')):>7.3f}"
+              f"  {'yes' if r['auto_apply_blocked'] else 'NO — CHECK'}")
+    print("  " + "-" * 112)
+    print(f"  {len(rows)} standing. Approve one deliberately with "
+          f"`--approve <ID>` if you want it applied.")
     return 0
 
 
@@ -2774,11 +3061,17 @@ def _print_param_compute(r: dict) -> None:
                   f"  eff_n={b['effective_n']:.3f}"
                   f"{'  <- exact match' if b['exact_match'] else ''}")
     if r["gated"]:
-        print(f"     GATED (effective_n < {PARAM_MIN_SAMPLE} or value absent) — "
-              f"no change; proposed stays {r['proposed_value']}")
+        print(f"     GATED — no usable evidence (not thin evidence); no change, "
+              f"proposed stays {r['proposed_value']}")
+        print(f"       reason: {r.get('gate_reason')}")
     else:
-        print(f"     proposed_value={r['proposed_value']} "
-              f"(Δ {r['proposed_value'] - r['current_value']:+g})")
+        d = r["proposed_value"] - r["current_value"]
+        th = materiality_threshold(PARAM_PREFIX + r["path"], r["current_value"])
+        mat = is_material(PARAM_PREFIX + r["path"], r["current_value"], d)
+        print(f"     proposed_value={r['proposed_value']} (Δ {d:+g})")
+        print(f"       materiality: |Δ| {abs(d):.4f} vs threshold {th:.4f} "
+              f"({PARAM_MATERIALITY_FRAC:.0%} of current) -> "
+              f"{'CARD RAISED' if mat else 'recorded only, no card'}")
 
 
 def _cli_compute_params(dry_run: bool) -> int:
@@ -2967,6 +3260,10 @@ def main() -> int:
                        help="Run the param propose→approve self-test against /tmp copies.")
     group.add_argument("--review", action="store_true",
                        help="List all pending ('proposed') proposals with evidence")
+    group.add_argument("--pending-minor", action="store_true",
+                       help="List recorded-but-unsurfaced (sub-materiality) "
+                            "proposals. These raised no card and cannot "
+                            "auto-apply; this is how you review them.")
     group.add_argument("--approve", type=int, metavar="ID",
                        help="Approve a pending proposal: apply its new_weight")
     group.add_argument("--reject", type=int, metavar="ID",
@@ -2992,6 +3289,8 @@ def main() -> int:
         return _selftest()
     if args.review:
         return _cli_review()
+    if args.pending_minor:
+        return _cli_pending_minor()
     if args.approve is not None:
         return _cli_decide(args.approve, "approve", args.by)
     if args.reject is not None:
