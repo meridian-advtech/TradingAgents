@@ -428,6 +428,7 @@ def evaluate_position(
     ta_cfg = ts_cfg.get("target_armed", {})
     trail = None
     target_armed = False
+    atr_ctx = None
     if ta_cfg.get("enabled", False):
         try:
             from kairos_ml_outcomes import get_thesis_target
@@ -437,6 +438,33 @@ def evaluate_position(
         if target is not None and peak_gain_pct >= target:
             trail = float(ta_cfg.get("trail_pct", 8.0))
             target_armed = True
+            # ── ATR-scaled trail ────────────────────────────────────
+            # Computed on EVERY arm, including while atr_enabled is false —
+            # that is the shadow period: the bind state gets measured and
+            # recorded so each of the three parameters has an evidence pool
+            # before the behaviour flips. ATR is read once, at the first arm,
+            # and reused from the store thereafter (kairos_atr_trail.
+            # arm_context), so the trail cannot tighten underneath a live
+            # position as its volatility subsides.
+            try:
+                import kairos_atr_trail as _atr
+                atr_ctx = _atr.arm_context(
+                    ticker, cfg=cfg, peak_gain_pct=peak_gain_pct,
+                    target=target)
+                if ta_cfg.get("atr_enabled", False):
+                    if atr_ctx["bind_state"] != _atr.BIND_NO_ATR:
+                        trail = float(atr_ctx["trail_pct"])
+                    else:
+                        # Fall back to trail_pct and SAY SO. Applying
+                        # trail_lo_pct here would look like a measurement and
+                        # would land in trail_lo_pct's evidence pool on the
+                        # strength of a missing data point.
+                        print(f"    {ticker}: ATR14 unavailable — armed trail "
+                              f"falls back to trail_pct {trail:.4f}%")
+            except Exception as _exc:
+                # Never let attribution break an exit evaluation.
+                print(f"    {ticker}: ATR trail unavailable ({_exc}); "
+                      f"using trail_pct {trail:.4f}%")
     if trail is None:
         trail = trailing_stop_threshold(peak_gain_pct, cfg)
     if trail is not None:
@@ -473,7 +501,13 @@ def evaluate_position(
                 backstop = cap
                 close_trail = min(close_trail, cap)
                 _floor_tag = " [profit-floor]"
+        _atr_tag = ""
+        if (target_armed and atr_ctx is not None
+                and ta_cfg.get("atr_enabled", False)
+                and atr_ctx.get("bind_state") != "no_atr"):
+            _atr_tag = f" [atr-{atr_ctx['bind_state']}]"
         _tag = ("" + (" [target-armed]" if target_armed else "")
+                + _atr_tag
                 + (" [IPO-widened]" if ipo_widened else "") + _floor_tag)
         if retreat >= backstop:
             return (f"TRAILING-STOP: retreated {retreat:.1f}% from peak "
@@ -773,6 +807,11 @@ def run_exit_engine(ib=None, regime: str | None = None, dry_run: bool = False) -
 
     # Per-run caches: one DB read and one history fetch per ticker, at most.
     clear_daily_closes_cache()
+    try:
+        import kairos_atr_trail
+        kairos_atr_trail.clear_atr_cache()
+    except Exception:
+        pass
     try:
         from kairos_ml_outcomes import clear_invalidation_cache
         clear_invalidation_cache()

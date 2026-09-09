@@ -360,10 +360,33 @@ def write_trade_open(
 # snapshot does not record, _snapshot_value returns None, so _in_regime is False
 # for EVERY trade and that param sits gated at n=0 forever. It fails closed, but
 # silently, and reads exactly like a regime that has not filled in yet.
-# kairos_selftest_learning.py asserts the two lists agree.
+# kairos_selftest_learning.py asserts every proposable path is recorded here.
+#
+# DUAL-STAMPING (2026-09-09). The ATR-scaled trail ships with atr_enabled=false,
+# so behaviour is unchanged — but all four new paths are stamped from the moment
+# this lands, NOT from the moment the behaviour flips. The trail's evidence pool
+# refills at 3-8 closes a week. If atr_mult only started being stamped when
+# atr_enabled went true, its effective_n would be 0 on day one and would stay
+# there for weeks, which is precisely the starvation the weighted-evidence work
+# fixed on 2026-09-09 — and proximity weighting CANNOT rescue it, because an
+# unstamped close has no parameter distance to measure, only missing data.
+# Stamping during the shadow period means the pool is already populated when
+# the switch is flipped.
+#
+# atr_enabled is stamped for PROVENANCE, not as a regime key: _snapshot_value
+# rejects booleans, so _in_regime is always False for it. That is correct — it
+# is not learnable and must never be in PARAM_WHITELIST — but it is the only
+# field that tells you whether a given close ran under the ATR trail or the
+# fixed fallback, which the bind-state routing needs.
 SNAPSHOT_PARAM_PATHS = (
+    # Deprecated as the primary trail, still the fallback — keep stamping it.
     "exits.trailing_stop.target_armed.trail_pct",
     "exits.trailing_stop.profit_floor_pp",
+    # ATR-scaled trail (shadow from 2026-09-09; behaviour off).
+    "exits.trailing_stop.target_armed.atr_enabled",
+    "exits.trailing_stop.target_armed.atr_mult",
+    "exits.trailing_stop.target_armed.trail_lo_pct",
+    "exits.trailing_stop.target_armed.trail_hi_pct",
 )
 
 
@@ -407,7 +430,10 @@ def _live_axis_weights() -> dict:
 def build_exit_params_snapshot(reconstructed: bool = False,
                                param_overrides: Optional[dict] = None,
                                weight_overrides: Optional[dict] = None,
-                               as_of: Optional[str] = None) -> dict:
+                               as_of: Optional[str] = None,
+                               ticker: Optional[str] = None,
+                               entry_date: Optional[str] = None,
+                               arm_context: Optional[dict] = None) -> dict:
     """The exit-engine regime to stamp on a closing trade.
 
     Live capture reads kairos_config.json + kairos.db. A backfill passes
@@ -444,6 +470,33 @@ def build_exit_params_snapshot(reconstructed: bool = False,
                                       "exits.trailing_stop")
         if found and isinstance(ts_block, dict):
             snap["trailing_stop"] = ts_block
+    # ── Clamp-bind attribution (2026-09-09) ─────────────────────────
+    # Which of the three ATR parameters actually governed this position's
+    # trail. Stamped OUTSIDE snapshot["params"] on purpose: params is the
+    # numeric regime-key namespace _snapshot_value reads, and bind_state is a
+    # string. kairos_axis_weights routes each close to exactly one parameter's
+    # evidence pool on the strength of this block, so a close without it
+    # contributes to none of the three — which is the correct outcome for a
+    # close that predates the mechanism.
+    if not reconstructed:
+        try:
+            import kairos_atr_trail as _atr
+            ctx = arm_context
+            if ctx is None and ticker:
+                # persist=False: stamping a close must never CREATE an arming
+                # record. If the position never armed, there is nothing to
+                # attribute and the block is omitted.
+                stored = _atr.latest_arm(ticker, since=entry_date)
+                ctx = _atr.arm_context(ticker, since=entry_date,
+                                       persist=False) if stored else None
+            block = _atr.snapshot_block(
+                ctx, bool(params.get(
+                    "exits.trailing_stop.target_armed.atr_enabled")))
+            if block:
+                snap["armed_trail"] = block
+        except Exception:
+            # A close must never fail because attribution could not be built.
+            pass
     snap["captured_at"] = as_of or datetime.now(timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
     return snap
@@ -540,7 +593,12 @@ def write_trade_close(
     # an already-present snapshot (e.g. one reconstructed by
     # kairos_backfill_evidence) rather than overwriting it with today's regime.
     try:
-        snapshot_json = json.dumps(build_exit_params_snapshot())
+        # ticker + entry_date let the snapshot pick up this position's OWN
+        # arming context (which of the three ATR parameters governed its
+        # trail). entry_date bounds the lookup so a re-entered ticker cannot
+        # inherit the arm context of a previous, already-closed position.
+        snapshot_json = json.dumps(build_exit_params_snapshot(
+            ticker=row["ticker"], entry_date=timestamp_entry))
     except Exception:
         snapshot_json = None
 

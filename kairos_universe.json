@@ -1,7 +1,7 @@
 {
   "metadata": {
     "description": "Kairos tiered screening universe \u2014 Tier A (S&P 500 + ETFs), Tier B (high-growth watchlist), crypto pairs",
-    "last_updated": "2026-06-30"
+    "last_updated": "2026-09-07"
   },
   "tier_a": {
     "added_date": "2026-03-01",
@@ -948,6 +948,39 @@
         "added_date": "2026-06-30",
         "promoted_from": "C",
         "promotion_reason": "HOT-CONGRESS in last 30d; HOT-INSIDER in last 30d"
+      },
+      {
+        "symbol": "CDNL",
+        "name": "Cardinal Infrastructure Group Inc.",
+        "sector": "Industrials",
+        "added_date": "2026-09-01",
+        "promoted_from": "C",
+        "promotion_reason": "filled BUY on record"
+      },
+      {
+        "symbol": "ENTR",
+        "name": "ENTRATA, INC.",
+        "sector": "Technology",
+        "added_date": "2026-09-01",
+        "source": "ipo_intake",
+        "signal_tag": "IPO_MOMENTUM",
+        "add_reason": "IPO STRONG_BUY (score 73)"
+      },
+      {
+        "symbol": "JEF",
+        "name": "Jefferies Financial Group Inc.",
+        "sector": "Financial Services",
+        "added_date": "2026-09-04",
+        "promoted_from": "C",
+        "promotion_reason": "filled BUY on record"
+      },
+      {
+        "symbol": "BABA",
+        "name": "Alibaba Group Holding Limited",
+        "sector": "Consumer Cyclical",
+        "added_date": "2026-09-07",
+        "promoted_from": "C",
+        "promotion_reason": "filled BUY on record"
       }
     ]
   },

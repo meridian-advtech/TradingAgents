@@ -30,7 +30,17 @@ REQUIRED_TABLES = [
     "decisions", "holdings", "regime_log", "crypto_decisions", 
     "crypto_holdings", "wash_sale_log", "tax_harvest_log", "reallocation_events"
 ]
-REQUIRED_MODELS = ["llama3.2", "mistral-small3.2"]
+# Model names are NOT hardcoded here. They live in kairos_config.json
+# (ollama.screen_model / ollama.reason_model) and are read through
+# kairos_ollama, which is the same source kairos_run.py's hard gate uses.
+#
+# This file previously carried REQUIRED_MODELS = ["llama3.2",
+# "mistral-small3.2"] — the fallback defaults from an earlier config, frozen
+# in place. By 2026-09-09 neither was installed (phi4-mini, qwen3.8:27b-mlx,
+# qwen3.6:35b-a3b, qwen3:30b-a3b were), so this check reported a permanent
+# false WARN against models the system had stopped using months earlier. A
+# third independent list is how that happens; there are now two, and this one
+# defers to the other.
 
 # Trading hours for cycle completion check (ET)
 TRADING_HOURS_START = 8  # 8 AM ET
@@ -164,20 +174,32 @@ def check_ollama_running(quick: bool = False) -> Tuple[str, str]:
         if response.status_code != 200:
             return "FAIL", f"Ollama API returned status {response.status_code}"
         
-        # Check for required models
+        # Check for required models — names from kairos_ollama, which reads
+        # kairos_config.json. Same source as kairos_run.py's hard gate, so
+        # this check can never disagree with what actually blocks a cycle.
         models_data = response.json()
         available_models = models_data.get("models", [])
         model_names = [m["name"] for m in available_models]
-        
-        missing_models = []
-        for required_model in REQUIRED_MODELS:
-            if required_model not in model_names:
-                missing_models.append(required_model)
-        
+
+        try:
+            from kairos_ollama import get_screen_model, get_reason_model
+            required = [get_screen_model(), get_reason_model()]
+        except Exception as exc:
+            return "WARN", f"Could not read configured model names: {exc}"
+
+        # Match on the base name before the tag, mirroring
+        # kairos_ollama.check_required_models — "phi4-mini" must match an
+        # installed "phi4-mini:latest".
+        def _installed(name: str) -> bool:
+            base = name.split(":")[0]
+            return any(m.split(":")[0] == base for m in model_names)
+
+        missing_models = [m for m in required if not _installed(m)]
+
         if missing_models:
             return "WARN", f"Missing models: {', '.join(missing_models)}"
         else:
-            return "PASS", f"All {len(REQUIRED_MODELS)} models available"
+            return "PASS", f"All {len(required)} models available"
             
     except requests.ConnectionError:
         return "FAIL", "Ollama not running (connection refused)"

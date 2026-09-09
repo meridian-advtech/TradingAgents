@@ -393,6 +393,35 @@ def init_db(reset: bool = False):
         conn.execute("SELECT axis_weights_snapshot FROM decisions LIMIT 1")
     except sqlite3.OperationalError:
         conn.execute("ALTER TABLE decisions ADD COLUMN axis_weights_snapshot TEXT")
+    # ATR-scaled armed trail (2026-09-09). Append-only record of what the
+    # engine MEASURED when a position's trail armed: the ATR, the raw and
+    # clamped trail, and which of the three parameters the clamp handed the
+    # decision to (see kairos_atr_trail.BIND_STATES).
+    #
+    # Its own table rather than columns on `holdings`, because the close path
+    # reads this AFTER the lot is marked sold, and because one row per arming
+    # is the audit trail — the trail applied to a live position has to be
+    # reconstructable after the fact, not inferred from today's config.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS armed_trail_context (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            armed_at TEXT NOT NULL,
+            atr_pct REAL,
+            raw_trail_pct REAL,
+            trail_pct REAL,
+            bind_state TEXT,
+            atr_mult REAL,
+            trail_lo_pct REAL,
+            trail_hi_pct REAL,
+            fallback_trail_pct REAL,
+            atr_enabled INTEGER NOT NULL DEFAULT 0,
+            peak_gain_pct REAL,
+            target_pct REAL,
+            created_at TEXT
+        )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_armed_trail_ticker "
+                 "ON armed_trail_context(ticker, armed_at)")
     conn.commit()
     conn.close()
 

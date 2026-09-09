@@ -147,11 +147,27 @@ def _axis_evidence_lines(p: dict, ev: dict, n: int, delta: float,
 
     total = ev.get("n_total_closed")
     excl = ev.get("n_excluded_out_of_regime")
+    no_snap = ev.get("n_excluded_no_snapshot")
     pend = ev.get("n_pending")
+    eff = ev.get("effective_n")
+    matured = ev.get("n_matured")
+    down = ev.get("n_downweighted")
     if total:
-        bits = [f"{n} of {total} closed trades"]
+        # Evidence is weighted, not filtered (2026-09-09), so the provenance
+        # line has to say "counted less" rather than "excluded" or a reviewer
+        # will read a small effective sample as a small corpus.
+        if eff is not None and matured:
+            bits = [f"{matured} of {total} closed trades, weighted to an "
+                    f"effective {eff:.1f}"]
+        else:
+            bits = [f"{n} of {total} closed trades"]
+        if down:
+            bits.append(f"{down} closed under different settings "
+                        f"(counted less, not dropped)")
         if excl:
             bits.append(f"{excl} excluded (closed under different settings)")
+        if no_snap:
+            bits.append(f"{no_snap} unusable (no settings snapshot)")
         if pend:
             bits.append(f"{pend} still maturing")
         lines.append(f"   _Evidence base: {'; '.join(bits)}_")
@@ -169,10 +185,24 @@ def explain_param_proposal(p: dict) -> list[str]:
     lines: list[str] = [f":robot_face: *{path}* - proposed change"]
 
     direction = ev.get("direction")
-    if cur is not None and new is not None and abs((new or 0) - (cur or 0)) > 1e-9:
-        human = {"tighten": "exit sooner / protect gains earlier",
-                 "loosen": "give positions more room to run"}.get(
-                     direction, direction or "adjust")
+    human = {"tighten": "exit sooner / protect gains earlier",
+             "loosen": "give positions more room to run"}.get(
+                 direction, direction or "adjust")
+    # A DEFERRED proposal is not a no-op. "nothing changes" would under-read it:
+    # the evidence cleared every gate and the move is real, it is just queued
+    # behind a coupled sibling for one run. Say that in the plain-English
+    # header, not only in the raw bullet underneath.
+    deferral = ev.get("deferred") or {}
+    if deferral:
+        would = deferral.get("would_have_been")
+        lines.append(f"   *What changes:* nothing THIS RUN - deferred, not rejected")
+        if cur is not None and would is not None:
+            lines.append(f"      the evidence supports {human}: "
+                         f"{cur:.4f} -> {would:.4f}")
+        sib = (deferral.get("applied_instead") or "").rsplit(".", 1)[-1]
+        lines.append(f"      held because `{sib}` moved this run and changes "
+                     f"which trades this parameter governs; recomputed next run")
+    elif cur is not None and new is not None and abs((new or 0) - (cur or 0)) > 1e-9:
         lines.append(f"   *What changes:* {human}")
         lines.append(f"      value {cur:.4f} -> *{new:.4f}*")
     else:
@@ -185,7 +215,10 @@ def explain_param_proposal(p: dict) -> list[str]:
     horizon = ev.get("forgone_horizon_days")
     rt = ev.get("roundtrip_rate")
     if n and mfe is not None and pnl is not None:
-        lines.append(f"   *Why:* across {n} qualifying trailing-stop exit(s)")
+        qual = ev.get("n_contributing") or n
+        lines.append(f"   *Why:* across {qual} qualifying trailing-stop exit(s), "
+                     f"weighted by recency and by how close each one's settings "
+                     f"were to today's")
         lines.append(f"      - peaked at *+{mfe:.1f}%* but closed at *{pnl:+.1f}%*")
         if give is not None:
             lines.append(f"      - gave back *{give:.1f}pp* from peak")
@@ -210,14 +243,31 @@ def _param_tail_lines(ev: dict, n: int, direction) -> list[str]:
 
     tot = ev.get("n_total_trailing_stop")
     excl = ev.get("n_excluded_out_of_regime")
+    no_snap = ev.get("n_excluded_no_snapshot")
     nonc = ev.get("n_excluded_non_contributing")
+    contrib = ev.get("n_contributing")
+    eff = ev.get("effective_n")
+    down = ev.get("n_downweighted")
+    conf = ev.get("confidence")
     if tot:
-        bits = [f"{n} of {tot} trailing-stop closes"]
+        if eff is not None and contrib:
+            bits = [f"{contrib} of {tot} trailing-stop closes, weighted to an "
+                    f"effective {eff:.1f}"]
+        else:
+            bits = [f"{n} of {tot} trailing-stop closes"]
+        if down:
+            bits.append(f"{down} closed under different settings "
+                        f"(counted less, not dropped)")
         if excl:
             bits.append(f"{excl} closed under different settings")
+        if no_snap:
+            bits.append(f"{no_snap} unusable (no settings snapshot)")
         if nonc:
             bits.append(f"{nonc} non-contributing")
         lines.append(f"   _Evidence base: {'; '.join(bits)}_")
+    if conf is not None and conf < 0.999:
+        lines.append(f"   _Step scaled to {conf * 100:.0f}% of full strength "
+                     f"by the weight of the evidence behind it_")
 
     gate = ev.get("gate_reason")
     if gate:

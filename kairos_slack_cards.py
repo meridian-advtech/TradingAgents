@@ -222,14 +222,29 @@ def _param_why(ev: dict, cur, changed: bool) -> str:
         return ("Not enough fresh trades have closed under the current setting with complete "
                 "peak/after-sale data to justify a change yet." + (f" ({gr})" if gr else ""))
 
+    # 2026-09-09: evidence is WEIGHTED, not filtered to the exact current
+    # setting. The card has to say so — "N trades under the current setting"
+    # would now be a false claim about where the averages came from.
+    n_contrib = ev.get("n_contributing")
+    eff = ev.get("effective_n")
+    conf = ev.get("confidence")
+    if n_contrib and eff is not None:
+        basis = (f"Across *{n_contrib}* trailing-stop trades — weighted by how "
+                 f"recent each one is and how close its setting was to the "
+                 f"current {_pct(cur)}, for an effective sample of *{eff:.1f}*")
+    else:
+        basis = f"Across *{n}* trades under the current {_pct(cur)} setting"
     lines = [
-        f"Across *{n}* trades under the current {_pct(cur)} setting: they reached "
+        f"{basis}: they reached "
         f"*{_pct(mfe)}* average peak gain while held, but gave back *{_pct(gb)}* of "
         f"that from the peak. Looking {horizon or 14} days past the sale, the stock kept "
         f"running another *{_pct(fg)}* on average (gains missed after selling)."
     ]
     if rt is not None and rt_rate is not None:
-        lines.append(f"*{rt}* of these ({rt_rate:.0%}) round-tripped from a real peak to a worse exit.")
+        lines.append(f"*{rt}* of these ({rt_rate:.0%} weighted) round-tripped from a real peak to a worse exit.")
+    if conf is not None and conf < 0.999:
+        lines.append(f"That evidence supports *{conf:.0%}* of a full-strength "
+                     f"step, so the proposed move is scaled down accordingly.")
     summ = starv.get("summary")
     if summ:
         lines.append(f"_({summ})_")

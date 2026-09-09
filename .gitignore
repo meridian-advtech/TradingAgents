@@ -95,3 +95,6 @@ kairos_ml_result.json
 # Arbiter reports — generated nightly/weekly, not source
 arbiter_reports/
 kairos_news_summary.txt
+
+# ATR-trail backtest price cache (large binary, regenerable)
+.atr_trail_backtest_prices.pkl

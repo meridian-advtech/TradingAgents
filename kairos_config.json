@@ -235,7 +235,13 @@
       "_ipo_note": "Young IPOs whip-saw on day-1/2 noise. For the first ipo_window_days HOLDING days, the trailing-stop trail (and thus the intraday backstop = trail x intraday_mult) is widened by ipo_multiplier so normal IPO volatility does not trigger a profit-capture exit. IPO identity is read from kairos_ipo_cache.json (detected set), NOT the signal tag, which is lost once a position is held.",
       "target_armed": {
         "enabled": true,
-        "trail_pct": 6.9469
+        "trail_pct": 6.2255,
+        "_trail_pct_deprecated": "DEPRECATED 2026-09-09 as the PRIMARY trail, retained as the fallback and NOT deleted. Still a percentage. Governs the armed trail whenever atr_enabled is false, or when ATR14 is unavailable for the ticker at arm time. Do not repurpose this key as a multiplier: the 75 trailing-stop closes already stamped with it would silently change meaning, and the regime window compares snapshot values numerically.",
+        "atr_enabled": false,
+        "atr_mult": 0.75,
+        "trail_lo_pct": 2.0,
+        "trail_hi_pct": 4.0,
+        "_atr_note": "ATR-scaled armed trail (kairos_backtest_atr_trail.py, n=156 armed closes over 3.7 months): trail = clamp(atr_mult * ATR14/price * 100, trail_lo_pct, trail_hi_pct), with ATR14 taken ONCE at arm time, not recomputed per cycle. Backtested +92.6 pts vs the fixed 6.2255 with median give-back 4.15 vs 5.47, zero closes over 10pp give-back, and no measurable whipsaw increase at 5/14/30d. [2.0,4.0] chosen over the [2.0,4.5] sibling deliberately: start tight and let the learning loop loosen it if exits prove premature. Give-back is capped at min(trail*intraday_mult, peak-profit_floor_pp), so trail_hi_pct is the parameter that bounds worst-case give-back: 4.0 * 1.5 = 6.0pp. atr_enabled ships FALSE \u2014 J flips it after reviewing the shadow period, same deployment pattern as target_armed and price_invalidation."
       },
       "_target_armed_note": "TARGET-ARMED trail (backtest-verified, +31.6pts over flat tiers on n=49): no trail arms until peak_gain_pct reaches the position's own logged thesis target (predicted_return_pct from thesis_predictions); THEN a flat trail_pct trail arms, harvesting only the give-back on the SURPLUS above what the thesis promised. Falls back to the flat tiers above for any ticker with no logged target. enabled=false ships as a no-op; J flips true after reviewing dry-run output.",
       "profit_floor_pp": 1.1867,
@@ -546,6 +552,78 @@
       "cik": "1317685",
       "accession": "0001104659-26-097534",
       "ipo_score": 55
+    },
+    {
+      "name": "LOGOOM TECHNOLOGIES, INC.",
+      "expected_ticker": "PENDING",
+      "alt_tickers": [],
+      "sector": "Technology",
+      "status": "watch",
+      "notes": "Auto-discovered S-1 (score 45/100, WATCH). Score 45/100: $1.0B rev; led by UBS; high-signal sector",
+      "discovered_at": "2026-09-01T13:32:46Z",
+      "cik": "2124913",
+      "accession": "0001640334-26-001434",
+      "ipo_score": 45
+    },
+    {
+      "name": "Wella Co",
+      "expected_ticker": "PENDING",
+      "alt_tickers": [],
+      "sector": "Consumer",
+      "status": "watch",
+      "notes": "Auto-discovered S-1 (score 53/100, WATCH). Score 53/100: $2.9B rev; led by Goldman Sachs, J.P. Morgan",
+      "discovered_at": "2026-09-01T13:32:47Z",
+      "cik": "2125056",
+      "accession": "0001628280-26-059572",
+      "ipo_score": 53
+    },
+    {
+      "name": "Syntiant Corp.",
+      "expected_ticker": "PENDING",
+      "alt_tickers": [],
+      "sector": "Technology",
+      "status": "watch",
+      "notes": "Auto-discovered S-1 (score 65/100, WATCH). Score 65/100: $260M rev; +16150% growth; led by BofA, Merrill Lynch; high-signal sector",
+      "discovered_at": "2026-09-01T13:32:47Z",
+      "cik": "1718728",
+      "accession": "0001193125-26-376166",
+      "ipo_score": 65
+    },
+    {
+      "name": "Game Your Game Inc.",
+      "expected_ticker": "PENDING",
+      "alt_tickers": [],
+      "sector": "Technology",
+      "status": "watch",
+      "notes": "Auto-discovered S-1 (score 50/100, WATCH). Score 50/100: $1.2B rev; led by UBS; high-signal sector",
+      "discovered_at": "2026-09-08T13:31:32Z",
+      "cik": "2111846",
+      "accession": "0001213900-26-097734",
+      "ipo_score": 50
+    },
+    {
+      "name": "Nexalin Technology, Inc.",
+      "expected_ticker": "PENDING",
+      "alt_tickers": [],
+      "sector": "Technology",
+      "status": "watch",
+      "notes": "Auto-discovered S-1 (score 50/100, WATCH). Score 50/100: $1.2B rev; led by UBS; high-signal sector",
+      "discovered_at": "2026-09-08T13:31:32Z",
+      "cik": "1527352",
+      "accession": "0001829126-26-009723",
+      "ipo_score": 50
+    },
+    {
+      "name": "Oura Inc.",
+      "expected_ticker": "PENDING",
+      "alt_tickers": [],
+      "sector": "Technology",
+      "status": "watch",
+      "notes": "Auto-discovered S-1 (score 69/100, WATCH). Score 69/100: $1.2B rev; +25% growth; led by Goldman Sachs, Morgan Stanley; $50M raise; high-signal sector",
+      "discovered_at": "2026-09-08T13:31:32Z",
+      "cik": "2133022",
+      "accession": "0001193125-26-381855",
+      "ipo_score": 69
     }
   ],
   "ai_value_chain": [
