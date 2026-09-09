@@ -79,8 +79,19 @@ _sim_now = NOW
 def set_probes(agents=None, ollama=None, ibkr=None, cycles=None, crashes=None):
     """Install probe stubs; each argument defaults to the healthy answer."""
     H._launchctl_labels = lambda: (agents if agents is not None else (set(H.EXPECTED_AGENTS), ""))
+    # The healthy default derives from the SAME resolver the check uses rather
+    # than a hardcoded pair. It was ["phi4-mini:latest", "qwen3.6:35b-a3b"];
+    # config's reason_model moved to qwen3.8:27b-mlx on ~2026-08-19 and the
+    # fixture did not, so the "healthy" baseline silently became an unhealthy
+    # one. Every test asserting a clean baseline then produced a finding, and
+    # because several assert on TOTAL finding counts it cascaded into checks
+    # that have nothing to do with Ollama: 79/79 -> 55/79, with the IBKR grace
+    # and scheduler tests reading as failures. Deriving it means a future model
+    # change cannot rot this file.
     H._fetch_ollama_tags = lambda: (
-        ollama if ollama is not None else (["phi4-mini:latest", "qwen3.6:35b-a3b"], None)
+        ollama if ollama is not None
+        else ([f"{m}:latest" if ":" not in m else m
+               for m in H._required_ollama_models()], None)
     )
     H._probe_ibkr_port = lambda: (
         ibkr if ibkr is not None else (True, "localhost:7497 accepting connections")
@@ -165,16 +176,20 @@ set_probes(ollama=([], None))
 out = run(fresh_state())
 msg_d = out["message"]
 ck("one finding", len(out["findings"]) == 1)
-ck("names phi4-mini", "phi4-mini" in msg_d)
-ck("names qwen3.6:35b-a3b", "qwen3.6:35b-a3b" in msg_d)
-ck("gives the pull commands", "ollama pull phi4-mini" in msg_d)
+_screen, _reason = H._required_ollama_models()
+ck(f"names {_screen}", _screen in msg_d)
+ck(f"names {_reason}", _reason in msg_d)
+ck("gives the pull commands", f"ollama pull {_screen}" in msg_d)
 ck("distinguishes 'responding but missing' from 'down'", "is responding but" in msg_d)
 if SHOW:
     show("Ollama models missing", msg_d)
 
 
 print("\n=== D2. A :latest tag still counts as present ===")
-set_probes(ollama=(["phi4-mini:latest", "qwen3.6:35b-a3b"], None))
+# Force every required model to carry an explicit :latest tag — the point is
+# that a tagged name matches an untagged requirement, not these two names.
+set_probes(ollama=([f"{m.split(':')[0]}:latest"
+                    for m in H._required_ollama_models()], None))
 out = run(fresh_state())
 ck("no false 'missing model' on :latest", out["findings"] == [])
 
