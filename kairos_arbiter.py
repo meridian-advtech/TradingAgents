@@ -958,6 +958,12 @@ def build_user_prompt(mode: str, today: str, closed: list[dict],
             "position; flag anything deep underwater.\n"
             "  *Flags* — systemic issues only (signal vacuum, overdue cluster, "
             "conviction/outcome mismatch). Omit if nothing is notable.\n"
+            "  *Mechanism Review* — using the MECHANISM SCORECARD appended below: "
+            "for every mechanism it FLAGS, give a verdict of KEEP, TIGHTEN, or "
+            "DISABLE, citing its numbers (win rate, fwd14 vs SPY, n). Judge "
+            "loss-cutting exits (STOP-LOSS, PRICE-INVALIDATION) ONLY on fwd14 vs "
+            "SPY — a low win rate is their job. Never recommend a change on n<5; "
+            "say 'insufficient evidence' instead.\n"
         )
     else:  # daily
         instructions = (
@@ -1346,6 +1352,17 @@ def main() -> int:
 
     stats = compute_aggregates(closed)
     user_prompt = build_user_prompt(mode, today, closed, open_pos, stats)
+    # Mechanism scorecard (added 2026-09-28): the Arbiter learned parameters but
+    # never judged whether whole mechanisms work. Weekly only — 7d/28d windows
+    # are too noisy to rule on daily.
+    scorecard_text = None
+    if mode == "weekly":
+        try:
+            from kairos_scorecard import build_scorecard_text
+            scorecard_text = build_scorecard_text()
+            user_prompt += "\n\n" + scorecard_text
+        except Exception as exc:
+            print(f"  WARNING: mechanism scorecard unavailable: {exc}")
 
     print(f"  Closed trades in window: {len(closed)}  |  Open positions: {len(open_pos)}")
 
@@ -1427,6 +1444,8 @@ def main() -> int:
     slack_text = format_slack_report(mode, today, response, len(closed), len(open_pos))
     posted = post_to_slack(ARBITER_CHANNEL, slack_text)
     print(f"  Slack post to {ARBITER_CHANNEL}: {'OK' if posted else 'FAILED'}")
+    if scorecard_text:
+        post_to_slack(ARBITER_CHANNEL, ":bar_chart: *Mechanism Scorecard*\n```" + scorecard_text + "```")
 
     # ── Auto-propose fresh axis weights + exit params (daily & weekly) ──
     # After the analysis post, refresh the proposals so the learning loop keeps
