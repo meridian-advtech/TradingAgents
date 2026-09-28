@@ -641,6 +641,48 @@ def is_protected(ticker: str) -> bool:
     return row is not None
 
 
+def entry_signals_before(ticker: str, before_ts: str | None = None, conn=None) -> list[str]:
+    """Signals that drove the most recent FILLED BUY of `ticker` at or before
+    `before_ts` (latest overall if None).
+
+    Source is decisions.data_inputs.confluence.signals, written at decision
+    time — deliberately NOT trade_outcomes.signals_fired, which is partly
+    reconstructed from rationale text and known to over-attribute.
+
+    Exists because 282 of 331 position_exits_history rows (85%, measured
+    2026-09-28) carried empty exit_signals. Four exit paths never passed them
+    at all (REALLOCATION, THESIS-INVALID, PRICE-CONTRADICTION, TAX-HARVEST),
+    and even the exits engine passes signals CURRENT at exit, which are often
+    genuinely none. The re-entry guard compares new signals against these, so
+    an empty set made every current signal look 'new' and the guard waved
+    everything through — it had never blocked a single buy.
+    """
+    own = conn is None
+    if own:
+        conn = get_connection()
+    try:
+        if before_ts:
+            row = conn.execute(
+                "SELECT data_inputs FROM decisions WHERE ticker = ? AND action = 'BUY' "
+                "AND execution_status = 'Filled' AND substr(timestamp,1,19) <= substr(?,1,19) "
+                "ORDER BY id DESC LIMIT 1", (ticker, before_ts)).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT data_inputs FROM decisions WHERE ticker = ? AND action = 'BUY' "
+                "AND execution_status = 'Filled' ORDER BY id DESC LIMIT 1",
+                (ticker,)).fetchone()
+        if not row or not row[0]:
+            return []
+        di = json.loads(row[0])
+        sigs = (di.get("confluence") or {}).get("signals") or di.get("signals") or []
+        return [str(s) for s in sigs if s]
+    except Exception:
+        return []
+    finally:
+        if own:
+            conn.close()
+
+
 def sell_holdings(
     ticker: str,
     qty_to_sell: float,
@@ -707,12 +749,18 @@ def sell_holdings(
     # nothing. (The frozen legacy position_exits table is intentionally NOT
     # written here anymore; get_position_exit now reads history.)
     if closed:
+        # Record the thesis being exited, not just what happened to be firing
+        # at the moment of sale: union the caller's exit_signals with the
+        # signals that drove the entry. Every close passes through here, so this
+        # covers the four exit paths that never passed signals at all.
+        recorded = list(dict.fromkeys(
+            list(exit_signals or []) + entry_signals_before(ticker, conn=conn)))
         conn.execute(
             """INSERT INTO position_exits_history
                (ticker, exit_date, exit_price, exit_reason, exit_signals, entry_date, lot_ids)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (ticker, sold_date, sold_price, reason,
-             json.dumps(exit_signals) if exit_signals else None,
+             json.dumps(recorded) if recorded else None,
              closed[0]["entry_date"],
              ",".join(str(i) for i in closed_lot_ids)),
         )

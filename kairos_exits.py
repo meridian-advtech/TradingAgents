@@ -709,26 +709,96 @@ def reentry_guard_blocks(
     if not re.get("no_higher_price_guard", True):
         return False, ""
 
-    from kairos_log_db import get_position_exit
+    # mode: "shadow" (default) records and never blocks; "enforce" blocks.
+    #
+    # Shadow since 2026-09-28. The guard had never blocked a buy in 3.5 months:
+    # 85% of exit records carried empty exit_signals, so every current signal
+    # looked 'new' and it waved everything through. Fixing that would have
+    # switched ON a rule the data contradicts — of the 8 re-entries that
+    # actually filled, the 3 ABOVE exit (the ones this blocks) all won
+    # (GE +0.24, NKE +2.02, DE +0.20) while the 5 BELOW exit (always allowed)
+    # netted -21.7% with three ~10% stop-losses (COHR, FIX, ARM). n=8 is too
+    # thin to hard-code either direction, so this observes both and
+    # reentry_observations decides.
+    mode = re.get("mode", "shadow")
+
+    from kairos_log_db import get_position_exit, entry_signals_before
     rec = get_position_exit(ticker)
     if not rec or rec.get("exit_price") is None:
         return False, ""
 
     exit_price = float(rec["exit_price"])
-    if proposed_price <= exit_price:
-        return False, ""
+    cur = set(current_signals if current_signals is not None
+              else _get_current_signals(ticker))
+    exit_sigs = set(rec.get("exit_signals") or [])
+    if not exit_sigs:
+        # Read-side fallback for the historical rows written before the
+        # sell_holdings fix: the thesis that was exited is the entry that
+        # preceded it. No bulk rewrite of position_exits_history needed.
+        exit_sigs = set(entry_signals_before(ticker, rec.get("exit_date")))
+    new_signals = cur - exit_sigs
 
-    if re.get("require_new_signal_above_exit", True):
-        cur = set(current_signals if current_signals is not None
-                  else _get_current_signals(ticker))
-        exit_sigs = set(rec.get("exit_signals") or [])
-        new_signals = cur - exit_sigs
-        if new_signals:
-            return False, ""  # genuinely new signal justifies the higher entry
+    above = proposed_price > exit_price
+    would_block = bool(above and re.get("require_new_signal_above_exit", True)
+                       and not new_signals)
+
+    _record_reentry_observation(ticker, rec, proposed_price, cur, exit_sigs,
+                                new_signals, would_block, mode)
+
+    if not would_block or mode != "enforce":
+        return False, ""
 
     reason = (f"RE-ENTRY GUARD: ${proposed_price:.2f} > last exit ${exit_price:.2f} "
               f"({rec.get('exit_reason', 'prior exit')}) with no new signal")
     return True, reason
+
+
+def _record_reentry_observation(ticker, rec, proposed_price, cur, exit_sigs,
+                                new_signals, would_block, mode) -> None:
+    """One row per BUY attempt on a previously-exited ticker, in BOTH price
+    directions. Attempts, not fills — many are later sized to zero — so join to
+    decisions / trade_outcomes on (ticker, observed_at) to get outcomes.
+    Best-effort: a failure here must never affect the buy path."""
+    try:
+        import sqlite3
+        from datetime import datetime, timezone
+        from kairos_log_db import get_connection
+        exit_price = float(rec["exit_price"])
+        mins = None
+        try:
+            ed = datetime.strptime(str(rec.get("exit_date"))[:19], "%Y-%m-%d %H:%M:%S")
+            mins = (datetime.now(timezone.utc).replace(tzinfo=None) - ed).total_seconds() / 60
+        except Exception:
+            pass
+        conn = get_connection()
+        try:
+            conn.execute("""CREATE TABLE IF NOT EXISTS reentry_observations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                observed_at TEXT, ticker TEXT, mode TEXT,
+                exit_date TEXT, exit_price REAL, exit_reason TEXT,
+                proposed_price REAL, pct_vs_exit REAL, side TEXT,
+                minutes_since_exit REAL,
+                exit_signals TEXT, current_signals TEXT, new_signals TEXT,
+                would_block INTEGER)""")
+            conn.execute(
+                """INSERT INTO reentry_observations
+                   (observed_at, ticker, mode, exit_date, exit_price, exit_reason,
+                    proposed_price, pct_vs_exit, side, minutes_since_exit,
+                    exit_signals, current_signals, new_signals, would_block)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                 ticker, mode, rec.get("exit_date"), exit_price,
+                 (rec.get("exit_reason") or "")[:200], proposed_price,
+                 (proposed_price - exit_price) / exit_price * 100 if exit_price else None,
+                 "above" if proposed_price > exit_price else
+                 ("below" if proposed_price < exit_price else "at"),
+                 mins, json.dumps(sorted(exit_sigs)), json.dumps(sorted(cur)),
+                 json.dumps(sorted(new_signals)), int(would_block)))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        print(f"  reentry observation not recorded: {exc}")
 
 
 # ── Engine ────────────────────────────────────────────────────────────

@@ -268,7 +268,8 @@
     },
     "reentry": {
       "no_higher_price_guard": true,
-      "require_new_signal_above_exit": true
+      "require_new_signal_above_exit": true,
+      "mode": "shadow"
     },
     "hot_reversion_time_gate": {
       "days": 7
