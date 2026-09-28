@@ -219,9 +219,18 @@ def _prepare_training_data():
     """
     conn = _load_db_connection()
 
+    # Trusted = decision-time attribution: 'confluence' plus the 239 legacy
+    # rows re-attributed to 'decision_record' on 2026-09-28 from the same
+    # field. Out-of-sample test that day (train on earlier, score the most
+    # recent 40/60/80): confluence-only ranked trades BACKWARDS at every
+    # cutoff (top-half minus bottom-half -1.76 / -0.23 / -0.11); full trusted
+    # scored +0.81 / -0.06 / +1.11. Imported, not hardcoded.
+    from kairos_ml_outcomes import TRUSTED_ATTRIBUTION_SOURCES as _TRUSTED
+    _ph = ",".join("?" * len(_TRUSTED))
     clean_count = conn.execute(
         "SELECT COUNT(*) FROM trade_outcomes "
-        "WHERE outcome_label IS NOT NULL AND signal_attribution_source = 'confluence'"
+        f"WHERE outcome_label IS NOT NULL AND signal_attribution_source IN ({_ph})",
+        tuple(_TRUSTED),
     ).fetchone()[0]
     clean_only = clean_count >= MIN_TRAINING_ROWS
 
@@ -231,11 +240,13 @@ def _prepare_training_data():
         FROM trade_outcomes 
         WHERE outcome_label IS NOT NULL
     """
+    params: tuple = ()
     if clean_only:
-        query += " AND signal_attribution_source = 'confluence'"
+        query += f" AND signal_attribution_source IN ({_ph})"
+        params = tuple(_TRUSTED)
     query += " ORDER BY timestamp_entry"
 
-    rows = conn.execute(query).fetchall()
+    rows = conn.execute(query, params).fetchall()
     conn.close()
     
     if len(rows) < MIN_TRAINING_ROWS:

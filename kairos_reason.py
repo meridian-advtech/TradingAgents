@@ -1484,6 +1484,25 @@ SECTION 4b: SIGNAL EVIDENCE (realized outcomes)
                 ml_lines.append("")
                 ml_lines.append("Machine-learning model trained on historical trade outcomes.")
                 ml_lines.append(f"Trained on: {model_trained_on} closed trades")
+                # State the model's MEASURED skill, not just its outputs. On
+                # 2026-09-28 it cross-validated at 50.8% against a ~51% base
+                # win rate — no better than chance — yet this section presented
+                # its scores as 'probability of profitable trade' with
+                # STRONG/WEAK labels. An uninformative score framed as
+                # informative is worse than no score. Loading the model does
+                # not retrain it.
+                try:
+                    import kairos_ml as _kml
+                    _acc = (_kml.train_model() or {}).get("accuracy")
+                except Exception:
+                    _acc = None
+                if _acc is not None:
+                    ml_lines.append(f"Measured cross-validated accuracy: {_acc:.1%}.")
+                    if _acc < 0.55:
+                        ml_lines.append(
+                            "That is at or near chance: these scores do NOT currently "
+                            "distinguish winners from losers. Give them little or no "
+                            "weight; do not treat STRONG/WEAK below as evidence.")
                 ml_lines.append("")
                 ml_lines.append("ML confidence scores (0-1) indicate probability of profitable trade.")
                 ml_lines.append("ML signal strength: STRONG (>=0.7), NEUTRAL (0.4-0.7), WEAK (<=0.4)")
