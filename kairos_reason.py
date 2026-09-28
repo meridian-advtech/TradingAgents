@@ -501,6 +501,7 @@ def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -
                 "SELECT t.ticker, t.pnl_pct, t.pnl_dollar, t.signals_fired, "
                 "       t.mfe_pct, t.timestamp_exit, t.exit_reason, "
                 "       t.forgone_gain_30d_pct AS fg30, "
+                "       t.signal_attribution_source AS src, "
                 "       p.predicted_return_pct AS pred "
                 "FROM trade_outcomes t "
                 "LEFT JOIN thesis_predictions p ON t.trade_id = p.decision_id "
@@ -513,8 +514,28 @@ def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -
     if not rows:
         return ""
 
-    agg: dict = {}
+    # Per-signal stats use ONLY causally-attributed rows. 270 legacy rows
+    # (signal_attribution_source='legacy_mixed') were tagged by unioning every
+    # source, crediting signals with trades they never drove. Measured
+    # 2026-09-28, blending them in turned HOT-INSIDER from a losing signal
+    # (clean: 13 trades, 38% win, -3.65% avg, -$11.3K) into an apparent top
+    # earner (+$19.3K), and HOT-CONGRESS / HOT-OPTIONS have ZERO clean trades.
+    # This block feeds live buy decisions, so contaminated evidence here is
+    # worse than none.
+    try:
+        from kairos_ml_outcomes import TRUSTED_ATTRIBUTION_SOURCES as _TRUSTED
+    except Exception:
+        _TRUSTED = ("explicit", "confluence")
+    clean_rows = [r for r in rows if r["src"] in _TRUSTED]
+    all_sigs_seen: set = set()
     for r in rows:
+        try:
+            all_sigs_seen.update(json.loads(r["signals_fired"]) if r["signals_fired"] else [])
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    agg: dict = {}
+    for r in clean_rows:
         try:
             sigs = json.loads(r["signals_fired"]) if r["signals_fired"] else []
         except (json.JSONDecodeError, TypeError):
@@ -531,7 +552,10 @@ def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -
                 a["hit"] += 1 if r["mfe_pct"] >= r["pred"] else 0
 
     lines = [
-        "Realized outcomes by entry signal (closed trades, P&L frozen at exit).",
+        "Realized outcomes by entry signal (closed trades, P&L frozen at exit),",
+        f"from the {len(clean_rows)} trades whose trigger was recorded at decision",
+        "time. Older trades with reconstructed attribution are excluded — they",
+        "credited signals with trades they did not drive.",
         "'Thesis hit' = price reached the predicted target at some point, even",
         "if the trade later closed lower — high accuracy with low return means",
         "the signal predicts direction but the move is small or given back.",
@@ -546,6 +570,13 @@ def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -
             f"  {s:<22}{a['n']:>7}{a['w']/a['n']*100:>5.0f}%"
             f"{a['pct']/a['n']:>8.2f}%{hit:>12}{a['usd']:>+12,.0f}"
         )
+    no_evidence = sorted(s for s in all_sigs_seen
+                         if s and agg.get(s, {"n": 0})["n"] < 3)
+    if no_evidence:
+        lines.append("")
+        lines.append(f"  NO RELIABLE EVIDENCE YET: {', '.join(no_evidence)}.")
+        lines.append("  Treat these as unproven — absence from the table above is not")
+        lines.append("  evidence that they work.")
     lines.append("")
     lines.append("Confluence trades count under every signal that fired, so trade")
     lines.append("counts sum to more than the book.")

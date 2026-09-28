@@ -957,7 +957,12 @@ def load_ml_signal_attribution(since: str | None = None) -> list | None:
             rows = conn.execute(
                 "SELECT signals_fired, pnl_pct, pnl_dollar, hold_duration_mins, "
                 "timestamp_exit FROM trade_outcomes "
-                "WHERE timestamp_exit IS NOT NULL AND pnl_pct IS NOT NULL"
+                "WHERE timestamp_exit IS NOT NULL AND pnl_pct IS NOT NULL "
+                # Causally-attributed rows only. The 270 'legacy_mixed' rows
+                # unioned every source and credited signals with trades they
+                # never drove — blended in, HOT-INSIDER read +$19.3K when its
+                # clean record is 13 trades, -$11.3K (measured 2026-09-28).
+                "AND signal_attribution_source IN ('explicit','confluence')"
             ).fetchall()
         finally:
             conn.close()

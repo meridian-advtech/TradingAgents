@@ -202,6 +202,7 @@ def fetch_closed_trades(mode: str, today: str) -> list[dict]:
                t.price_entry, t.price_exit, t.quantity,
                t.pnl_pct, t.pnl_dollar, t.hold_duration_mins,
                t.signals_fired, t.confluence_score, t.sector, t.outcome_label,
+               t.signal_attribution_source,
                tp.conviction_score, tp.signal_type,
                tp.predicted_direction, tp.predicted_return_pct
         FROM trade_outcomes t
@@ -228,6 +229,7 @@ def fetch_open_positions() -> list[dict]:
         SELECT t.trade_id, t.ticker, t.action, t.timestamp_entry,
                t.price_entry, t.quantity,
                t.signals_fired, t.confluence_score, t.sector,
+               t.signal_attribution_source,
                tp.conviction_score, tp.signal_type,
                tp.predicted_direction, tp.predicted_return_pct,
                tp.predicted_timeframe_days
@@ -714,6 +716,25 @@ def _signals_list(raw) -> list[str]:
         return []
 
 
+_TRUSTED_SRC = ("explicit", "confluence")
+
+
+def _trusted_signals(t: dict) -> list[str]:
+    """Signals for per-signal analysis — ONLY when causally attributed.
+
+    Legacy rows ('legacy_mixed') unioned every tagging source and credited
+    signals with trades they never drove. Measured 2026-09-28: blended in, they
+    turned HOT-INSIDER (clean: 13 trades, -3.65% avg) into an apparent top
+    earner, and HOT-CONGRESS / HOT-OPTIONS have no clean trades at all. The
+    Arbiter's per-signal conclusions feed the learning loop, so contaminated
+    attribution here propagates into proposals. Untrusted rows return [] and
+    are grouped as '(unreliable attribution)' rather than credited to signals.
+    """
+    if t.get("signal_attribution_source") not in _TRUSTED_SRC:
+        return []
+    return _signals_list(t.get("signals_fired"))
+
+
 def _conviction_bucket(score) -> str:
     if score is None:
         return "unknown"
@@ -750,7 +771,10 @@ def compute_aggregates(closed: list[dict]) -> dict:
         else:
             losses += 1
 
-        sigs = _signals_list(t.get("signals_fired")) or ["(none)"]
+        if t.get("signal_attribution_source") in _TRUSTED_SRC:
+            sigs = _trusted_signals(t) or ["(none)"]
+        else:
+            sigs = ["(unreliable attribution)"]
         for s in sigs:
             by_signal[s].append(pnl)
 
@@ -806,7 +830,9 @@ def _slim_closed(t: dict) -> dict:
         "current_price": t.get("current_price"),
         "current_vs_exit_pct": t.get("current_vs_exit_pct"),
         "outcome": t.get("outcome_label"),
-        "signals": _signals_list(t.get("signals_fired")),
+        "signals": _trusted_signals(t),
+        "signal_attribution": ("causal" if t.get("signal_attribution_source") in _TRUSTED_SRC
+                               else "unreliable — do not attribute this outcome to a signal"),
         "confluence_score": t.get("confluence_score"),
         "conviction_score": t.get("conviction_score"),
         "signal_type": t.get("signal_type"),
@@ -822,7 +848,9 @@ def _slim_open(t: dict) -> dict:
     return {
         "ticker": t.get("ticker"),
         "entry": t.get("timestamp_entry"),
-        "signals": _signals_list(t.get("signals_fired")),
+        "signals": _trusted_signals(t),
+        "signal_attribution": ("causal" if t.get("signal_attribution_source") in _TRUSTED_SRC
+                               else "unreliable"),
         "confluence_score": t.get("confluence_score"),
         "conviction_score": t.get("conviction_score"),
         "signal_type": t.get("signal_type"),
