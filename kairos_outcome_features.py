@@ -366,6 +366,18 @@ def main() -> int:
         parser.error("nothing to do — pass --backfill")
 
     fill_features(window_days=args.window, only_missing=True, dry_run=args.dry_run)
+
+    # Backstop for closes that never received an outcome_label (see
+    # kairos_ml_outcomes.label_unlabeled_closes). Runs nightly with this job so
+    # an unlabelled close can never silently drop out of training again.
+    try:
+        from kairos_ml_outcomes import label_unlabeled_closes
+        n = label_unlabeled_closes(dry_run=args.dry_run)
+        if n:
+            print(f"  outcome_label backstop: {n} closed trade(s) "
+                  f"{'would be ' if args.dry_run else ''}labelled")
+    except Exception as exc:
+        print(f"  outcome_label backstop failed: {exc}")
     return 0
 
 

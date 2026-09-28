@@ -785,6 +785,41 @@ def read_outcomes_for_ml(closed_only: bool = True) -> list[dict]:
 
 # ── Utility: find open trade by ticker ───────────────────────────────
 
+def label_unlabeled_closes(dry_run: bool = False, grace_minutes: int = 60) -> int:
+    """Backstop: set outcome_label on closed rows that never received one.
+
+    The sell_holdings chokepoint writes timestamp_exit / pnl but deliberately
+    leaves outcome_label NULL so write_trade_close (which matches on
+    outcome_label IS NULL) can still find the row and stamp its snapshots. Only
+    four exit paths call write_trade_close, so any close that skips it — and
+    the extra lots of a multi-lot close, since it matches one row — keeps a NULL
+    label forever and is invisible to training. On 2026-09-28 that was 51
+    closed trades (July-September, all with pnl recorded), 49 of them trusted.
+
+    Same rule as write_trade_close. The grace window leaves a close that is
+    still mid-flight alone, so this never races the normal path.
+    Returns rows labelled (or that would be, in dry run).
+    """
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=grace_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_connection()
+    try:
+        where = ("timestamp_exit IS NOT NULL AND outcome_label IS NULL "
+                 "AND pnl_dollar IS NOT NULL "
+                 "AND replace(replace(substr(timestamp_exit,1,19),'T',' '),'Z','') < ?")
+        n = conn.execute(f"SELECT COUNT(*) FROM trade_outcomes WHERE {where}", (cutoff,)).fetchone()[0]
+        if not dry_run and n:
+            conn.execute(
+                f"""UPDATE trade_outcomes SET outcome_label =
+                      CASE WHEN abs(pnl_dollar) < 0.01 THEN 'SCRATCH'
+                           WHEN pnl_dollar > 0 THEN 'WIN' ELSE 'LOSS' END
+                    WHERE {where}""", (cutoff,))
+            conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
 def find_open_trade(ticker: str, action: str = "BUY") -> Optional[str]:
     """Find the most recent open (unclosed) trade_id for a ticker+action.
 
