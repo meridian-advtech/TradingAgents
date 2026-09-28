@@ -355,15 +355,9 @@ def run_stoploss(regime: str | None = None, ib=None) -> dict:
         _log_sell(ticker, total_qty, avg_cost, sell_price, holding_days,
                   reason, execution)
 
-        try:
-            from kairos_ml_outcomes import init_db as ml_init, write_trade_close, find_open_trade
-            ml_init()
-            open_tid = find_open_trade(ticker, "BUY")
-            if open_tid:
-                write_trade_close(open_tid, sell_price, timestamp_exit=None)
-                print(f"    ML Outcomes: closed {ticker} trade")
-        except Exception as ml_exc:
-            print(f"    WARNING: ML outcomes (stop-loss close) failed: {ml_exc}")
+        # ML Outcomes: sell_holdings (above) closed and fully stamped the ledger
+        # rows this sale consumed. No newest-row find_open_trade guess here — it
+        # picked a different row than the sale and could close a still-held lot.
 
         _alert_stoploss(ticker, avg_cost, sell_price, drawdown_pct,
                         holding_days, reason)

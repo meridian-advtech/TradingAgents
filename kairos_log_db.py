@@ -741,6 +741,14 @@ def sell_holdings(
         closed_lot_ids.append(lot["id"])
         remaining -= sell_qty
 
+    # Did this sale leave the ticker flat? Read in the same txn as the lot
+    # updates. The ML ledger closes EVERY open row on a flat exit (its row
+    # quantities are not trued up to the broker; holdings is).
+    flat = conn.execute(
+        "SELECT COUNT(*) FROM holdings WHERE ticker = ? AND sold_date IS NULL "
+        "AND quantity > 1e-9", (ticker,),
+    ).fetchone()[0] == 0
+
     # Record the exit reason for every close (same txn as the lot updates), as a
     # new APPEND-ONLY history row — never an upsert, so a re-traded ticker keeps
     # every close. entry_date/lot_ids attribute this exit to the specific lot(s)
@@ -769,11 +777,13 @@ def sell_holdings(
     conn.close()
 
     # Mirror the exit into the ML outcomes DB (separate database). This is the
-    # single point every equity close funnels through, so recording the exit
-    # reason / realized PnL / give-back here fills the trade_outcomes fields that
-    # write_trade_close never captured. Best-effort only: a failure here must
-    # NEVER block or raise into the trade path, so it is fully wrapped and only
-    # logs a warning. Only when a lot actually closed (a real exit).
+    # single point every equity close funnels through, and the ONLY writer that
+    # closes trade_outcomes rows for a sale: it picks the rows (FIFO, or all of
+    # them when flat) and stamps each one completely — label, exit_reason,
+    # snapshot. Best-effort only: a failure here must NEVER block or raise into
+    # the trade path, so it is fully wrapped and only logs a warning (the
+    # nightly label_unlabeled_closes backstop still runs). Only when a lot
+    # actually closed (a real exit).
     if closed:
         try:
             from kairos_ml_outcomes import record_exit_outcome
@@ -782,6 +792,9 @@ def sell_holdings(
                 timestamp_exit=sold_date,
                 price_exit=sold_price,
                 exit_reason=reason,
+                sold_qty=qty_to_sell,
+                flat=flat,
+                position_entry=closed[0]["entry_date"],
             )
         except Exception as exc:
             print(f"  WARNING: ML outcomes exit-metadata update failed for {ticker}: {exc}")

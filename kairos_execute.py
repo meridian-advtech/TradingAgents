@@ -758,17 +758,9 @@ def log_execution(decision: dict, trade: dict, execution: dict,
                 except Exception as ledger_exc:
                     print(f"    WARNING: Ledger entry failed: {ledger_exc}")
 
-            # ML Outcomes: close matching trade
-            try:
-                from kairos_ml_outcomes import init_db as ml_init, write_trade_close, find_open_trade
-                ml_init()
-                open_tid = find_open_trade(ticker, "BUY")
-                if open_tid:
-                    result = write_trade_close(open_tid, fill_price, timestamp_exit=timestamp)
-                    print(f"    ML Outcomes: closed {open_tid[:8]}... → "
-                          f"{result['outcome_label']} ({result['pnl_pct']:+.2f}%)")
-            except Exception as ml_exc:
-                print(f"    WARNING: ML outcomes (close) failed: {ml_exc}")
+            # ML Outcomes: sell_holdings (above) closed and fully stamped the ledger
+            # rows this sale consumed. No newest-row find_open_trade guess here — it
+            # picked a different row than the sale and could close a still-held lot.
 
     except Exception as e:
         print(f"    WARNING: DB logging failed: {e}")

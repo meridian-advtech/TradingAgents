@@ -752,19 +752,9 @@ def execute_reallocation(
     except Exception as ledger_exc:
         print(f"    WARNING: reallocation ledger entry failed: {ledger_exc}")
 
-    # Log to trade_outcomes for ML learning
-    try:
-        from kairos_ml_outcomes import init_db, write_trade_close, find_open_trade
-        init_db()
-        open_tid = find_open_trade(exit_ticker, "BUY")
-        if open_tid:
-            result = write_trade_close(open_tid, sell_price, timestamp_exit=sell_date)
-            print(f"    ML Outcomes: recorded {exit_ticker} reallocation exit "
-                  f"→ {result['outcome_label']} ({result['pnl_pct']:+.2f}%)")
-        else:
-            print(f"    ML Outcomes: no open {exit_ticker} BUY trade to close")
-    except Exception as ml_exc:
-        print(f"    WARNING: ML Outcomes logging failed: {ml_exc}")
+    # ML Outcomes: sell_holdings (above) closed and fully stamped the ledger
+    # rows this sale consumed. No newest-row find_open_trade guess here — it
+    # picked a different row than the sale and could close a still-held lot.
 
     # ── Leg 2: BUY the new ticker — re-size off ACTUAL freed capital ──
     # The pre-flight already validated the buy off the estimated freed capital;

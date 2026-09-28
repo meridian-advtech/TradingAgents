@@ -995,15 +995,9 @@ def run_exit_engine(ib=None, regime: str | None = None, dry_run: bool = False) -
                   execution, exit_signals=current_signals)
         _alert_stoploss(ticker, avg_cost, sell_price, gain_pct, holding_days, reason)
 
-        # ML close.
-        try:
-            from kairos_ml_outcomes import init_db as ml_init, write_trade_close, find_open_trade
-            ml_init()
-            tid = find_open_trade(ticker, "BUY")
-            if tid:
-                write_trade_close(tid, sell_price, timestamp_exit=None)
-        except Exception as exc:
-            print(f"    WARNING: ML outcomes close failed: {exc}")
+        # ML Outcomes: sell_holdings (above) closed and fully stamped the ledger
+        # rows this sale consumed. No newest-row find_open_trade guess here — it
+        # picked a different row than the sale and could close a still-held lot.
 
         # Wash-sale violation check on loss sells.
         if sell_price < avg_cost:

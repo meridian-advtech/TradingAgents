@@ -545,32 +545,25 @@ def _canonical_ts(ts: Optional[str]) -> Optional[str]:
     return ts
 
 
-def write_trade_close(
-    trade_id: str,
-    price_exit: float,
-    timestamp_exit: Optional[str] = None,
-) -> dict:
-    """Close an existing trade: compute PnL, duration, and outcome label.
+def _stamp_close(conn: sqlite3.Connection, row: sqlite3.Row, price_exit: float,
+                 timestamp_exit: str, exit_reason: Optional[str] = None,
+                 arm_since: Optional[str] = None,
+                 snapshot: Optional[dict] = None) -> dict:
+    """Write every close field on one trade_outcomes row, in the caller's txn.
 
-    Returns a dict with the computed fields.
+    The single definition of "a closed row": exit timestamp/price, PnL,
+    duration, outcome_label, give-back, exit_reason, the exit-params snapshot
+    (regime tag + this position's own armed-trail context) and the thesis
+    prediction score. Both close writers go through here, so a row can no
+    longer end up half-stamped because two writers picked different rows.
+    arm_since bounds the armed-trail lookup (default: this row's own entry).
+    snapshot, if given, is stamped instead of a live capture (a reconciliation
+    passes a reconstructed=True snapshot for a close that happened in the past).
+    Does not commit.
     """
-    if timestamp_exit is None:
-        timestamp_exit = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    else:
-        timestamp_exit = _canonical_ts(timestamp_exit)
-
-    conn = get_connection()
-    row = conn.execute(
-        "SELECT * FROM trade_outcomes WHERE trade_id = ?", (trade_id,)
-    ).fetchone()
-
-    if row is None:
-        conn.close()
-        raise ValueError(f"trade_id {trade_id!r} not found in trade_outcomes")
-
     price_entry = row["price_entry"]
     action = row["action"]
-    quantity = row["quantity"]
+    quantity = row["quantity"] or 0
     timestamp_entry = row["timestamp_entry"]
 
     # PnL calculation: direction-aware
@@ -594,6 +587,10 @@ def write_trade_close(
     else:
         outcome_label = "LOSS"
 
+    give_back_pct = None
+    if row["mfe_pct"] is not None:
+        give_back_pct = round(row["mfe_pct"] - pnl_pct, 4)
+
     # Regime tag. Guarded end-to-end: a close must never fail because the config
     # or kairos.db could not be read — an unstamped row costs the learning loop
     # one trade, an exception here costs the trade record itself. COALESCE keeps
@@ -604,8 +601,9 @@ def write_trade_close(
         # arming context (which of the three ATR parameters governed its
         # trail). entry_date bounds the lookup so a re-entered ticker cannot
         # inherit the arm context of a previous, already-closed position.
-        snapshot_json = json.dumps(build_exit_params_snapshot(
-            ticker=row["ticker"], entry_date=timestamp_entry))
+        snapshot_json = json.dumps(snapshot if snapshot is not None else
+                                   build_exit_params_snapshot(
+            ticker=row["ticker"], entry_date=arm_since or timestamp_entry))
     except Exception:
         snapshot_json = None
 
@@ -617,14 +615,17 @@ def write_trade_close(
                pnl_pct = ?,
                hold_duration_mins = ?,
                outcome_label = ?,
+               give_back_pct = COALESCE(?, give_back_pct),
+               exit_reason = COALESCE(?, exit_reason),
                exit_params_snapshot = COALESCE(exit_params_snapshot, ?)
            WHERE trade_id = ?""",
         (timestamp_exit, price_exit, round(pnl_dollar, 4),
          round(pnl_pct, 4), hold_duration_mins, outcome_label,
-         snapshot_json, trade_id),
+         give_back_pct, exit_reason, snapshot_json, row["trade_id"]),
     )
 
     # Score the original thesis prediction (if any) against the actual close.
+    trade_id = row["trade_id"]
     pred = conn.execute(
         "SELECT predicted_direction, predicted_timeframe_days, "
         "predicted_return_pct FROM thesis_predictions "
@@ -649,8 +650,8 @@ def write_trade_close(
             "WHERE decision_id = ? AND checkpoint_score IS NOT NULL",
             (trade_id,),
         ).fetchall()
-        scores = [row["checkpoint_score"] for row in chk_rows
-                  if row["checkpoint_score"] is not None]
+        scores = [r["checkpoint_score"] for r in chk_rows
+                  if r["checkpoint_score"] is not None]
         if scores:
             thesis_score = round(sum(scores) / len(scores), 4)
 
@@ -662,9 +663,6 @@ def write_trade_close(
             (prediction_accuracy, thesis_score, trade_id),
         )
 
-    conn.commit()
-    conn.close()
-
     return {
         "trade_id": trade_id,
         "pnl_dollar": round(pnl_dollar, 4),
@@ -674,6 +672,78 @@ def write_trade_close(
         "prediction_accuracy": prediction_accuracy,
         "thesis_score": thesis_score,
     }
+
+
+def write_trade_close(
+    trade_id: str,
+    price_exit: float,
+    timestamp_exit: Optional[str] = None,
+) -> dict:
+    """Close an existing trade by explicit trade_id: compute PnL, duration, label.
+
+    Live exits no longer call this — record_exit_outcome (at the sell_holdings
+    chokepoint) closes and fully stamps every row a sale consumes. What remains
+    is the explicit-id API, and it never re-closes a row a sale already closed:
+
+      * row already exited AND labelled AND snapshotted  -> pure no-op, no write
+      * row already exited but missing label/snapshot    -> fill ONLY the missing
+        fields; exit price / timestamp / PnL recorded by the sale are kept
+      * row still open                                   -> full close
+
+    Returns a dict with the computed (or existing) fields; "noop" is True when
+    nothing was written.
+    """
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM trade_outcomes WHERE trade_id = ?", (trade_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"trade_id {trade_id!r} not found in trade_outcomes")
+
+        if row["timestamp_exit"] is not None:
+            result = {
+                "trade_id": trade_id,
+                "pnl_dollar": row["pnl_dollar"],
+                "pnl_pct": row["pnl_pct"],
+                "hold_duration_mins": row["hold_duration_mins"],
+                "outcome_label": row["outcome_label"],
+                "prediction_accuracy": row["prediction_accuracy"],
+                "thesis_score": row["thesis_score"],
+                "noop": True,
+            }
+            if row["outcome_label"] is not None and row["exit_params_snapshot"] is not None:
+                return result
+            label = row["outcome_label"]
+            if label is None and row["pnl_dollar"] is not None:
+                pd_ = row["pnl_dollar"]
+                label = "SCRATCH" if abs(pd_) < 0.01 else ("WIN" if pd_ > 0 else "LOSS")
+            try:
+                snapshot_json = json.dumps(build_exit_params_snapshot(
+                    ticker=row["ticker"], entry_date=row["timestamp_entry"]))
+            except Exception:
+                snapshot_json = None
+            conn.execute(
+                """UPDATE trade_outcomes
+                   SET outcome_label = COALESCE(outcome_label, ?),
+                       exit_params_snapshot = COALESCE(exit_params_snapshot, ?)
+                   WHERE trade_id = ?""",
+                (label, snapshot_json, trade_id))
+            conn.commit()
+            result["outcome_label"] = label
+            result["noop"] = False
+            return result
+
+        if timestamp_exit is None:
+            timestamp_exit = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        else:
+            timestamp_exit = _canonical_ts(timestamp_exit)
+        result = _stamp_close(conn, row, price_exit, timestamp_exit)
+        conn.commit()
+        result["noop"] = False
+        return result
+    finally:
+        conn.close()
 
 
 def _score_prediction_accuracy(
@@ -783,18 +853,18 @@ def read_outcomes_for_ml(closed_only: bool = True) -> list[dict]:
     return results
 
 
-# ── Utility: find open trade by ticker ───────────────────────────────
+# ── Close backstop + sale-driven close ───────────────────────────────
 
 def label_unlabeled_closes(dry_run: bool = False, grace_minutes: int = 60) -> int:
     """Backstop: set outcome_label on closed rows that never received one.
 
-    The sell_holdings chokepoint writes timestamp_exit / pnl but deliberately
-    leaves outcome_label NULL so write_trade_close (which matches on
-    outcome_label IS NULL) can still find the row and stamp its snapshots. Only
-    four exit paths call write_trade_close, so any close that skips it — and
-    the extra lots of a multi-lot close, since it matches one row — keeps a NULL
-    label forever and is invisible to training. On 2026-09-28 that was 51
-    closed trades (July-September, all with pnl recorded), 49 of them trusted.
+    Until 2026-09-28 the sell_holdings chokepoint wrote timestamp_exit / pnl but
+    left outcome_label NULL for a follow-on write_trade_close that matched a
+    different row, so a close that skipped it — and the extra lots of a
+    multi-lot close — kept a NULL label forever and was invisible to training.
+    On 2026-09-28 that was 51 closed trades (July-September, all with pnl
+    recorded), 49 of them trusted. record_exit_outcome now labels every row it
+    closes; this stays as the safety net for anything that still slips through.
 
     Same rule as write_trade_close. The grace window leaves a close that is
     still mid-flight alone, so this never races the normal path.
@@ -820,20 +890,38 @@ def label_unlabeled_closes(dry_run: bool = False, grace_minutes: int = 60) -> in
         conn.close()
 
 
-def find_open_trade(ticker: str, action: str = "BUY") -> Optional[str]:
-    """Find the most recent open (unclosed) trade_id for a ticker+action.
+def select_rows_closed_by_sale(open_rows: list, sold_qty: float,
+                               flat: bool) -> tuple[list, float]:
+    """Which open ledger rows a sale closes. THE one authority for this.
 
-    Returns trade_id or None.
+    open_rows must be the ticker's open rows (timestamp_exit IS NULL) oldest
+    entry first. Returns (rows_to_close, residual_qty).
+
+      flat=True   the sale left NO open lot in kairos.db holdings, so every open
+                  row is closed, whatever the ledger quantities say. holdings is
+                  trued up to the broker by the reconciler; ledger quantities
+                  are not (an add-on BUY's row can carry more or fewer shares
+                  than were actually added), so when the two disagree on a full
+                  exit, holdings wins and nothing is left open as a ghost.
+      flat=False  a trim: FIFO by timestamp_entry, whole rows only, while the
+                  row's quantity is covered by what is left of sold_qty. The
+                  ledger has no way to split a row (trade_id is the join key to
+                  thesis_predictions / thesis_checkpoints), so a row that is only
+                  partly sold stays OPEN and unstamped — a still-held lot is
+                  never closed. The uncovered shares come back as residual_qty.
+                  A row with no positive quantity cannot be FIFO-matched and is
+                  left for the flat close.
     """
-    conn = get_connection()
-    row = conn.execute(
-        """SELECT trade_id FROM trade_outcomes
-           WHERE ticker = ? AND action = ? AND outcome_label IS NULL
-           ORDER BY timestamp_entry DESC LIMIT 1""",
-        (ticker, action),
-    ).fetchone()
-    conn.close()
-    return row["trade_id"] if row else None
+    if flat:
+        return list(open_rows), 0.0
+    closing, remaining = [], float(sold_qty or 0)
+    for r in open_rows:
+        q = float(r["quantity"] or 0)
+        if q <= 0 or q > remaining + 1e-9:
+            break
+        closing.append(r)
+        remaining -= q
+    return closing, max(0.0, remaining)
 
 
 def record_exit_outcome(
@@ -841,68 +929,61 @@ def record_exit_outcome(
     timestamp_exit: str,
     price_exit: float,
     exit_reason: str,
-) -> Optional[str]:
-    """Populate exit fields on the oldest OPEN trade_outcomes row for a ticker.
+    sold_qty: float,
+    flat: bool,
+    position_entry: Optional[str] = None,
+) -> list[str]:
+    """Close and fully stamp every trade_outcomes row a sale consumes.
 
     Called at the sell_holdings chokepoint (the single point every equity close
-    funnels through) so the ML outcomes DB captures the exit_reason / realized
-    PnL / give-back that were previously left NULL on all but a couple of rows.
+    funnels through), AFTER the holdings update has committed — sold_qty is the
+    quantity sold and flat says whether the ticker has any open lot left.
+    select_rows_closed_by_sale decides which rows close; each of them gets, in
+    one transaction: timestamp_exit, price_exit, pnl, hold duration,
+    outcome_label, give-back, exit_reason and exit_params_snapshot (via
+    _stamp_close). There is no second writer any more.
 
-    Match: ticker + timestamp_exit IS NULL; if several are open, the oldest by
-    entry (FIFO) — mirroring how sell_holdings closes the underlying lots. Sets
-    timestamp_exit, price_exit, pnl_pct, pnl_dollar, exit_reason, hold_duration_mins,
-    and give_back_pct = mfe_pct - pnl_pct when mfe_pct has already been computed
-    (by kairos_outcome_features.py). PnL is direction-aware, matching
-    write_trade_close. outcome_label is deliberately left untouched so the
-    downstream write_trade_close (matched by outcome_label IS NULL) still fires.
+    position_entry is the entry date of the holdings position being sold. The
+    exit engine arms a trail per POSITION (kairos_atr_trail.arm_context is
+    keyed on ticker), so every row of that position shares its arm context —
+    bounding the lookup by each row's own entry would drop it from an add-on
+    row entered after the position armed.
 
-    Returns the trade_id updated, or None if no open row matched. Callers MUST
-    wrap this so a DB failure never blocks or raises into the trade path.
+    FIX (2026-09-28): this used to close exactly ONE row (the oldest) and leave
+    outcome_label NULL so a follow-on find_open_trade -> write_trade_close could
+    stamp it — but find_open_trade picked the NEWEST unlabelled row, a different
+    one. Two lots: one row closed unstamped, the other stamped (19 of 94 closes
+    since 2026-09-09 had no snapshot). Three or more: the extras never closed
+    (22 ghost rows). A trim: the newest-row guess could close a lot still held.
+
+    Returns the trade_ids closed. Callers MUST wrap this so a DB failure never
+    blocks or raises into the trade path.
     """
     # Callers supply this string in whatever spelling they happen to use; this
     # is the write path that produced the corpus's three timestamp formats.
     timestamp_exit = _canonical_ts(timestamp_exit)
     conn = get_connection()
     try:
-        row = conn.execute(
-            """SELECT trade_id, action, quantity, price_entry, timestamp_entry, mfe_pct
-               FROM trade_outcomes
+        open_rows = conn.execute(
+            """SELECT * FROM trade_outcomes
                WHERE ticker = ? AND timestamp_exit IS NULL
-               ORDER BY timestamp_entry ASC LIMIT 1""",
+               ORDER BY timestamp_entry ASC, rowid ASC""",
             (ticker,),
-        ).fetchone()
-        if row is None:
-            return None
-
-        price_entry = row["price_entry"]
-        action = row["action"]
-        quantity = row["quantity"] or 0
-
-        # Direction-aware PnL (mirrors write_trade_close).
-        if action == "BUY":
-            pnl_dollar = (price_exit - price_entry) * quantity
-        else:  # SELL (short)
-            pnl_dollar = (price_entry - price_exit) * quantity
-        pnl_pct = ((price_exit - price_entry) / price_entry * 100) if price_entry else 0.0
-        if action == "SELL":
-            pnl_pct = -pnl_pct
-
-        hold_duration_mins = _compute_duration_mins(row["timestamp_entry"], timestamp_exit)
-
-        give_back_pct = None
-        if row["mfe_pct"] is not None:
-            give_back_pct = round(row["mfe_pct"] - pnl_pct, 4)
-
-        conn.execute(
-            """UPDATE trade_outcomes
-               SET timestamp_exit = ?, price_exit = ?, pnl_pct = ?, pnl_dollar = ?,
-                   exit_reason = ?, give_back_pct = ?, hold_duration_mins = ?
-               WHERE trade_id = ?""",
-            (timestamp_exit, price_exit, round(pnl_pct, 4), round(pnl_dollar, 4),
-             exit_reason, give_back_pct, hold_duration_mins, row["trade_id"]),
-        )
+        ).fetchall()
+        closing, residual = select_rows_closed_by_sale(open_rows, sold_qty, flat)
+        for row in closing:
+            _stamp_close(conn, row, price_exit, timestamp_exit, exit_reason,
+                         arm_since=position_entry)
         conn.commit()
-        return row["trade_id"]
+        if residual > 1e-9 and open_rows:
+            print(f"  ML Outcomes: {ticker} trim of {sold_qty:g} left {residual:g} "
+                  f"share(s) unmatched to a whole ledger row — oldest open row "
+                  f"stays open until the position is flat")
+        if closing:
+            print(f"  ML Outcomes: closed {len(closing)} {ticker} ledger row(s) "
+                  f"{'(flat)' if flat else '(FIFO trim)'}: "
+                  + ", ".join(r["trade_id"][:8] for r in closing))
+        return [r["trade_id"] for r in closing]
     finally:
         conn.close()
 
