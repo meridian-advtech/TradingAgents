@@ -12,8 +12,9 @@ Steps
      and --live was not passed.
   2. ATTACH the ML db; copy thesis_predictions / thesis_checkpoints (and the
      legacy trade_outcomes, as trade_outcomes_legacy); create the new tables.
-  3. Import fills: Flex TRNT CSV (statement_import) + today's reqExecutions
-     (broker_check). perm_id is recovered from logged execDetails lines.
+  3. Import fills: Flex TRNT CSV (statement_import), any --extra-flex-csv
+     (flex_nightly), then today's reqExecutions (broker_check). perm_id is
+     recovered from logged execDetails lines.
   4. Import position_events: CORP DETAIL rows + three manual_verified events
      (SATS→ECHO symbol change, AAPL / CI opening balances).
   5. Link fills → decisions (done at insert); backfill decisions.perm_id /
@@ -476,6 +477,9 @@ def main() -> int:
     ap.add_argument("--statement-csv", default=DEFAULT_STATEMENT_CSV)
     ap.add_argument("--logs-dir", default=LIVE_DIR, help="where execDetails logs live (read only)")
     ap.add_argument("--broker-snapshot", help="JSON snapshot instead of a live broker read")
+    ap.add_argument("--extra-flex-csv", action="append", default=[],
+                    help="additional Flex CSV (TRNT/CORP), e.g. a fresh 'Last 7 Calendar Days' "
+                         "pull, to cover days between the statement and today (repeatable)")
     args = ap.parse_args()
 
     db = os.path.abspath(os.path.expanduser(args.db))
@@ -509,6 +513,12 @@ def main() -> int:
             f["perm_id"] = perm_by_order[f["order_id"]]
     st = L.record_fills(fills, None, source="statement_import", conn=conn)
     print(f"  TRNT statement: {len(fills)} fills → {st}")
+    for extra in args.extra_flex_csv:
+        res = L.import_flex_text(open(extra).read(), "flex_nightly", conn=conn)
+        print(f"  extra Flex CSV {os.path.basename(extra)}: {res['fills_seen']} fills seen, "
+              f"{res['fills_inserted']} new, {res['events_inserted']} new event(s)")
+        if res["unsupported"]:
+            sys.exit(f"REFUSED: unsupported CORP rows in {extra}: {res['unsupported']}")
     execs, broker_pos, where = broker_read(args.broker_snapshot)
     st2 = L.record_fills(execs, None, source="broker_check", conn=conn)
     print(f"  today's reqExecutions: {len(execs)} STK fills → {st2}")
