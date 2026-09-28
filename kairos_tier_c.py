@@ -96,7 +96,12 @@ def _existing_tickers() -> set[str]:
     return tickers
 
 
-def _slack_alert(text: str, channel: str = "alerts") -> bool:
+# Default is #kairos-log, not #kairos-alerts. Every call site below passes an
+# explicit channel (watchlist for universe changes, log for expiries), so this
+# default is only ever reached by a future caller that forgot — and the safe
+# thing for a forgotten caller to do is land in the verbose channel, not in
+# the one reserved for "a human must look at this".
+def _slack_alert(text: str, channel: str = "log") -> bool:
     """Send a message to a Slack channel. Fault-tolerant."""
     try:
         from kairos_alerts import post_message

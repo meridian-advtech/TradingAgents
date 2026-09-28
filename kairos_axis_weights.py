@@ -902,16 +902,16 @@ def propose_update(run_id: str | None = None, axis: str = DEFAULT_AXIS) -> dict:
                 proposed_delta = 0.0
                 gated = True
 
-        # ── Materiality (2026-09-09) ─────────────────────────────────
-        # Recorded as a BOUND GUARD when the move is too small to surface.
-        # That is not cosmetic: kairos_autonomy.auto_apply skips any proposal
-        # whose evidence carries a bound guard ("escalating to human"), and
-        # exit_timing IS in AUTO_APPLY_AXES. Without this, a sub-threshold
-        # proposal that never raised a card could still auto-apply — a change
-        # to live exit behaviour that no human ever saw. Using the existing
-        # guard-bind contract achieves the block without touching
-        # kairos_autonomy.py, and it is honest: a guard did bind, and the
-        # documented consequence of a bind is that a human decides.
+        # ── Materiality (2026-09-09, scope corrected 2026-09-12) ─────
+        # Materiality gates CARDING, not APPLYING. See NON_ESCALATING_GUARDS
+        # for the incident that forced the distinction: routing "too small to
+        # interrupt a human for" through the same channel as "a ratchet guard
+        # bound" left the one auto-applying axis unable to either apply or
+        # ask. The guard is still recorded as bound — it really did suppress a
+        # card — but carries escalates=False, so kairos_autonomy.auto_apply
+        # applies it quietly on an axis in AUTO_APPLY_AXES and reports it in
+        # the digest. On any other axis the effect is unchanged: recorded, no
+        # card, and no autonomy path exists to apply it anyway.
         _material = is_material(axis, prior_weight, proposed_delta)
         evidence["materiality"] = {
             "threshold": round(materiality_threshold(axis, prior_weight), 6),
@@ -922,9 +922,12 @@ def propose_update(run_id: str | None = None, axis: str = DEFAULT_AXIS) -> dict:
         if not _material and abs(proposed_delta) > 1e-9:
             guards["materiality"] = {
                 "bound": True,
+                "escalates": False,
                 "reason": (f"|Δ| {abs(proposed_delta):.6f} < materiality "
                            f"threshold {materiality_threshold(axis, prior_weight):.6f}"
-                           f" — recorded, not surfaced, and NOT auto-appliable"),
+                           f" — recorded, no card raised. Gates surfacing only:"
+                           f" an axis in AUTO_APPLY_AXES still applies it"
+                           f" quietly and reports it in the digest."),
                 "would_have_been": round(new_weight, 6),
             }
 
@@ -2176,10 +2179,11 @@ def propose_param_update(path: str, run_id: str | None = None,
     # for its own reason and reads as "deferred", not "too small".
     #
     # Same contract as the axis path: an immaterial move is recorded but not
-    # surfaced, and the bound guard is what makes "not surfaced" also mean
-    # "not auto-appliable". Param axes are not in AUTO_APPLY_AXES today, but
-    # recording it keeps the two paths honest about the same thing, so adding
-    # a param to that list later cannot silently bypass the human gate.
+    # surfaced. The guard is flagged escalates=False (see
+    # NON_ESCALATING_GUARDS) because materiality gates CARDING, not APPLYING —
+    # two of these paths are now in AUTO_APPLY_AXES, and a sub-threshold move
+    # on an axis that has earned autonomy should apply quietly rather than sit
+    # forever raising neither a card nor a change.
     _material = is_material(axis, prior_weight, proposed_delta)
     result["evidence"]["materiality"] = {
         "threshold": round(materiality_threshold(axis, prior_weight), 6),
@@ -2190,9 +2194,12 @@ def propose_param_update(path: str, run_id: str | None = None,
     if not _material and abs(proposed_delta) > 1e-9 and not gated:
         result["evidence"].setdefault("guards", {})["materiality"] = {
             "bound": True,
+            "escalates": False,
             "reason": (f"|Δ| {abs(proposed_delta):.6f} < materiality threshold "
                        f"{materiality_threshold(axis, prior_weight):.6f} — "
-                       f"recorded, not surfaced, and NOT auto-appliable"),
+                       f"recorded, no card raised. Gates surfacing only: an "
+                       f"axis in AUTO_APPLY_AXES still applies it quietly and "
+                       f"reports it in the digest."),
             "would_have_been": proposed,
         }
 
@@ -2434,11 +2441,14 @@ def _format_slack_propose_params(run_id: str, proposals: list[dict],
             detail = (f"gated — no usable evidence (effective n {n}); "
                       f"no change (stays {p['prior_weight']:g})")
         elif not p.get("material", True):
+            _auto = _is_auto_apply_axis(p.get("axis", ""))
             detail = (f"recorded, no card — |Δ| "
                       f"{abs(p['proposed_delta']):g} below the "
                       f"{PARAM_MATERIALITY_FRAC:.0%} materiality threshold "
                       f"({p['prior_weight']:g} → {p['new_weight']:g}); "
-                      f"review with `--pending-minor`, cannot auto-apply")
+                      + ("applied quietly (axis has autonomy), see the digest"
+                         if _auto else
+                         "review with `--pending-minor`, cannot auto-apply"))
         elif abs(p["proposed_delta"]) < 1e-9:
             detail = (f"no change (stays {p['new_weight']:g}; "
                       f"score {p['computed_score']:+.4f}, n={n})")
@@ -2512,13 +2522,33 @@ def _format_slack_propose_params(run_id: str, proposals: list[dict],
     return "\n".join(lines)
 
 
-def _apply_param_to_config(path: str, value: float) -> str:
+def _apply_param_to_config(path: str, value: float, restore: bool = False) -> str:
     """Backup kairos_config.json, set the dotted path, re-load and json-validate.
 
     Whitelisted paths only, with a final bounds + 25%-max-change guard against the
     CURRENT on-disk value (defense in depth — the config may have changed since the
     proposal was written). Raises ValueError on any violation BEFORE writing so the
     caller can abort the approval without side effects. Returns the backup path.
+
+    ── restore=True: undoing a change, not making one (2026-09-12) ──
+    Set ONLY by kairos_autonomy._judge when reverting an auto-applied param to
+    the value that was in force before the loop touched it. It skips exactly
+    two checks — the ±25% per-step cap and the cumulative 7-day band — and
+    nothing else.
+
+    Why that is not a loosening of either guard: both bound how far LEARNING
+    may carry a live parameter away from where a human last saw it. A revert
+    moves in the opposite direction, back to a value this system itself had
+    live, so the drift they exist to bound is what a revert removes. Leaving
+    them armed on this path would let a guard refuse to undo a harmful change
+    — the guard's own failure mode, and the one the July ratchet is a
+    monument to. Nothing about the guards changes for the propose/apply path,
+    which is the only path that can move a parameter to a value nobody has
+    seen before.
+
+    Still enforced on a restore, because these are correctness rather than
+    drift constraints: the whitelist, the hard bounds, the ordered-pair
+    crossing check, the timestamped backup, and the JSON re-validate.
     """
     if path not in PARAM_WHITELIST:
         raise ValueError(f"param path {path!r} is not whitelisted — refusing to apply")
@@ -2530,8 +2560,8 @@ def _apply_param_to_config(path: str, value: float) -> str:
     with open(CONFIG_PATH) as f:
         cfg = json.load(f)
     current, found = _get_dotted(cfg, path)
-    if found and isinstance(current, (int, float)) and not isinstance(current, bool) \
-            and current != 0:
+    if not restore and found and isinstance(current, (int, float)) \
+            and not isinstance(current, bool) and current != 0:
         if abs(value - current) > PARAM_MAX_CHANGE_FRAC * abs(current) + 1e-9:
             raise ValueError(
                 f"{path}: change {current} → {value} exceeds "
@@ -2544,6 +2574,9 @@ def _apply_param_to_config(path: str, value: float) -> str:
     # tightened to 0.15 it now pre-empts most crossings, so without this
     # reordering the structural error would always be reported as a drift
     # error. Nothing changes about WHAT is refused, only which reason is given.
+    #
+    # Enforced on restores too: a floor above its ceiling is a broken band
+    # whatever direction it was reached from.
     cross = _ordering_violation(path, value)
     if cross is not None:
         raise ValueError(f"{path}: {cross} — refusing to apply")
@@ -2553,12 +2586,13 @@ def _apply_param_to_config(path: str, value: float) -> str:
     # so the per-step check passed every time while the parameter halved. The
     # band is anchored at the value in force when the window opened, so no
     # sequence of individually-legal steps can drift past it.
-    band = _cumulative_band(PARAM_PREFIX + path, current)
-    if band["lo"] is not None and not (band["lo"] - 1e-9 <= value <= band["hi"] + 1e-9):
-        raise ValueError(
-            f"{path}={value} violates the cumulative {PARAM_CUMULATIVE_WINDOW_DAYS}-day "
-            f"band [{band['lo']}, {band['hi']}] anchored at {band['base_7d']} "
-            f"(±{PARAM_CUMULATIVE_BAND_FRAC:.0%}) — refusing to apply")
+    if not restore:
+        band = _cumulative_band(PARAM_PREFIX + path, current)
+        if band["lo"] is not None and not (band["lo"] - 1e-9 <= value <= band["hi"] + 1e-9):
+            raise ValueError(
+                f"{path}={value} violates the cumulative {PARAM_CUMULATIVE_WINDOW_DAYS}-day "
+                f"band [{band['lo']}, {band['hi']}] anchored at {band['base_7d']} "
+                f"(±{PARAM_CUMULATIVE_BAND_FRAC:.0%}) — refusing to apply")
 
     # Timestamped backup of the exact current file BEFORE any write.
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -2577,6 +2611,74 @@ def _apply_param_to_config(path: str, value: float) -> str:
         json.load(f)  # raises if the written JSON is somehow invalid
     os.replace(tmp, CONFIG_PATH)
     return backup
+
+
+def revert_param_in_config(path: str, prior_value: float) -> dict:
+    """Put a param back to `prior_value` and PROVE it landed on disk.
+
+    The reason this exists rather than callers using _apply_param_to_config
+    directly: a revert that reports success without having happened is worse
+    than having no revert at all. Before this, kairos_autonomy._judge reverted
+    every axis with `UPDATE axis_weights SET weight = ?`, which for a
+    `param:*` axis writes a row nothing reads — the live value lives in
+    kairos_config.json. The autonomy_log said 'rolled_back' while the harmful
+    number stayed live: a false all-clear on the one mechanism whose entire
+    job is to notice that a change hurt.
+
+    So the write is followed by an independent re-read of the file through
+    _current_param_value, and a mismatch RAISES. Returns
+    {path, from_value, to_value, backup, verified}.
+    """
+    before = _current_param_value(path)
+    backup = _apply_param_to_config(path, prior_value, restore=True)
+    landed = _current_param_value(path)
+    if landed is None or abs(float(landed) - float(prior_value)) > 1e-9:
+        raise RuntimeError(
+            f"REVERT NOT VERIFIED: {path} should be {prior_value} after the "
+            f"restore but kairos_config.json reads {landed!r} "
+            f"(backup of the pre-revert file: {backup}). The harmful value may "
+            f"still be live — do not treat this rollback as done.")
+    return {"path": path, "from_value": before, "to_value": float(landed),
+            "backup": backup, "verified": True}
+
+
+# ── Which bound guards escalate to a human ───────────────────────────
+# A "bound guard" used to mean exactly one thing: stop, a human decides
+# (kairos_autonomy.auto_apply skips any proposal carrying one). Materiality
+# was then recorded through the same channel, which conflated two unrelated
+# questions — "is this move dangerous?" and "is this move worth an interrupt?"
+#
+# The cost showed up immediately. On 2026-09-11 and again on 2026-09-12
+# exit_timing — the one axis approved for autonomy — proposed +5.6% and +4.9%
+# on an effective sample of ~130. Both were correctly too small to card. Both
+# were therefore also blocked from auto-applying, superseded next run, and
+# zeroed by the freshness gate. The axis neither applied nor asked; it just
+# sat, and the measured move evaporated.
+#
+# So materiality is recorded as bound (it did suppress the card, and that is
+# worth seeing in the audit trail) but flagged non-escalating. Every real
+# ratchet guard — cumulative_band, freshness, ordering, coupling — keeps the
+# old contract and still stops autonomy dead.
+NON_ESCALATING_GUARDS = ("materiality",)
+
+
+def escalating_guards(evidence: dict) -> dict:
+    """Bound guards that must stop an auto-apply and route to a human.
+
+    Classified by guard NAME first and the `escalates` flag second. The name
+    is the stable identity; the flag was only added on 2026-09-12, so every
+    proposal row written before then carries a materiality guard with no flag
+    at all. Reading the flag alone would leave those rows escalating forever —
+    which is not a hypothetical: on the morning of the change, three standing
+    rows (ids 93, 99, 100) predated it.
+
+    Unknown guard names escalate by default: a guard added later without
+    thinking about autonomy should fail closed, not open.
+    """
+    return {name: g for name, g in ((evidence or {}).get("guards") or {}).items()
+            if g.get("bound")
+            and name not in NON_ESCALATING_GUARDS
+            and g.get("escalates", True)}
 
 
 # ── Apply a human decision (the approval gate) ───────────────────────
@@ -2674,12 +2776,18 @@ def apply_decision(history_id: int, decision: str, decided_by: str) -> dict:
 
 # ── Slack + formatting ───────────────────────────────────────────────
 
-def format_minor_digest(proposals: list) -> str | None:
+def format_minor_digest(proposals: list, applied_ids: set | None = None) -> str | None:
     """One line summarising the sub-threshold proposals, or None if there are none.
 
     Goes into the daily Arbiter post so that recorded-but-unsurfaced proposals
     are visible without each one interrupting. The largest is named because
     that is the only one a reader might want to go look at.
+
+    Since 2026-09-12 the line also splits the count by destination: a
+    sub-threshold move on an axis in AUTO_APPLY_AXES is APPLIED quietly rather
+    than parked, so "no card" no longer implies "nothing happened", and a
+    digest that said otherwise would be the reassuring-but-wrong kind of
+    report.
     """
     minor = [p for p in (proposals or [])
              if not p.get("gated") and not p.get("skipped")
@@ -2699,9 +2807,33 @@ def format_minor_digest(proposals: list) -> str | None:
     prior = abs(float(biggest.get("prior_weight") or 0.0))
     d = float(biggest["proposed_delta"])
     size = (f"{d / prior * 100:+.1f}%" if prior > 0 else f"{d:+.4f}")
+    # Prefer what the autonomy step ACTUALLY applied over what the allowlist
+    # says is eligible — a cooldown, a stale anchor or a bound ratchet guard
+    # can hold back an eligible axis, and a digest that reported the intent
+    # rather than the outcome would be the reassuring kind of wrong.
+    if applied_ids is None:
+        n_auto = sum(1 for p in minor if _is_auto_apply_axis(p.get("axis", "")))
+    else:
+        n_auto = sum(1 for p in minor if p.get("history_id") in applied_ids)
+    tail = (f"{n_auto} auto-applied quietly (axis has autonomy), "
+            f"{len(minor) - n_auto} parked for review"
+            if n_auto else "none can auto-apply")
     return (f":memo: {len(minor)} sub-threshold proposal(s) recorded, no card "
-            f"raised (largest: `{name}` {size}). Review with "
-            f"`--pending-minor`; none can auto-apply.")
+            f"raised (largest: `{name}` {size}). {tail}. Review with "
+            f"`--pending-minor`.")
+
+
+def _is_auto_apply_axis(axis: str) -> bool:
+    """True if this axis may self-apply. Imported lazily: kairos_autonomy is
+    the owner of that list and imports this module back, so a module-level
+    import would be circular."""
+    try:
+        from kairos_autonomy import AUTO_APPLY_AXES
+        return axis in AUTO_APPLY_AXES
+    except Exception:
+        # Autonomy unavailable (or deleted, which is the documented way to
+        # switch it off): nothing self-applies.
+        return False
 
 
 def pending_minor(limit: int = 50) -> list:
@@ -2737,8 +2869,13 @@ def pending_minor(limit: int = 50) -> list:
                 "effective_n": ev.get("effective_n"),
                 "confidence": ev.get("confidence"),
                 "created_at": r["created_at"],
-                "auto_apply_blocked": bool(
-                    (ev.get("guards") or {}).get("materiality", {}).get("bound")),
+                # Sub-threshold no longer means un-appliable. What blocks an
+                # auto-apply is (a) the axis not having earned autonomy, or
+                # (b) a real ratchet guard binding — materiality is neither.
+                "auto_apply_blocked": (not _is_auto_apply_axis(r["axis"])
+                                       or bool(escalating_guards(ev))),
+                "auto_applies_quietly": (_is_auto_apply_axis(r["axis"])
+                                         and not escalating_guards(ev)),
             })
     return out
 
@@ -2939,9 +3076,11 @@ def _cli_propose_all() -> int:
 
 def _cli_pending_minor() -> int:
     rows = pending_minor()
-    print("  Sub-threshold proposals — recorded, NOT surfaced, NOT auto-appliable.")
+    print("  Sub-threshold proposals — recorded, no card raised.")
     print(f"  Card thresholds: params {PARAM_MATERIALITY_FRAC:.0%} of the current "
-          f"value; axes {AXIS_MATERIALITY_ABS} absolute.\n")
+          f"value; axes {AXIS_MATERIALITY_ABS} absolute.")
+    print("  'blocked' = cannot self-apply (axis has no autonomy, or a ratchet "
+          "guard bound). An axis in AUTO_APPLY_AXES applies these quietly.\n")
     if not rows:
         print("  None standing.")
         return 0

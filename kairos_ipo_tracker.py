@@ -66,7 +66,11 @@ MARKET_OPEN_HOUR_ET = 9
 MARKET_OPEN_MIN_FROM = 30
 MARKET_OPEN_MIN_TO = 40  # widen vs intake's 5-min window so both fit
 
-SLACK_CHANNEL = "alerts"
+# #kairos-watchlist: these are universe/watchlist notices (HOT-IPO scoring,
+# the daily IPO pipeline digest), which is what that channel is for. The daily
+# pipeline post in particular is routine by construction and does not belong
+# in #kairos-alerts. (2026-09-12)
+SLACK_CHANNEL = "watchlist"
 
 # ── Underwriter tier map (substring match, case-insensitive) ─────────
 

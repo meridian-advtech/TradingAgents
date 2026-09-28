@@ -235,7 +235,7 @@
       "_ipo_note": "Young IPOs whip-saw on day-1/2 noise. For the first ipo_window_days HOLDING days, the trailing-stop trail (and thus the intraday backstop = trail x intraday_mult) is widened by ipo_multiplier so normal IPO volatility does not trigger a profit-capture exit. IPO identity is read from kairos_ipo_cache.json (detected set), NOT the signal tag, which is lost once a position is held.",
       "target_armed": {
         "enabled": true,
-        "trail_pct": 6.2255,
+        "trail_pct": 4.5122,
         "_trail_pct_deprecated": "DEPRECATED 2026-09-09 as the PRIMARY trail, retained as the fallback and NOT deleted. Still a percentage. Governs the armed trail whenever atr_enabled is false, or when ATR14 is unavailable for the ticker at arm time. Do not repurpose this key as a multiplier: the 75 trailing-stop closes already stamped with it would silently change meaning, and the regime window compares snapshot values numerically.",
         "atr_enabled": false,
         "atr_mult": 0.75,
@@ -244,7 +244,7 @@
         "_atr_note": "ATR-scaled armed trail (kairos_backtest_atr_trail.py, n=156 armed closes over 3.7 months): trail = clamp(atr_mult * ATR14/price * 100, trail_lo_pct, trail_hi_pct), with ATR14 taken ONCE at arm time, not recomputed per cycle. Backtested +92.6 pts vs the fixed 6.2255 with median give-back 4.15 vs 5.47, zero closes over 10pp give-back, and no measurable whipsaw increase at 5/14/30d. [2.0,4.0] chosen over the [2.0,4.5] sibling deliberately: start tight and let the learning loop loosen it if exits prove premature. Give-back is capped at min(trail*intraday_mult, peak-profit_floor_pp), so trail_hi_pct is the parameter that bounds worst-case give-back: 4.0 * 1.5 = 6.0pp. atr_enabled ships FALSE \u2014 J flips it after reviewing the shadow period, same deployment pattern as target_armed and price_invalidation."
       },
       "_target_armed_note": "TARGET-ARMED trail (backtest-verified, +31.6pts over flat tiers on n=49): no trail arms until peak_gain_pct reaches the position's own logged thesis target (predicted_return_pct from thesis_predictions); THEN a flat trail_pct trail arms, harvesting only the give-back on the SURPLUS above what the thesis promised. Falls back to the flat tiers above for any ticker with no logged target. enabled=false ships as a no-op; J flips true after reviewing dry-run output.",
-      "profit_floor_pp": 1.1867,
+      "profit_floor_pp": 1.6328,
       "_profit_floor_note": "Once ANY trail is armed, allowed retreat is capped at (peak - profit_floor_pp) so an armed winner can never exit below ~breakeven+floor. Added 2026-07-02 after giveback analysis: target-armed positions with single-digit peaks had backstops wider than their peaks (guaranteed-loss exits). 0 disables."
     },
     "tax_gate": {

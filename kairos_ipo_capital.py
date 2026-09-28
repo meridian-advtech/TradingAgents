@@ -74,8 +74,11 @@ STATUS_RESERVED  = "reserved"
 STATUS_CONVERTED = "converted"
 STATUS_RELEASED  = "released"
 
-# Slack channel for reservation/liberation notices
-SLACK_CHANNEL = "alerts"
+# Slack channel for reservation/liberation notices.
+# #kairos-log — capital reservation bookkeeping runs on its own and nobody
+# acts on an individual notice; it was routine traffic in the exception
+# channel. (2026-09-12)
+SLACK_CHANNEL = "log"
 
 # Used for the optional self-connect helper
 IB_HOST = "127.0.0.1"

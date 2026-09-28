@@ -860,10 +860,32 @@ def main():
     check("...is flagged immaterial, so no card is raised",
           p_minor["material"] is False)
     _g = (p_minor["evidence"].get("guards") or {}).get("materiality") or {}
-    check("...records a BOUND materiality guard, which is what stops "
-          "kairos_autonomy.auto_apply from applying an unsurfaced proposal",
+    check("...records a BOUND materiality guard (it really did suppress a card)",
           _g.get("bound") is True)
-    check("...and the guard says so in words", "NOT auto-appliable" in _g.get("reason", ""))
+    # ── 2026-09-12: materiality gates CARDING, not APPLYING ─────────
+    # It used to ride the same escalates-to-a-human channel as the ratchet
+    # guards, which froze the one auto-applying axis: too small to card, and
+    # therefore also unable to apply. It now carries escalates=False.
+    check("...but the materiality guard is flagged NON-escalating",
+          _g.get("escalates") is False)
+    check("...and the reason says it gates surfacing only",
+          "surfacing only" in _g.get("reason", ""))
+    check("escalating_guards() ignores a materiality-only bind",
+          A.escalating_guards(p_minor["evidence"]) == {})
+    check("escalating_guards() still returns a real ratchet guard",
+          set(A.escalating_guards({"guards": {
+              "materiality": {"bound": True, "escalates": False},
+              "cumulative_band": {"bound": True}}})) == {"cumulative_band"})
+    check("an UNKNOWN guard escalates by default (fail closed)",
+          set(A.escalating_guards({"guards": {
+              "some_future_guard": {"bound": True}}})) == {"some_future_guard"})
+    # Rows written before 2026-09-12 have a materiality guard with no
+    # `escalates` key. Classifying on the flag alone would leave every one of
+    # them escalating forever — three were standing on the day of the change.
+    check("a LEGACY materiality guard (no escalates key) does not escalate",
+          A.escalating_guards({"guards": {"materiality": {
+              "bound": True,
+              "reason": "recorded, not surfaced, and NOT auto-appliable"}}}) == {})
     # The digest, and only the digest.
     digest = A.format_minor_digest([p_minor])
     check("the digest names the count and the largest mover",
@@ -875,9 +897,18 @@ def main():
           A.format_minor_digest([dict(p_minor, gated=True)]) is None
           and A.format_minor_digest([dict(p_minor, deferred="x")]) is None
           and A.format_minor_digest([dict(p_minor, skipped="x")]) is None)
-    check("--pending-minor lists it and reports the auto-apply block",
-          any(q["id"] == p_minor["history_id"] and q["auto_apply_blocked"]
-              for q in A.pending_minor()))
+    check("the digest says a sub-threshold move on an autonomous axis was "
+          "APPLIED, not parked",
+          "auto-applied quietly" in (A.format_minor_digest([p_minor]) or ""))
+    check("...and says 'none can auto-apply' for an axis without autonomy",
+          "none can auto-apply" in (A.format_minor_digest(
+              [dict(p_minor, axis="param:nope")]) or ""))
+    _pm = {q["id"]: q for q in A.pending_minor()}
+    check("--pending-minor lists it",
+          p_minor["history_id"] in _pm)
+    check("...and reports it as NOT blocked (trail_pct has autonomy)",
+          _pm[p_minor["history_id"]]["auto_apply_blocked"] is False
+          and _pm[p_minor["history_id"]]["auto_applies_quietly"] is True)
 
     # ── ATR arm context: a FAILED measurement must not be frozen ────
     # Found live on 2026-09-09: a yfinance rate-limit burst made 14 held
@@ -1118,6 +1149,224 @@ def main():
     check("Slack renders the skip as skipped, not as an error",
           "skipped — no new evidence" in skip["slack_text"]
           and "error —" not in skip["slack_text"])
+
+    # ── Autonomy: which axes may self-apply (Part 3) ────────────────
+    print("\n[autonomy allowlist]")
+    import kairos_autonomy as AU
+    check("AUTO_APPLY_AXES is a hardcoded list in code, not a config key",
+          isinstance(AU.AUTO_APPLY_AXES, list))
+    check("exit_timing has autonomy", "exit_timing" in AU.AUTO_APPLY_AXES)
+    check("profit_floor_pp has autonomy",
+          ("param:" + FLOOR) in AU.AUTO_APPLY_AXES)
+    check("trail_pct has autonomy", ("param:" + TRAIL) in AU.AUTO_APPLY_AXES)
+    check("the ATR family does NOT (atr_enabled is false, pools are empty)",
+          not any(("param:" + p) in AU.AUTO_APPLY_AXES
+                  for p in (ATR_MULT, LO_PCT, HI_PCT)))
+    check("every autonomous param path is still whitelisted",
+          all(a[len("param:"):] in A.PARAM_WHITELIST
+              for a in AU.AUTO_APPLY_AXES if a.startswith("param:")))
+
+    # ── Part 1: a param rollback must move the CONFIG, not a DB row ──
+    # The bug: _judge reverted every axis with
+    #     UPDATE axis_weights SET weight = ? WHERE axis = ?
+    # A param's live value is in kairos_config.json. That UPDATE matched zero
+    # rows, the autonomy_log said 'rolled_back', and the harmful value stayed
+    # live — a false all-clear. Every assertion below reads the CONFIG FILE.
+    print("\n[param rollback moves the live config, not just the log row]")
+    _env(tmp, [dict(E1)] * 30, floor=1.0)
+    AU._alert = lambda *a, **k: True          # no real Slack
+    AU._closed_count = lambda: 999            # settle the rollback clock
+
+    def _cfg_floor():
+        """Read the floor straight off disk — never through a cached object."""
+        with open(A.CONFIG_PATH) as fh:
+            return json.load(fh)["exits"]["trailing_stop"]["profit_floor_pp"]
+
+    prior_on_disk = _cfg_floor()
+    p_auto = A.propose_param_update(FLOOR, run_id="autonomy_run")
+    check("a param proposal is standing and carries a real move",
+          p_auto["history_id"] is not None
+          and abs(p_auto["proposed_delta"]) > 1e-9)
+
+    aa = AU.auto_apply(dry_run=False)
+    applied_axes = {a["axis"] for a in aa["applied"]}
+    check("auto_apply applied the param without a human decision",
+          ("param:" + FLOOR) in applied_axes)
+    new_on_disk = _cfg_floor()
+    check(f"...and the CONFIG moved {prior_on_disk} → {new_on_disk}",
+          abs(new_on_disk - prior_on_disk) > 1e-9
+          and abs(new_on_disk - p_auto["new_weight"]) < 1e-9)
+
+    # Force a degradation verdict: pin the recorded baseline far below the
+    # error the corpus now measures, so worsened_frac >> ROLLBACK_DEGRADE_FRAC.
+    conn = sqlite3.connect(kairos_log_db.DB_PATH)
+    conn.execute("UPDATE autonomy_log SET baseline_error = 0.01, "
+                 "closes_at_apply = 0 WHERE verdict = 'pending'")
+    conn.commit()
+    conn.close()
+    rb = AU.check_rollbacks(dry_run=False)
+    v = next((x for x in rb["verdicts"] if x["axis"] == "param:" + FLOOR), None)
+    check("the settled param change is judged, not 'unmeasurable' "
+          "(_baseline_metric routes param axes to compute_param)",
+          v is not None and v["verdict"] == "rolled_back"
+          and v["post_error"] is not None)
+    reverted_on_disk = _cfg_floor()
+    check(f"THE CONFIG VALUE REVERTED to prior ({prior_on_disk}), "
+          f"not just the log row (reads {reverted_on_disk})",
+          abs(reverted_on_disk - prior_on_disk) < 1e-9)
+    conn = sqlite3.connect(kairos_log_db.DB_PATH)
+    conn.row_factory = sqlite3.Row
+    _log = conn.execute("SELECT * FROM autonomy_log ORDER BY id DESC "
+                        "LIMIT 1").fetchone()
+    _aw = conn.execute("SELECT COUNT(*) c FROM axis_weights WHERE axis = ?",
+                       ("param:" + FLOOR,)).fetchone()["c"]
+    conn.close()
+    check("the log row agrees with the file", _log["verdict"] == "rolled_back")
+    check("the revert is described in the note (from → to)",
+          "reverted" in (_log["note"] or ""))
+    check("a param revert NEVER writes axis_weights", _aw == 0)
+    check("a restore may cross the 7d band / 25% step cap that a LEARNING "
+          "step may not — a guard must not be able to refuse an undo",
+          A._apply_param_to_config.__doc__ is not None
+          and "restore=True" in A._apply_param_to_config.__doc__)
+
+    # ── Part 1b: an unverifiable revert must NOT report success ─────
+    print("\n[an unverified revert raises rather than logging success]")
+    _env(tmp, [dict(E1)] * 30, floor=1.0)
+    AU._alert_calls = []
+    AU._alert = lambda text, _c=AU._alert_calls: (_c.append(text), True)[1]
+    AU._closed_count = lambda: 999
+    before_sabotage = _cfg_floor()
+    A.propose_param_update(FLOOR, run_id="autonomy_fail_run")
+    AU.auto_apply(dry_run=False)
+    moved = _cfg_floor()
+    _real_revert = A.revert_param_in_config
+    A.revert_param_in_config = lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError("REVERT NOT VERIFIED: simulated write failure"))
+    try:
+        conn = sqlite3.connect(kairos_log_db.DB_PATH)
+        conn.execute("UPDATE autonomy_log SET baseline_error = 0.01, "
+                     "closes_at_apply = 0 WHERE verdict = 'pending'")
+        conn.commit()
+        conn.close()
+        rb2 = AU.check_rollbacks(dry_run=False)
+    finally:
+        A.revert_param_in_config = _real_revert
+    v2 = next((x for x in rb2["verdicts"] if x["axis"] == "param:" + FLOOR), None)
+    check("a failed revert is NOT recorded as 'rolled_back'",
+          v2 is not None and v2["verdict"] == "rollback_failed")
+    check("...the config is honestly reported as still holding the new value",
+          abs(_cfg_floor() - moved) < 1e-9
+          and abs(_cfg_floor() - before_sabotage) > 1e-9)
+    check("...and #kairos-alerts is told the harmful value is still live",
+          any("ROLLBACK FAILED" in t and "still live" in t
+              for t in AU._alert_calls))
+    check("...with an @here so it is visually distinct from routine posts",
+          any("<!here>" in t for t in AU._alert_calls))
+
+    # ── Part 1c: real revert_param_in_config verifies the disk read ──
+    print("\n[revert_param_in_config proves the value landed]")
+    _env(tmp, [dict(E1)] * 12, floor=1.0)
+    rv = A.revert_param_in_config(FLOOR, 1.15)
+    check("a verified revert reports the value it landed",
+          rv["verified"] is True and abs(rv["to_value"] - 1.15) < 1e-9
+          and abs(_cfg_floor() - 1.15) < 1e-9)
+    check("...and writes a timestamped backup first",
+          rv["backup"] and os.path.exists(rv["backup"]))
+    try:
+        A.revert_param_in_config(FLOOR, 99.0)   # outside PARAM_WHITELIST bounds
+        check("a restore still refuses a value outside the hard bounds", False)
+    except ValueError:
+        check("a restore still refuses a value outside the hard bounds", True)
+
+    # ── Part 2: materiality gates carding, not applying ─────────────
+    print("\n[materiality does not freeze auto-apply]")
+    _env(tmp, [dict(E1)] * 1, trail=8.0)      # effective_n 1 -> tiny move
+    AU._alert = lambda *a, **k: True
+    AU._closed_count = lambda: 999
+
+    def _cfg_trail():
+        with open(A.CONFIG_PATH) as fh:
+            return json.load(fh)["exits"]["trailing_stop"]["target_armed"]["trail_pct"]
+
+    trail_before = _cfg_trail()
+    p_sub = A.propose_param_update(TRAIL, run_id="submaterial_run")
+    check("the proposal is sub-threshold (raises no card)",
+          p_sub["material"] is False and abs(p_sub["proposed_delta"]) > 1e-9)
+    aa2 = AU.auto_apply(dry_run=False)
+    check("...and STILL auto-applies, because trail_pct has autonomy",
+          ("param:" + TRAIL) in {a["axis"] for a in aa2["applied"]})
+    check("...the config actually moved",
+          abs(_cfg_trail() - trail_before) > 1e-9)
+
+    # Same proposal, axis WITHOUT autonomy -> recorded, no card, no apply.
+    _env(tmp, [dict(E1)] * 1, trail=8.0)
+    _saved_axes = list(AU.AUTO_APPLY_AXES)
+    AU.AUTO_APPLY_AXES = ["exit_timing"]      # pretend trail_pct never earned it
+    try:
+        A.propose_param_update(TRAIL, run_id="submaterial_noauto")
+        t_before = _cfg_trail()
+        aa3 = AU.auto_apply(dry_run=True)
+        _sk = {s["axis"]: s["reason"] for s in aa3["skipped"]}
+        check("an axis without autonomy is skipped for that reason alone",
+              _sk.get("param:" + TRAIL) == "axis not approved for autonomy")
+        check("...and nothing is written", abs(_cfg_trail() - t_before) < 1e-9)
+    finally:
+        AU.AUTO_APPLY_AXES = _saved_axes
+
+    # A REAL ratchet guard still stops an autonomous axis dead.
+    print("\n[a real ratchet guard still escalates]")
+    _env(tmp, [dict(E1)] * 30, trail=8.0)
+    pg = A.propose_param_update(TRAIL, run_id="guarded_run")
+    conn = sqlite3.connect(kairos_log_db.DB_PATH)
+    conn.execute(
+        "UPDATE axis_weight_history SET evidence = ? WHERE id = ?",
+        (json.dumps({"guards": {"cumulative_band": {
+            "bound": True, "reason": "outside 7d band"}}}), pg["history_id"]))
+    conn.commit()
+    conn.close()
+    aa4 = AU.auto_apply(dry_run=True)
+    _sk4 = {s["axis"]: s["reason"] for s in aa4["skipped"]}
+    check("a bound cumulative_band still escalates to a human",
+          "ratchet guard bound" in _sk4.get("param:" + TRAIL, ""))
+
+    # ── Post-rollback cooldown: no apply/revert oscillation ─────────
+    print("\n[post-rollback cooldown]")
+    _env(tmp, [dict(E1)] * 30, trail=8.0)
+    p_cd = A.propose_param_update(TRAIL, run_id="cooldown_run")
+    conn = sqlite3.connect(kairos_log_db.DB_PATH)
+    conn.execute("CREATE TABLE IF NOT EXISTS autonomy_log ("
+                 "id INTEGER PRIMARY KEY AUTOINCREMENT, history_id INTEGER, "
+                 "axis TEXT, applied_at TEXT, prior_weight REAL, "
+                 "new_weight REAL, baseline_error REAL, closes_at_apply INTEGER, "
+                 "verdict TEXT, verdict_at TEXT, post_error REAL, note TEXT)")
+    conn.execute("INSERT INTO autonomy_log (history_id, axis, applied_at, "
+                 "verdict, verdict_at) VALUES (?,?,?,'rolled_back',?)",
+                 (p_cd["history_id"], "param:" + TRAIL, _now_utc(2), _now_utc(2)))
+    conn.commit()
+    conn.close()
+    aa5 = AU.auto_apply(dry_run=True)
+    _sk5 = {s["axis"]: s["reason"] for s in aa5["skipped"]}
+    check("an axis rolled back 2 days ago cannot re-apply",
+          "post-rollback cooldown" in _sk5.get("param:" + TRAIL, ""))
+    conn = sqlite3.connect(kairos_log_db.DB_PATH)
+    conn.execute("UPDATE autonomy_log SET verdict_at = ?",
+                 (_now_utc(AU.ROLLBACK_COOLDOWN_DAYS + 1),))
+    conn.commit()
+    conn.close()
+    aa6 = AU.auto_apply(dry_run=True)
+    check("...and can again once the cooldown has expired",
+          ("param:" + TRAIL) in {r["axis"] for r in aa6["would_apply"]})
+
+    # ── Staleness: a proposal computed against a value that has moved ──
+    print("\n[stale proposals escalate rather than apply]")
+    _env(tmp, [dict(E1)] * 30, trail=8.0)
+    A.propose_param_update(TRAIL, run_id="stale_run")
+    A._apply_param_to_config(TRAIL, 7.5, restore=True)   # someone else moved it
+    aa7 = AU.auto_apply(dry_run=True)
+    _sk7 = {s["axis"]: s["reason"] for s in aa7["skipped"]}
+    check("a proposal whose anchor has moved is escalated, not applied",
+          "stale" in _sk7.get("param:" + TRAIL, ""))
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n==== selftest: {_checks['pass']} passed, {_checks['fail']} failed "

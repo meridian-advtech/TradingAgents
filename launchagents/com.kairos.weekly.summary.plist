@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.kairos.weekly.summary</string>
+
+    <!-- The 60-second Sunday check-in. Read-only; posts one Slack message. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/jelmore/Kairos-env/bin/python3</string>
+        <string>/Users/jelmore/Kairos/kairos_weekly_summary.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/jelmore/Kairos</string>
+
+    <!-- Sunday 18:00 local. Weekday 0 == Sunday. Deliberately NOT RunAtLoad:
+         loading the agent should not fire a summary. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key><integer>0</integer>
+        <key>Hour</key><integer>18</integer>
+        <key>Minute</key><integer>0</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/jelmore/Kairos/kairos_weekly_summary.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jelmore/Kairos/kairos_weekly_summary.log</string>
+
+    <!-- NO SECRETS IN THIS FILE. SLACK_BOT_TOKEN is parsed out of ~/.zshrc at
+         runtime, which is why HOME is set. See kairos_healthcheck.py. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/jelmore/Kairos-env/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/jelmore</string>
+    </dict>
+</dict>
+</plist>

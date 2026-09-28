@@ -1164,9 +1164,14 @@ def _refresh_proposals_and_post_cards(run_id: str) -> None:
         aa = auto_apply(dry_run=False)
         for a in aa.get("applied", []):
             auto_applied_ids.add(a["id"])
+            # Params are magnitudes (6.2255, 1.2491), axis weights are signed
+            # offsets (+0.2787). Rendering a trail as "+6.2255" reads as a
+            # delta, which is the one thing it is not.
+            _fmt = ("{:g}" if a["axis"].startswith("param:") else "{:+.4f}")
             autonomy_lines.append(
                 f":robot_face: *auto-applied* `{a['axis']}` "
-                f"{a['prior']:+.4f} → {a['new']:+.4f} (no human gate)")
+                f"{_fmt.format(a['prior'])} → {_fmt.format(a['new'])} "
+                f"(no human gate)")
         for s in aa.get("skipped", []):
             if "not approved for autonomy" not in s.get("reason", ""):
                 autonomy_lines.append(
@@ -1217,15 +1222,33 @@ def _refresh_proposals_and_post_cards(run_id: str) -> None:
     except Exception as exc:
         print(f"  WARNING: posting proposal cards failed: {exc}", file=sys.stderr)
 
-    # One line for everything recorded but not surfaced.
+    # One line for everything recorded but not surfaced. auto_applied_ids is
+    # passed so the digest reports what actually applied rather than what was
+    # merely eligible — a cooldown or a stale anchor can hold back an
+    # autonomous axis, and "applied quietly" must mean applied.
     try:
         from kairos_axis_weights import format_minor_digest
-        digest = format_minor_digest(proposals)
+        digest = format_minor_digest(proposals, applied_ids=auto_applied_ids)
         if digest:
             post_to_slack(ARBITER_CHANNEL, digest)
             print(f"  {digest}")
     except Exception as exc:
         print(f"  WARNING: sub-threshold digest failed: {exc}", file=sys.stderr)
+
+    # ── "Something needs you" escalation (2026-09-12) ────────────────
+    # Runs here as well as on its own schedule, so a rollback or a guard bind
+    # produced by the block above reaches #kairos-alerts in the same minute it
+    # happens rather than at the next watch interval. kairos_watch dedupes on
+    # its own state file, so the two entry points cannot double-post. Fully
+    # guarded: the escalation layer must never be able to break the loop it
+    # is watching.
+    try:
+        from kairos_watch import run as watch_run
+        wr = watch_run()
+        print(f"  Watch: {len(wr['found'])} condition(s) true, "
+              f"{len(wr['fresh'])} alerted")
+    except Exception as exc:
+        print(f"  WARNING: watch escalation failed: {exc}", file=sys.stderr)
 
 
 def main() -> int:

@@ -375,7 +375,7 @@ def alert_trade_executed(
     closed_lots: list[dict] | None = None,
     source_tier: str | None = None,
 ) -> None:
-    """Alert: Trade was filled — lists all co-firing signals.  → alerts channel.
+    """Alert: Trade was filled — lists all co-firing signals.  → trades channel.
 
     Only call this for Submitted/Filled trades — never for Skipped/Cancelled.
 

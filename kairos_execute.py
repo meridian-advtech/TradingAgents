@@ -1399,7 +1399,11 @@ def reconcile_submitted_orders(grace_minutes: int = 30) -> int:
                 parts.append(
                     f":abacus: Backfilled {ml_reconciled} provisional ML entry "
                     f"price(s) from broker avg cost")
-            post_message("alerts", "\n".join(parts))
+            # Order/price housekeeping, not a position change and not
+            # something anyone acts on → #kairos-log, alongside the stale-order
+            # cancellation note above. See reconcile_positions_against_broker
+            # for the channel-discipline reasoning.
+            post_message("log", "\n".join(parts))
         except Exception as exc:
             print(f"  reconcile_submitted_orders: Slack post failed: {exc}")
 
@@ -1798,11 +1802,24 @@ def reconcile_positions_against_broker(dry_run: bool = True) -> dict:
           f"updated={n_updated} phantom={n_phantom} merged_lots={n_merged} "
           f"errors={len(summary['errors'])}")
 
-    # Post to #kairos-alerts on real (write) runs. Manual dry-runs print only
-    # (they write nothing and should not page the channel).
+    # ── Channel routing (2026-09-12) ─────────────────────────────────
+    # This used to post to #kairos-alerts on EVERY write run, including the
+    # "✓ No discrepancies — DB agrees with broker" all-clear. That is a
+    # routine green tick arriving several times a day in the channel reserved
+    # for "a human must look at this", and it is the single largest source of
+    # routine volume there.
+    #
+    # It matters more than tidiness. J is at low touch for 3-6 months, and the
+    # 2026-08-10 outage was only caught because a repeated Slack message
+    # eventually looked wrong — i.e. the failure mode is a channel whose
+    # regular traffic trains its reader to stop reading. So: the all-clear and
+    # the routine created/updated/merged summary go to #kairos-log; only a
+    # phantom exit or a reconcile error — the two branches that need a person
+    # — reach #kairos-alerts.
     if not dry_run:
         try:
             from kairos_alerts import post_message
+            needs_human = bool(summary["phantom"] or summary["errors"])
             lines = [
                 ":scales: *Position Reconciliation* (IBKR = source of truth)",
                 f"Broker STK positions: {summary['broker_positions']}  |  "
@@ -1822,7 +1839,7 @@ def reconcile_positions_against_broker(dry_run: bool = True) -> dict:
             if not (summary["phantom"] or summary["created"]
                     or summary["updated"] or summary["merged"]):
                 lines.append("✓ No discrepancies — DB agrees with broker.")
-            post_message("alerts", "\n".join(lines))
+            post_message("alerts" if needs_human else "log", "\n".join(lines))
         except Exception as exc:
             print(f"  reconcile_positions_against_broker: Slack post failed: {exc}")
 

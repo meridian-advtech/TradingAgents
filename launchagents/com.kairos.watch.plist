@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.kairos.watch</string>
+
+    <!-- Outcome-level monitor: rollbacks, escalated ratchet guards, no-trade
+         streaks, NLV drawdown, auto-applied changes trending worse. Posts to
+         #kairos-alerts ONLY when a human decision is needed. Read-only with
+         respect to trading; it restarts and reloads nothing. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/jelmore/Kairos-env/bin/python3</string>
+        <string>/Users/jelmore/Kairos/kairos_watch.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/jelmore/Kairos</string>
+
+    <!-- 4x/day. The conditions it watches change on the scale of hours to
+         days, not minutes, and the module dedupes for REALERT_AFTER_HOURS
+         anyway, so a tighter interval buys nothing. -->
+    <key>StartInterval</key>
+    <integer>21600</integer>
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/jelmore/Kairos/kairos_watch.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jelmore/Kairos/kairos_watch.log</string>
+
+    <!-- NO SECRETS IN THIS FILE. SLACK_BOT_TOKEN is parsed out of ~/.zshrc at
+         runtime, which is why HOME is set. See kairos_healthcheck.py. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/jelmore/Kairos-env/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/jelmore</string>
+    </dict>
+</dict>
+</plist>

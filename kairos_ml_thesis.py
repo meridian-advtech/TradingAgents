@@ -544,7 +544,13 @@ def _emit_thesis_warning(
             f"  Actual move so far: {pct_move:+.2f}%\n"
             f"  Direction is wrong — consider reviewing the thesis."
         )
-        alert_pipeline_event(msg, channel="alerts")
+        # #kairos-reports, not #kairos-alerts (2026-09-12). This is an
+        # observation, not a request: kairos_thesis_review already runs daily
+        # and is the thing that actually acts on an invalid thesis, so a
+        # per-ticker note here duplicates it into the exception channel. With
+        # ~56 open positions it could fire several times a week, which is
+        # exactly the routine volume that trains a reader to skip the channel.
+        alert_pipeline_event(msg, channel="reports")
     except Exception as exc:
         print(f"  [thesis-checkpoints] WARNING: failed to alert for {ticker}: {exc}")
 

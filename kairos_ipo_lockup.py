@@ -61,7 +61,9 @@ DEFAULT_LOCKUP_DAYS = 180
 DEFAULT_SCORING_WINDOW_DAYS = 30
 DEFAULT_SCORE_THRESHOLD = 7
 DEFAULT_MIN_PERF_PCT = 20.0
-SLACK_CHANNEL = "alerts"
+# #kairos-watchlist — lock-up arming notices are universe/signal information,
+# not a request for a decision. (2026-09-12)
+SLACK_CHANNEL = "watchlist"
 
 
 # ── Config ───────────────────────────────────────────────────────────
