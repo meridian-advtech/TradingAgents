@@ -2280,23 +2280,9 @@ def run_scheduled_cycle(args) -> None:
             print(f"  WARNING: Submitted order reconciliation failed: {exc}\n{tb}")
             _log_phase_crash("submitted_order_reconcile", exc, tb)
 
-        # Position reconciliation: IBKR is the source of truth for what we
-        # actually hold. Runs LAST in Phase 0 so it trues up anything the two
-        # order reconcilers above just touched — catching orphans (broker holds,
-        # no DB lot → unmanaged), qty/cost drift, lot fragmentation, and phantoms
-        # (DB open, broker flat → an unrecorded exit). Read-only at the broker;
-        # writes only to kairos.db holdings. dry_run=False = real write pass.
-        try:
-            from kairos_execute import reconcile_positions_against_broker
-            recon = reconcile_positions_against_broker(dry_run=False)
-            print(f"  Positions reconciled — created={len(recon['created'])} "
-                  f"updated={len(recon['updated'])} phantom={len(recon['phantom'])} "
-                  f"merged={len(recon['merged'])}")
-        except Exception as exc:
-            import traceback
-            tb = traceback.format_exc()
-            print(f"  WARNING: Position reconciliation failed: {exc}\n{tb}")
-            _log_phase_crash("position_reconcile", exc, tb)
+        # (Position reconciliation used to run here and REWRITE holdings to the
+        # broker. Positions are now derived from fills; the read-only broker
+        # check runs at the END of the cycle instead — see below.)
 
     # Phase 0: IPO Day-1 engine — runs EVERY cycle (not gated by the daily
     # full scan). Lightweight: probes pending-reservation discoveries and
@@ -2608,6 +2594,23 @@ def run_scheduled_cycle(args) -> None:
                 run_execute_crypto()
         except Exception as exc:
             print(f"  WARNING: Reasoning/Execute phase failed: {exc}")
+
+    # e. End-of-cycle broker check: reqExecutions() → record any fill the live
+    # path missed (source 'broker_check') → rebuild trades → compare the
+    # positions view with ib.positions(). A mismatch posts a come-look alert
+    # and changes NOTHING — the ledger is never forced to match the broker.
+    if run_equity:
+        try:
+            from kairos_ledger import broker_check
+            bc = broker_check()
+            print(f"  Broker check — new fills={bc['new_fills']} "
+                  f"mismatches={len(bc['mismatches'])}"
+                  + (f" error={bc['error']}" if bc.get("error") else ""))
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"  WARNING: Broker check failed: {exc}\n{tb}")
+            _log_phase_crash("broker_check", exc, tb)
 
     # Increment cycle and persist
     state["cycle_count"] = cycle + 1

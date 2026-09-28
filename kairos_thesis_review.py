@@ -124,7 +124,7 @@ def _primary_signal_for(ticker: str, current_signals: list[str]) -> str | None:
 # Per-run audit log. Every reviewed (run_id, ticker) gets a row here,
 # regardless of whether a sell triggered, so the table is also a record
 # of "we looked and decided to hold". Sells additionally go through
-# kairos_stoploss._log_sell into the decisions table — unchanged.
+# kairos_stoploss._log_sell (decision + exit_annotations + fills) — unchanged.
 SCHEMA_THESIS_REVIEWS = """
 CREATE TABLE IF NOT EXISTS thesis_reviews (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -321,7 +321,7 @@ def _get_thesis_conditions(ticker: str) -> tuple[str, str]:
     Most recent thesis for the ticker; ("", "") if unavailable.
     """
     import sqlite3 as _sq
-    path = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
+    path = os.path.join(SCRIPT_DIR, "kairos.db")
     if not os.path.exists(path):
         return "", ""
     try:
@@ -446,10 +446,6 @@ def _log_and_alert(ticker: str, qty: int, entry_price: float, sell_price: float,
     drawdown_pct = (sell_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
 
     _log_sell(ticker, qty, entry_price, sell_price, holding_days, reason, execution)
-
-    # ML Outcomes: sell_holdings (above) closed and fully stamped the ledger
-    # rows this sale consumed. No newest-row find_open_trade guess here — it
-    # picked a different row than the sale and could close a still-held lot.
 
     pnl = (sell_price - entry_price) * qty
     tax_class = "long-term" if holding_days >= 365 else "short-term"

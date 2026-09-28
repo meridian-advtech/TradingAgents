@@ -699,8 +699,9 @@ def execute_reallocation(
     freed_capital = exit_qty * sell_price
     print(f"    DEBUG: Freed capital from SELL: ${freed_capital:,.2f}")
 
-    # Log the sell via the shared path
-    from kairos_log_db import init_db, insert_decision, sell_holdings
+    # Log the sell via the shared path: decision + exit_annotations, then fills.
+    import kairos_ledger
+    from kairos_log_db import init_db
     init_db()
 
     exit_avg_cost = realloc.get("exit_avg_cost", 0)
@@ -711,7 +712,8 @@ def execute_reallocation(
     pnl_pct = ((sell_price - exit_avg_cost) / exit_avg_cost * 100
                if exit_avg_cost > 0 else 0)
 
-    sell_decision_id = insert_decision(
+    sell_decision_id, _ = kairos_ledger.record_execution(
+        sell_execution, context="reallocation SELL leg",
         timestamp=ts,
         ticker=exit_ticker,
         action="SELL",
@@ -729,11 +731,10 @@ def execute_reallocation(
         execution_price=sell_price,
         execution_status=sell_execution.get("status", "Submitted"),
         commission=sell_execution.get("commission"),
+        exit=kairos_ledger.build_exit_annotation(exit_ticker, sell_reason),
     )
 
     sell_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    closed_lots = sell_holdings(exit_ticker, exit_qty, sell_date, sell_price,
-                                sell_reason)
     print(f"    SELL {exit_ticker}: {sell_execution.get('status', '?')} "
           f"@ ${sell_price:,.2f} (P&L: ${pnl_dollars:+,.0f})")
 
@@ -751,10 +752,6 @@ def execute_reallocation(
         )
     except Exception as ledger_exc:
         print(f"    WARNING: reallocation ledger entry failed: {ledger_exc}")
-
-    # ML Outcomes: sell_holdings (above) closed and fully stamped the ledger
-    # rows this sale consumed. No newest-row find_open_trade guess here — it
-    # picked a different row than the sale and could close a still-held lot.
 
     # ── Leg 2: BUY the new ticker — re-size off ACTUAL freed capital ──
     # The pre-flight already validated the buy off the estimated freed capital;
@@ -781,7 +778,7 @@ def execute_reallocation(
         f"Funded by REALLOCATION from {exit_ticker} "
         f"(+{realloc['conviction_delta']} conviction delta)"
     )
-    # WRITE-BACK FIX: log_execution writes the holdings row from
+    # WRITE-BACK FIX: log_execution records the decision quantity from
     # trade["quantity"], but new_trade still carries the ORIGINAL pre-reallocation
     # size (often ~0 — the cash-breach round-down that triggered reallocation in
     # the first place). The order we actually placed/filled was final_qty, so

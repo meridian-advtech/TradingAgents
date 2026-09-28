@@ -4,7 +4,7 @@ Kairos ML Track 1 Pattern Recognition Module
 Provides machine-learning-based signal scoring for Kairos trading pipeline.
 
 Features:
-- Training: RandomForestClassifier on closed trades from kairos_ml_outcomes.db
+- Training: RandomForestClassifier on closed trades from kairos.db (trade_outcomes view)
 - Scoring: ML confidence and signal strength for candidate tickers
 - Integration: run_ml_phase() hooks into kairos_run.py pipeline
 
@@ -34,7 +34,7 @@ from sklearn.model_selection import cross_val_score
 from sklearn.preprocessing import OneHotEncoder
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
+DB_PATH = os.path.join(SCRIPT_DIR, "kairos.db")
 MODEL_PATH = os.path.join(SCRIPT_DIR, "kairos_ml_model.pkl")
 DECISIONS_LOG = os.path.join(SCRIPT_DIR, "kairos_decisions.log")
 SCREEN_RESULT_FILE = os.path.join(SCRIPT_DIR, "kairos_screen_result.json")
@@ -376,7 +376,7 @@ def _force_sequential(model):
 def train_model(force_retrain: bool = False) -> dict:
     """Train (or load) RandomForestClassifier on closed trade outcomes.
     
-    Queries kairos_ml_outcomes.db for all closed trades with known outcomes,
+    Queries kairos.db trade_outcomes for all closed trades with known outcomes,
     extracts features from signal tags, sector, hold duration, and entry time.
     
     Returns dict with:

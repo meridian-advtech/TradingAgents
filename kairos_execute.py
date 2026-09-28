@@ -460,8 +460,17 @@ def execute_order(ib: IB, ticker: str, action: str, qty: int) -> dict:
     result = {
         "status": trade.orderStatus.status,
         "order_id": trade.order.orderId,
+        "perm_id": trade.order.permId or trade.orderStatus.permId or None,
         "limit_price": limit_price,   # intended price — fallback entry price if no fill price
     }
+    # Every execution of the order, for the fills ledger (JSON-safe dicts).
+    # Fills that arrive after this wait are caught by the end-of-cycle broker
+    # check and linked back to this decision by perm_id.
+    try:
+        from kairos_ledger import fills_as_dicts
+        result["fills"] = fills_as_dicts(trade)
+    except Exception as exc:
+        print(f"    WARNING: could not capture fills for the ledger: {exc}")
 
     if trade.fills:
         fill = trade.fills[0]
@@ -523,10 +532,12 @@ def log_execution(decision: dict, trade: dict, execution: dict,
         f.write("\n" + "=" * W + "\n")
     print(f"    Logged to {LOG_FILE}")
 
-    # SQLite
+    # SQLite — decision + annotations, then the order's fills (kairos_ledger).
+    # The position is derived from fills; nothing here writes a lot directly.
     closed_lots = []  # populated by SELL branch for Slack P&L details
     try:
-        from kairos_log_db import init_db, insert_decision, insert_holding, sell_holdings
+        import kairos_ledger
+        from kairos_log_db import init_db
         init_db()
 
         conf = trade.get("_confluence", {})
@@ -538,10 +549,9 @@ def log_execution(decision: dict, trade: dict, execution: dict,
 
         # Phase C tag: the active learned-calibration weights that were in the
         # reasoning prompt this cycle, captured to kairos_axis_snapshot.json by
-        # kairos_reason.py at prompt-build time. We stamp them onto this decision
-        # row (axis_weights_snapshot column, added by the Phase C migration) for
-        # Phase D efficacy analysis. A missing/empty/unparseable sidecar tags NULL
-        # and must NEVER block or alter execution.
+        # kairos_reason.py at prompt-build time, stamped onto this decision row
+        # (axis_weights_snapshot) for Phase D efficacy analysis. A missing/empty/
+        # unparseable sidecar tags NULL and must NEVER block or alter execution.
         axis_weights_snapshot = None
         try:
             _snap_path = os.path.join(SCRIPT_DIR, "kairos_axis_snapshot.json")
@@ -557,7 +567,68 @@ def log_execution(decision: dict, trade: dict, execution: dict,
             print(f"    NOTE: axis weights snapshot unavailable "
                   f"({_snap_err}) — tagging NULL")
 
-        row_id = insert_decision(
+        status = execution.get("status")
+        action_upper = action.upper()
+        sent = (status or "") != "Skipped"
+
+        # ── Entry annotations (BUY sent to the broker) ───────────────────
+        # Written in the SAME transaction as the decision; a BUY that reached
+        # the broker cannot be stored without them. Every order that might
+        # fill gets a trade_id — a limit order logged 'Submitted' routinely
+        # fills after this wait, and its fills are linked back by perm_id.
+        entry = None
+        ml_signals = []
+        if action_upper == "BUY" and sent:
+            # Signals that actually triggered THIS trade — sourced from the
+            # trade's own decision context first, falling back to the JSON
+            # screener. Recovers reversion/score-route entries (HOT-REVERSION,
+            # HOT-IPO, reversion-route HOT-CATALYST) that get_ticker_signals
+            # alone returns [] for.
+            ml_signals, ml_attr_source = _derive_entry_signals_with_source(trade, ticker)
+
+            # Confluence: prefer the score computed during sizing; if that is
+            # 0/None (reversion route never scored from these tags), recompute
+            # from the real signals rather than logging a hard 0.
+            ml_confluence = conf.get("score") if conf else None
+            if not ml_confluence and ml_signals:
+                try:
+                    from kairos_confluence import compute_confluence
+                    ml_confluence = compute_confluence(ml_signals)["score"]
+                except Exception:
+                    pass
+
+            # Own-data capture at entry (added 2026-08-19): conviction is
+            # Kairos's own confidence in THIS trade; the ml_* fields are the
+            # model's prediction, stored so it can be scored against the
+            # realized outcome later; regime enables per-regime analysis.
+            ml_conviction = trade.get("conviction")
+            try:
+                ml_conviction = int(ml_conviction) if ml_conviction not in (None, "") else None
+            except (TypeError, ValueError):
+                ml_conviction = None
+            ml_pred_conf, ml_pred_signal, ml_pred_trained_on = _ml_prediction_for(ticker)
+            entry = dict(
+                signals=ml_signals or None,
+                signal_attribution_source=ml_attr_source,
+                confluence_score=ml_confluence,
+                conviction=ml_conviction,
+                market_regime=_current_market_regime(),
+                sector=trade.get("sector") or _lookup_sector(ticker),
+                ml_confidence_at_entry=ml_pred_conf,
+                ml_signal_at_entry=ml_pred_signal,
+                ml_trained_on_at_entry=ml_pred_trained_on,
+            )
+
+        # ── Exit annotations (SELL) ─────────────────────────────────────
+        # Exit reason: the SELL decision's own rationale (covers manual sells,
+        # reallocation buy-legs, and the oversized+underwater TRIM).
+        exit_ann = None
+        if action_upper == "SELL" and sent:
+            sell_reason = (trade.get("rationale") or "").strip() or "SELL (unspecified)"
+            exit_ann = kairos_ledger.build_exit_annotation(ticker, sell_reason)
+
+        row_id, trade_id = kairos_ledger.record_execution(
+            execution, context="log_execution",
             timestamp=timestamp,
             ticker=ticker,
             action=action,
@@ -565,169 +636,51 @@ def log_execution(decision: dict, trade: dict, execution: dict,
             rationale=trade.get("rationale", ""),
             data_inputs=data_inputs,
             execution_price=execution.get("fill_price"),
-            execution_status=execution.get("status"),
+            execution_status=status,
             commission=execution.get("commission"),
             net_liq_after=net_liq,
             position_after=execution.get("new_position"),
             conviction_trade=conviction_trade,
+            axis_weights_snapshot=axis_weights_snapshot,
+            entry=entry,
+            exit=exit_ann,
         )
-        print(f"    DB: decision #{row_id}")
+        print(f"    DB: decision #{row_id}"
+              + (f", trade {trade_id[:8]}… (signals={ml_signals or 'none'})" if trade_id else ""))
 
-        # Stamp the Phase C weights snapshot onto the row just inserted. Done as a
-        # follow-up UPDATE (insert_decision's signature is fixed) and fully guarded
-        # so a DB hiccup here can never block or alter the trade. Skipped when the
-        # sidecar gave us nothing → column stays NULL.
-        if axis_weights_snapshot is not None:
+        # Thesis prediction: capture Claude's expected move at entry, keyed by
+        # the trade_id (thesis rows join trade_outcomes on it).
+        if trade_id:
             try:
-                from kairos_log_db import get_connection
-                _tag_conn = get_connection()
-                try:
-                    _tag_conn.execute(
-                        "UPDATE decisions SET axis_weights_snapshot = ? WHERE id = ?",
-                        (axis_weights_snapshot, row_id),
-                    )
-                    _tag_conn.commit()
-                finally:
-                    _tag_conn.close()
-                print(f"    DB: tagged decision #{row_id} with axis weights "
-                      f"{axis_weights_snapshot}")
-            except Exception as _tag_err:
-                print(f"    NOTE: could not tag decision #{row_id} with axis "
-                      f"weights ({_tag_err}) — continuing")
+                from kairos_ml_thesis import (
+                    write_thesis_prediction, pick_primary_signal,
+                )
+                thesis_signal = pick_primary_signal(ml_signals)
+                write_thesis_prediction(
+                    decision_id=trade_id,
+                    ticker=ticker,
+                    timestamp_entry=timestamp,
+                    predicted_direction=trade.get("predicted_direction"),
+                    predicted_timeframe_days=trade.get("predicted_timeframe_days"),
+                    predicted_return_pct=trade.get("predicted_return_pct"),
+                    key_conditions=trade.get("key_conditions"),
+                    signal_type=thesis_signal,
+                    conviction_score=trade.get("conviction"),
+                    invalidation_conditions=trade.get("invalidation_conditions"),
+                )
+                print(f"    Thesis prediction recorded "
+                      f"({trade.get('predicted_direction','?')} "
+                      f"{trade.get('predicted_return_pct','?')}% / "
+                      f"{trade.get('predicted_timeframe_days','?')}d, "
+                      f"signal={thesis_signal or 'n/a'})")
+            except Exception as th_exc:
+                print(f"    WARNING: thesis prediction failed: {th_exc}")
 
-        exec_filled = execution.get("status") == "Filled"
+        # ── SELL: lots closed by this order's fills (for Slack + ledger) ──
         fill_price = execution.get("fill_price")
-        action_upper = action.upper()
-
-        # ── BUY entry logging — robust to a missing/late fill price ──────
-        # A BUY that filled at the broker MUST create the ML record, even if the
-        # fill price has not yet arrived — otherwise the trade is lost from the
-        # training corpus (this orphaned 13 positions historically). Derive the
-        # best entry price available and mark the row for reconciliation when it
-        # is only an estimate.
-        if exec_filled and action_upper == "BUY":
-            entry_price, price_provisional = _best_entry_price(execution, trade)
-            if entry_price is None:
-                # No price knowable anywhere — can't create a meaningful row.
-                _alert_ml_log_failure(
-                    ticker, qty,
-                    "Filled BUY with no derivable entry price — ML row NOT created")
-            else:
-                if price_provisional:
-                    print(f"    NOTE: no immediate fill price — logging entry at "
-                          f"${entry_price:.2f} (provisional, flagged for reconcile)")
-                h_id = insert_holding(ticker, timestamp, entry_price, qty)
-                print(f"    Holdings: BUY lot #{h_id}")
-
-                # Signals that actually triggered THIS trade — sourced from the
-                # trade's own decision context first, falling back to the JSON
-                # screener. Recovers reversion/score-route entries (HOT-REVERSION,
-                # HOT-IPO, reversion-route HOT-CATALYST) that get_ticker_signals
-                # alone returns [] for.
-                ml_signals, ml_attr_source = _derive_entry_signals_with_source(
-                    trade, ticker)
-
-                # Confluence: prefer the score computed during sizing; if that is
-                # 0/None (reversion route never scored from these tags), recompute
-                # from the real signals rather than logging a hard 0.
-                ml_confluence = conf.get("score") if conf else None
-                if not ml_confluence and ml_signals:
-                    try:
-                        from kairos_confluence import compute_confluence
-                        ml_confluence = compute_confluence(ml_signals)["score"]
-                    except Exception:
-                        pass
-                ml_sector = trade.get("sector") or _lookup_sector(ticker)
-
-                # Own-data capture at entry (added 2026-08-19): conviction is
-                # Kairos's own confidence in THIS trade; the ml_* fields are
-                # the model's prediction, stored so it can be scored against
-                # the realized outcome later; regime enables per-regime
-                # performance analysis. All were previously discarded.
-                ml_conviction = trade.get("conviction")
-                try:
-                    ml_conviction = int(ml_conviction) if ml_conviction not in (None, "") else None
-                except (TypeError, ValueError):
-                    ml_conviction = None
-                ml_pred_conf, ml_pred_signal, ml_pred_trained_on = _ml_prediction_for(ticker)
-                ml_regime = _current_market_regime()
-
-                # ML Outcomes: record trade open. A trade that executes but fails
-                # to log is a corpus-integrity event — alert, never swallow.
-                ml_trade_id = None
-                try:
-                    from kairos_ml_outcomes import init_db as ml_init, write_trade_open
-                    ml_init()
-                    ml_trade_id = write_trade_open(
-                        ticker=ticker,
-                        action=action_upper,
-                        quantity=qty,
-                        price_entry=entry_price,
-                        timestamp_entry=timestamp,
-                        signals_fired=ml_signals if ml_signals else None,
-                        confluence_score=ml_confluence,
-                        conviction=ml_conviction,
-                        ml_confidence_at_entry=ml_pred_conf,
-                        ml_signal_at_entry=ml_pred_signal,
-                        ml_trained_on_at_entry=ml_pred_trained_on,
-                        market_regime=ml_regime,
-                        sector=ml_sector,
-                        entry_price_provisional=price_provisional,
-                        signal_attribution_source=ml_attr_source,
-                    )
-                    print(f"    ML Outcomes: trade open {ml_trade_id[:8]}... "
-                          f"(signals={ml_signals or 'none'}, "
-                          f"source={ml_attr_source}, "
-                          f"confluence={ml_confluence}, "
-                          f"conviction={ml_conviction}, "
-                          f"ml_pred={ml_pred_signal or 'n/a'}"
-                          f"{f'/{ml_pred_conf}' if ml_pred_conf is not None else ''}, "
-                          f"regime={ml_regime or 'n/a'})")
-                except Exception as ml_exc:
-                    _alert_ml_log_failure(
-                        ticker, qty, f"write_trade_open failed: {ml_exc}")
-                    ml_trade_id = None
-
-                # Thesis prediction: capture Claude's expected move at entry.
-                # Fields are sourced from the per-trade JSON; signal_type now
-                # comes from the trade's REAL signals (no longer None on the
-                # reversion/score path).
-                if ml_trade_id:
-                    try:
-                        from kairos_ml_thesis import (
-                            write_thesis_prediction, pick_primary_signal,
-                        )
-                        thesis_signal = pick_primary_signal(ml_signals)
-                        write_thesis_prediction(
-                            decision_id=ml_trade_id,
-                            ticker=ticker,
-                            timestamp_entry=timestamp,
-                            predicted_direction=trade.get("predicted_direction"),
-                            predicted_timeframe_days=trade.get("predicted_timeframe_days"),
-                            predicted_return_pct=trade.get("predicted_return_pct"),
-                            key_conditions=trade.get("key_conditions"),
-                            signal_type=thesis_signal,
-                            conviction_score=trade.get("conviction"),
-                            invalidation_conditions=trade.get("invalidation_conditions"),
-                        )
-                        print(f"    Thesis prediction recorded "
-                              f"({trade.get('predicted_direction','?')} "
-                              f"{trade.get('predicted_return_pct','?')}% / "
-                              f"{trade.get('predicted_timeframe_days','?')}d, "
-                              f"signal={thesis_signal or 'n/a'})")
-                    except Exception as th_exc:
-                        print(f"    WARNING: thesis prediction failed: {th_exc}")
-
-        # ── SELL close logging — needs a real fill price for PnL ─────────
-        elif exec_filled and fill_price and action_upper == "SELL":
-            # Exit reason: the SELL decision's own rationale (covers manual
-            # sells, reallocation buy-legs, and the oversized+underwater TRIM,
-            # which all route through here). sell_holdings records it so the
-            # close is never silent.
-            sell_reason = (trade.get("rationale") or "").strip() or "SELL (unspecified)"
-            closed_lots = sell_holdings(ticker, qty, timestamp, fill_price, sell_reason)
-            closed = closed_lots
-            for lot in closed:
+        if action_upper == "SELL" and row_id and fill_price:
+            closed_lots = kairos_ledger.closed_lots_for_decision(row_id)
+            for lot in closed_lots:
                 days = lot["holding_days"]
                 rate = "long-term" if days >= 365 else "short-term"
                 print(f"    Holdings: closed {lot['quantity']} shares (held {days}d, {rate})")
@@ -758,12 +711,13 @@ def log_execution(decision: dict, trade: dict, execution: dict,
                 except Exception as ledger_exc:
                     print(f"    WARNING: Ledger entry failed: {ledger_exc}")
 
-            # ML Outcomes: sell_holdings (above) closed and fully stamped the ledger
-            # rows this sale consumed. No newest-row find_open_trade guess here — it
-            # picked a different row than the sale and could close a still-held lot.
-
     except Exception as e:
         print(f"    WARNING: DB logging failed: {e}")
+        try:
+            kairos_ledger.alert(f":rotating_light: *Trade-record write failed* "
+                                f"(log_execution) — {action} {ticker}: {e}")
+        except Exception:
+            pass
 
     # Slack alert — only for trades that actually execute, not skips
     exec_status = (execution.get("status") or "").lower()
@@ -991,55 +945,6 @@ def _derive_entry_signals(trade: dict, ticker: str) -> list[str]:
     """Tag list only — see _derive_entry_signals_with_source for provenance."""
     return _derive_entry_signals_with_source(trade, ticker)[0]
 
-
-def _alert_ml_log_failure(ticker: str, qty, detail: str) -> None:
-    """A BUY executed at the broker but failed to log to the ML ledger.
-
-    This is a corpus-integrity event: the trade happened but won't be in the
-    training data. Print loudly AND notify #kairos-alerts. Never raises.
-    """
-    msg = f"ML-LEDGER GAP: {ticker} BUY x{qty} executed but did NOT log — {detail}"
-    print(f"    ALERT: {msg}")
-    try:
-        from kairos_alerts import post_message
-        post_message(
-            "alerts",
-            f":rotating_light: *Trade-log integrity*\n{msg}\n"
-            f"This executed BUY is missing from kairos_ml_outcomes.db — "
-            f"reconcile manually so the corpus stays complete.",
-        )
-    except Exception as exc:
-        print(f"    (could not post ML-log-failure alert: {exc})")
-
-
-def _best_entry_price(execution: dict, trade: dict) -> tuple[float | None, bool]:
-    """Pick the best available entry price for ML logging.
-
-    Returns (price, provisional). provisional is True when the price is an
-    estimate (not the actual fill price) and should be reconciled later.
-    Order: real fill price → broker avg cost after fill → order limit price →
-    the decision's intended price. Returns (None, ...) only if nothing is known.
-    """
-    fill_price = execution.get("fill_price")
-    if fill_price:
-        return float(fill_price), False
-
-    # Broker's average cost after the fill — confirmed by IBKR, reconcilable.
-    new_pos = execution.get("new_position") or {}
-    avg_cost = new_pos.get("avg_cost")
-    if avg_cost:
-        return float(avg_cost), True
-
-    # Intended price for THIS order, then the decision's intended price.
-    for candidate in (execution.get("limit_price"),
-                      trade.get("intended_price"), trade.get("ref_price")):
-        if candidate:
-            return float(candidate), True
-
-    return None, True
-
-
-# ── Trim trigger ──────────────────────────────────────────────────────
 
 def check_trim_triggers(portfolio: dict, ib: IB, nlv: float) -> list[dict]:
     """Scan positions for oversized + underwater holdings and generate partial SELLs.
@@ -1276,7 +1181,6 @@ def reconcile_submitted_orders(grace_minutes: int = 30) -> int:
         return 0
 
     reconciled = 0
-    ml_reconciled = 0  # provisional ML entry prices trued up to broker avg cost
     flagged = []  # rows that look like a possible mislogged fill — skipped
     try:
         try:
@@ -1354,29 +1258,6 @@ def reconcile_submitted_orders(grace_minutes: int = 30) -> int:
             print(f"  Reconciled expired order: {ticker} qty={qty} "
                   f"age={age_h:.1f}h (decision #{decision_id}) -> Expired")
 
-        # ── Backfill provisional ML entry prices from the broker ─────────
-        # BUY rows opened before their fill price was known carry a best-effort
-        # estimate (entry_price_provisional=1). Now that we're connected, true
-        # them up against IBKR's confirmed average cost per position.
-        try:
-            from kairos_ml_outcomes import (
-                init_db as ml_init, list_provisional_entries,
-                reconcile_provisional_entries,
-            )
-            ml_init()
-            pending = list_provisional_entries()
-            if pending:
-                broker_costs = {}
-                for p in ib.positions():
-                    if p.position and p.avgCost:
-                        broker_costs[p.contract.symbol] = round(p.avgCost, 4)
-                fixed = reconcile_provisional_entries(broker_costs)
-                if fixed:
-                    ml_reconciled = fixed
-                    print(f"  ML entry prices reconciled: {fixed} provisional "
-                          f"row(s) trued up to broker avg cost")
-        except Exception as exc:
-            print(f"  reconcile_submitted_orders: ML entry-price reconcile failed: {exc}")
     finally:
         try:
             ib.disconnect()
@@ -1390,510 +1271,41 @@ def reconcile_submitted_orders(grace_minutes: int = 30) -> int:
         for did, tk, q in flagged:
             print(f"    • decision #{did}: {tk} qty={q}")
 
-    if reconciled > 0 or ml_reconciled > 0:
+    if reconciled > 0:
         try:
             from kairos_alerts import post_message
-            parts = []
-            if reconciled > 0:
-                parts.append(
-                    f":broom: Reconciled {reconciled} expired DAY order(s) "
-                    f"stuck at 'Submitted' >{grace_minutes}m and no longer live at IBKR")
-            if ml_reconciled > 0:
-                parts.append(
-                    f":abacus: Backfilled {ml_reconciled} provisional ML entry "
-                    f"price(s) from broker avg cost")
-            # Order/price housekeeping, not a position change and not
-            # something anyone acts on → #kairos-log, alongside the stale-order
-            # cancellation note above. See reconcile_positions_against_broker
-            # for the channel-discipline reasoning.
-            post_message("log", "\n".join(parts))
+            # Order housekeeping, not a position change and not something anyone
+            # acts on → #kairos-log, alongside the stale-order cancellation note.
+            post_message("log",
+                f":broom: Reconciled {reconciled} expired DAY order(s) "
+                f"stuck at 'Submitted' >{grace_minutes}m and no longer live at IBKR")
         except Exception as exc:
             print(f"  reconcile_submitted_orders: Slack post failed: {exc}")
 
     return reconciled
 
 
-# ── Position reconciliation (IBKR = source of truth) ────────────────
-
-def _backup_kairos_db(tag: str = "RECON") -> str | None:
-    """Timestamped copy of kairos.db before a reconciliation write pass.
-
-    Returns the backup path, or None if the source is missing / copy fails.
-    """
-    import shutil
-    src = os.path.join(SCRIPT_DIR, "kairos.db")
-    if not os.path.exists(src):
-        print("  reconcile: kairos.db not found — cannot back up")
-        return None
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    dst = os.path.join(SCRIPT_DIR, f"kairos_{tag}_BACKUP_{ts}.db")
-    try:
-        shutil.copy2(src, dst)
-        print(f"  Backed up kairos.db -> {os.path.basename(dst)}")
-        return dst
-    except Exception as exc:
-        print(f"  WARNING: kairos.db backup failed: {exc}")
-        return None
-
-
-def _most_recent_buy_date(conn, ticker: str) -> str | None:
-    """Best-effort entry_date for an orphan: timestamp of its most recent BUY."""
-    try:
-        row = conn.execute(
-            "SELECT timestamp FROM decisions WHERE ticker = ? AND action = 'BUY' "
-            "ORDER BY id DESC LIMIT 1",
-            (ticker,),
-        ).fetchone()
-        return row["timestamp"] if row else None
-    except Exception:
-        return None
-
-
-def reconcile_positions_against_broker(dry_run: bool = True) -> dict:
-    """Reconcile kairos.db open holdings against the live IBKR account.
-
-    IBKR is the SOURCE OF TRUTH. A fill-callback gap once dropped many fills,
-    leaving holdings that drifted from the broker (orphans with no stop/thesis
-    management, qty/cost mismatches, and lot fragmentation). This routine trues
-    the DB up to the broker on a schedule so that can't silently recur.
-
-    Per-ticker resolution:
-      • ORPHAN       — broker holds it, no open DB lot → CREATE one consolidated
-                       row at broker qty + avgCost. entry_date from the most
-                       recent BUY decision, else stamped with a [RECON] marker.
-                       peak_gain_pct seeded from current gain if positive, else 0.
-      • QTY MISMATCH — broker qty != summed DB qty → consolidate to ONE row at
-                       broker qty + avgCost; extra lots marked sold [RECON-merged].
-      • CONSOLIDATE  — qty already matches but >1 open lot (lot fragmentation,
-                       e.g. DE/KEYS/ONON) → collapse to one blended row anyway.
-      • PHANTOM      — DB shows open, broker is flat → mark the DB lot(s) sold
-                       (a real exit went unrecorded). Logged loudly.
-
-    Broker access is READ-ONLY (ib.positions() only — never places or cancels an
-    order). Writes go ONLY to kairos.db holdings, and ONLY when dry_run is False.
-    Backs up kairos.db before any write pass. Returns a dict of what changed
-    (proposed changes when dry_run).
-    """
-    from collections import defaultdict
-    from kairos_log_db import get_connection, init_db
-
-    init_db()
-
-    QTY_TOL = 0.5        # sub-share tolerance — ignore fractional DRIP drift
-    COST_TOL_PCT = 1.0   # only true-up cost basis when it differs by >1%
-    # ── Safety guards (surfaced by live observation 2026-06-18) ──────
-    # A flaky/partial IBKR response can return an empty or short position
-    # list; without a guard, every open DB holding would look PHANTOM and
-    # get mass-marked sold. And a snapshot taken mid-fill (e.g. APC during
-    # a 730-share stop-loss) shows a transient qty that is not real drift.
-    MAX_PHANTOM_FRACTION = 0.34  # abort writes if >34% of open tickers look phantom
-    MIN_DB_FOR_GUARD = 5         # only apply the fraction guard once book is non-trivial
-
-    summary: dict = {
-        "dry_run": dry_run,
-        "created": [],   # ORPHAN -> new consolidated row
-        "updated": [],   # QTY / COST mismatch -> trued up to broker
-        "merged": [],    # lot-fragmentation consolidations
-        "phantom": [],   # DB open, broker flat -> marked sold (SERIOUS)
-        "broker_positions": 0,
-        "db_open_lots": 0,
-        "errors": [],
-    }
-    mode = "DRY-RUN" if dry_run else "WRITE"
-    print(banner(f"Position Reconciliation ({mode}) — IBKR = source of truth"))
-
-    ib = IB()
-    try:
-        # Dedicated clientId=8 — distinct from cancel_stale_orders (6) and
-        # reconcile_submitted_orders (7) so all three run back-to-back cleanly.
-        ib.connect("127.0.0.1", 7497, clientId=8, timeout=10)
-    except Exception as exc:
-        msg = f"IBKR connect failed: {exc}"
-        print(f"  reconcile_positions_against_broker: {msg}")
-        summary["errors"].append(msg)
-        return summary
-
-    try:
-        # ── Broker truth: STK positions only ──────────────────────────
-        broker: dict = {}
-        try:
-            ib.reqPositions()
-            ib.sleep(1)
-            for p in ib.positions():
-                try:
-                    if p.contract.secType != "STK":
-                        continue
-                    sym = p.contract.symbol
-                    qty = float(p.position)
-                    if abs(qty) < 1e-9:
-                        continue
-                    broker[sym] = (qty, round(float(p.avgCost), 4))
-                except Exception as exc:
-                    summary["errors"].append(f"broker position parse: {exc}")
-                    print(f"  WARNING: could not parse a broker position: {exc}")
-        except Exception as exc:
-            msg = f"ib.positions() failed: {exc}"
-            print(f"  reconcile_positions_against_broker: {msg}")
-            summary["errors"].append(msg)
-            return summary
-
-        summary["broker_positions"] = len(broker)
-        print(f"  Broker STK positions: {len(broker)}")
-
-        # ── Long-only sanity check: NEGATIVE broker positions ─────────
-        # Distinct from the drift checks below, which validate DB↔broker SYNC.
-        # A short STK position is never valid for Kairos regardless of whether
-        # the DB agrees with it (on 2026-07-29 DB and broker agreed on ETN -16
-        # / EME -8, so drift reconciliation stayed silent). This fires every
-        # run until the position is flat. It never auto-trades — flattening is
-        # a human decision.
-        shorts = {sym: q for sym, (q, _c) in broker.items() if q < 0}
-        summary["short_positions"] = shorts
-        if shorts:
-            detail = ", ".join(f"{s} {q:g}" for s, q in sorted(shorts.items()))
-            print(f"  *** LONG-ONLY VIOLATION: negative broker position(s): {detail}")
-            summary["errors"].append(f"negative broker position(s): {detail}")
-            try:
-                from kairos_alerts import post_message
-                lines = "\n".join(
-                    f"• *{s}*: {q:g} shares short" for s, q in sorted(shorts.items()))
-                post_message("alerts",
-                    f":rotating_light: *LONG-ONLY VIOLATION — short position at broker*\n"
-                    f"{lines}\n"
-                    f"Kairos is long-only. Buy-to-cover to flatten; this alert "
-                    f"repeats every reconciliation run until the position is flat. "
-                    f"No automatic action has been taken.")
-            except Exception as exc:
-                print(f"  short-position alert failed: {exc}")
-
-        # In-flight-order guard: a ticker with a working order at IBKR has a
-        # quantity that is legitimately mid-change (partial fill in progress).
-        # Reconciling it would "true-up" to a transient qty and create fresh
-        # drift the moment the order completes. Skip such tickers this pass.
-        active_order_syms = set()
-        try:
-            _ACTIVE = {"ApiPending", "PendingSubmit", "PreSubmitted",
-                       "Submitted", "PendingCancel"}
-            # MUST use reqAllOpenOrders(): the engine's orders are placed on a
-            # DIFFERENT clientId, and ib.openTrades() only returns orders from
-            # THIS session (clientId=8, which places none). reqAllOpenOrders()
-            # returns working orders across all clients, which is what we need.
-            ib.reqAllOpenOrders()
-            ib.sleep(1)
-            for tr in ib.openTrades():
-                try:
-                    st = tr.orderStatus.status if tr.orderStatus else None
-                    if st in _ACTIVE and getattr(tr.contract, "symbol", None):
-                        active_order_syms.add(tr.contract.symbol)
-                except Exception:
-                    continue
-            if active_order_syms:
-                print(f"  In-flight orders (skipped): {sorted(active_order_syms)}")
-        except Exception as exc:
-            # If we cannot determine open orders, be conservative: log it, but
-            # do NOT skip everything (that would just disable reconciliation).
-            summary["errors"].append(f"openTrades() failed: {exc}")
-            print(f"  WARNING: could not read open orders: {exc}")
-
-        # ── DB truth: open holdings aggregated by ticker ──────────────
-        conn = get_connection()
-        rows = conn.execute(
-            "SELECT id, ticker, entry_date, entry_price, quantity, peak_gain_pct "
-            "FROM holdings WHERE sold_date IS NULL OR sold_date = '' "
-            "ORDER BY ticker, id"
-        ).fetchall()
-        db_lots: dict = defaultdict(list)
-        for r in rows:
-            db_lots[r["ticker"]].append(dict(r))
-        db_qty = {tk: sum(l["quantity"] for l in lots) for tk, lots in db_lots.items()}
-        summary["db_open_lots"] = len(rows)
-        print(f"  DB open holdings: {len(rows)} lot(s) across {len(db_lots)} ticker(s)")
-
-        now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-
-        # ── Plan the changes (no writes here) ─────────────────────────
-        plan: list[dict] = []
-        for ticker in sorted(set(broker) | set(db_lots)):
-            if ticker in active_order_syms:
-                print(f"  {ticker}: skipped — working order in flight (qty mid-change)")
-                continue
-            bqty, bcost = broker.get(ticker, (0.0, None))
-            lots = db_lots.get(ticker, [])
-            dqty = db_qty.get(ticker, 0.0)
-
-            if bqty > 0 and not lots:
-                # ORPHAN — broker holds it, no open DB lot.
-                entry_date = _most_recent_buy_date(conn, ticker)
-                marked_date = entry_date if entry_date else f"{now_ts} [RECON]"
-                cur = get_reference_price(ib, ticker)
-                peak = 0.0
-                if cur and bcost and bcost > 0:
-                    g = (cur - bcost) / bcost * 100.0
-                    peak = round(g, 2) if g > 0 else 0.0
-                if cur is None:
-                    print(f"  {ticker}: ORPHAN — current price unavailable, peak seeded 0")
-                plan.append({
-                    "kind": "ORPHAN", "ticker": ticker, "qty": bqty, "cost": bcost,
-                    "entry_date": marked_date, "peak": peak, "current": cur,
-                })
-
-            elif bqty <= 0 and lots:
-                # PHANTOM — DB shows open, broker is flat. A sell went unrecorded.
-                plan.append({
-                    "kind": "PHANTOM", "ticker": ticker, "db_qty": dqty,
-                    "lot_ids": [l["id"] for l in lots],
-                })
-
-            elif bqty > 0 and lots:
-                qty_mismatch = abs(bqty - dqty) > QTY_TOL
-                survivor = min(lots, key=lambda l: l["id"])
-                other_ids = [l["id"] for l in lots if l["id"] != survivor["id"]]
-                peak = round(max([l.get("peak_gain_pct") or 0.0 for l in lots] + [0.0]), 2)
-                s_cost = survivor.get("entry_price")
-                cost_mismatch = bool(
-                    s_cost and bcost and bcost > 0
-                    and abs(s_cost - bcost) / bcost * 100.0 > COST_TOL_PCT
-                )
-                if qty_mismatch or len(lots) > 1 or cost_mismatch:
-                    plan.append({
-                        "kind": "MISMATCH" if qty_mismatch else "CONSOLIDATE",
-                        "ticker": ticker, "old_qty": dqty, "new_qty": bqty,
-                        "old_cost": s_cost, "new_cost": bcost,
-                        "survivor_id": survivor["id"], "other_ids": other_ids,
-                        "peak": peak, "n_lots": len(lots),
-                        "cost_mismatch": cost_mismatch,
-                    })
-                # else: single lot, qty + cost both agree → no action.
-
-        if not plan:
-            print("  ✓ No discrepancies — kairos.db agrees with the broker.")
-
-        # ── Empty / implausible-response guard ────────────────────────
-        # A real account does not lose all (or most) of its positions in a
-        # single cycle; an empty/short broker response is far more likely a
-        # flaky connection. In that case the plan would mass-mark phantoms.
-        # Refuse to write and alert instead — broker snapshot is untrusted.
-        phantom_ct = sum(1 for it in plan if it["kind"] == "PHANTOM")
-        n_db_tickers = len(db_lots)
-        bad_snapshot = False
-        if len(broker) == 0 and n_db_tickers > 0:
-            bad_snapshot = True
-            reason = (f"broker returned 0 positions while DB holds {n_db_tickers} "
-                      f"open tickers — treating snapshot as untrusted")
-        elif (n_db_tickers >= MIN_DB_FOR_GUARD
-              and phantom_ct > MAX_PHANTOM_FRACTION * n_db_tickers):
-            bad_snapshot = True
-            reason = (f"{phantom_ct}/{n_db_tickers} open tickers would be marked "
-                      f"phantom (> {MAX_PHANTOM_FRACTION:.0%}) — implausible mass "
-                      f"closure, treating snapshot as untrusted")
-        if bad_snapshot:
-            msg = f"SAFETY ABORT: {reason}. No writes performed."
-            print(f"  *** {msg}")
-            summary["errors"].append(msg)
-            try:
-                from kairos_alerts import post_message
-                post_message("alerts",
-                    f":rotating_light: *Position reconciliation SAFETY ABORT*\n{reason}. "
-                    f"No DB writes were made. Likely a flaky IBKR response — "
-                    f"will retry next cycle.")
-            except Exception as exc:
-                print(f"  (alert post failed: {exc})")
-            conn.close()
-            return summary
-
-        # ── Back up before any write pass ─────────────────────────────
-        if plan and not dry_run:
-            _backup_kairos_db()
-
-        # ── Apply / preview each planned change ───────────────────────
-        for item in plan:
-            kind = item["kind"]
-            ticker = item["ticker"]
-            try:
-                if kind == "ORPHAN":
-                    print(f"  {'[would create]' if dry_run else '[create]'} ORPHAN {ticker}: "
-                          f"qty={item['qty']} @ ${item['cost']} cost, peak_seed={item['peak']}%, "
-                          f"entry_date={item['entry_date']}")
-                    if not dry_run:
-                        conn.execute(
-                            "INSERT INTO holdings (ticker, entry_date, entry_price, "
-                            "quantity, peak_gain_pct) VALUES (?, ?, ?, ?, ?)",
-                            (ticker, item["entry_date"], item["cost"],
-                             item["qty"], item["peak"]),
-                        )
-                        conn.commit()
-                    summary["created"].append({
-                        "ticker": ticker, "qty": item["qty"], "avg_cost": item["cost"],
-                    })
-
-                elif kind in ("MISMATCH", "CONSOLIDATE"):
-                    # Prefer broker truth; log the overwrite (a DB row losing qty
-                    # may have held an unrecorded fill — broker still wins, loudly).
-                    label = "QTY MISMATCH" if kind == "MISMATCH" else "CONSOLIDATE"
-                    print(f"  {'[would true-up]' if dry_run else '[true-up]'} {label} {ticker}: "
-                          f"db_qty={item['old_qty']} -> broker_qty={item['new_qty']}, "
-                          f"cost ${item['old_cost']} -> ${item['new_cost']}, "
-                          f"collapsing {item['n_lots']} lot(s) -> 1 "
-                          f"(survivor #{item['survivor_id']}, "
-                          f"merge {len(item['other_ids'])} lot(s))")
-                    if item["old_qty"] > item["new_qty"]:
-                        print(f"    NOTE: DB qty exceeded broker for {ticker} — "
-                              f"overwriting to broker truth (possible unrecorded fill).")
-                    if not dry_run:
-                        conn.execute(
-                            "UPDATE holdings SET quantity = ?, entry_price = ?, "
-                            "peak_gain_pct = ? WHERE id = ?",
-                            (item["new_qty"], item["new_cost"], item["peak"],
-                             item["survivor_id"]),
-                        )
-                        for oid in item["other_ids"]:
-                            # Mark merged lots sold at their own cost (zero realized
-                            # P&L — no real economic exit) so they leave the open set
-                            # without polluting the ledger. Do NOT delete.
-                            conn.execute(
-                                "UPDATE holdings SET sold_date = ?, "
-                                "sold_price = entry_price WHERE id = ?",
-                                (f"{now_ts} [RECON-merged]", oid),
-                            )
-                        conn.commit()
-                    summary["updated"].append({
-                        "ticker": ticker, "old_qty": item["old_qty"],
-                        "new_qty": item["new_qty"], "old_cost": item["old_cost"],
-                        "new_cost": item["new_cost"], "reason": label,
-                    })
-                    if item["other_ids"]:
-                        summary["merged"].append({
-                            "ticker": ticker, "lots_merged": len(item["other_ids"]),
-                            "final_qty": item["new_qty"],
-                        })
-
-                elif kind == "PHANTOM":
-                    print(f"  *** PHANTOM {ticker}: DB shows {item['db_qty']} open shares "
-                          f"but broker is FLAT — a SELL went UNRECORDED. "
-                          f"{'[would mark]' if dry_run else '[marking]'} "
-                          f"{len(item['lot_ids'])} lot(s) sold. ***")
-                    if not dry_run:
-                        for lid in item["lot_ids"]:
-                            # Broker is truth: the position is gone. Exit price is
-                            # unknown (the sell wasn't recorded) → leave sold_price NULL.
-                            conn.execute(
-                                "UPDATE holdings SET sold_date = ? WHERE id = ?",
-                                (f"{now_ts} [RECON-phantom]", lid),
-                            )
-                        conn.commit()
-                    summary["phantom"].append({
-                        "ticker": ticker, "db_qty": item["db_qty"],
-                        "lots": len(item["lot_ids"]),
-                    })
-            except Exception as exc:
-                msg = f"{kind} {ticker} write failed: {exc}"
-                print(f"  ERROR: {msg}")
-                summary["errors"].append(msg)
-
-    finally:
-        try:
-            ib.disconnect()
-        except Exception:
-            pass
-
-    # ── Summary + Slack ──────────────────────────────────────────────
-    n_created = len(summary["created"])
-    n_updated = len(summary["updated"])
-    n_phantom = len(summary["phantom"])
-    n_merged = sum(m["lots_merged"] for m in summary["merged"])
-    print(f"  Reconciliation {mode} complete: created={n_created} "
-          f"updated={n_updated} phantom={n_phantom} merged_lots={n_merged} "
-          f"errors={len(summary['errors'])}")
-
-    # ── Channel routing (2026-09-12) ─────────────────────────────────
-    # This used to post to #kairos-alerts on EVERY write run, including the
-    # "✓ No discrepancies — DB agrees with broker" all-clear. That is a
-    # routine green tick arriving several times a day in the channel reserved
-    # for "a human must look at this", and it is the single largest source of
-    # routine volume there.
-    #
-    # It matters more than tidiness. J is at low touch for 3-6 months, and the
-    # 2026-08-10 outage was only caught because a repeated Slack message
-    # eventually looked wrong — i.e. the failure mode is a channel whose
-    # regular traffic trains its reader to stop reading. So: the all-clear and
-    # the routine created/updated/merged summary go to #kairos-log; only a
-    # phantom exit or a reconcile error — the two branches that need a person
-    # — reach #kairos-alerts.
-    if not dry_run:
-        try:
-            from kairos_alerts import post_message
-            needs_human = bool(summary["phantom"] or summary["errors"])
-            lines = [
-                ":scales: *Position Reconciliation* (IBKR = source of truth)",
-                f"Broker STK positions: {summary['broker_positions']}  |  "
-                f"created: {n_created}  updated: {n_updated}  "
-                f"merged lots: {n_merged}  phantom: {n_phantom}",
-            ]
-            if summary["phantom"]:
-                lines.append(":rotating_light: *PHANTOM (unrecorded exits — investigate):*")
-                for ph in summary["phantom"]:
-                    lines.append(f"  • {ph['ticker']}: DB had {ph['db_qty']} sh "
-                                 f"open, broker flat ({ph['lots']} lot(s) closed)")
-            if summary["created"]:
-                lines.append("*Created (orphans now managed):* "
-                             + ", ".join(f"{c['ticker']}×{c['qty']:g}" for c in summary["created"]))
-            if summary["errors"]:
-                lines.append(f":warning: {len(summary['errors'])} error(s) during reconcile")
-            if not (summary["phantom"] or summary["created"]
-                    or summary["updated"] or summary["merged"]):
-                lines.append("✓ No discrepancies — DB agrees with broker.")
-            post_message("alerts" if needs_human else "log", "\n".join(lines))
-        except Exception as exc:
-            print(f"  reconcile_positions_against_broker: Slack post failed: {exc}")
-
-    return summary
+# ── Position check (IBKR = source of truth) ─────────────────────────
+# reconcile_positions_against_broker — which REWROTE holdings to the broker
+# (orphans created at broker cost, lots merged, phantoms marked sold) — was
+# replaced on 2026-09-28 by kairos_ledger.broker_check: positions are derived
+# from fills, and a mismatch is surfaced for a human, never overwritten.
 
 
 # ── NLV snapshots (daily account-value time series) ─────────────────
 
 def _realized_pnl_cumulative(conn) -> float:
-    """Cumulative realized P&L — single source of truth: the ML trade ledger.
-
-    PRIMARY: SUM(pnl_dollar) over closed rows in kairos_ml_outcomes.db
-    (trade_outcomes), opened READ-ONLY so this can never lock the ML DB against
-    the writers in kairos_ml_outcomes.py. That ledger is the reconciled record
-    of every attributable round trip, and each row's P&L is frozen at exit.
-
-    FALLBACK (ML DB missing / locked / malformed): the legacy kairos.db lot sum
-    of (sold_price - entry_price) * quantity over closed holdings, via the
-    `conn` argument. This path is UNRELIABLE and exists only so callers such as
-    write_nlv_snapshot never crash: the daily position reconciler rewrites and
-    merges closed lots AT BROKER COST, so those lots contribute ~$0 and the sum
-    silently SHRINKS over time (observed: nlv_snapshots.realized_pnl_cum fell
-    34,956 on 2026-07-14 to 14,499 on 2026-07-29 while real P&L rose). Treat a
-    fallback value as a floor, not a measurement.
-    """
-    ml_db = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
-    if os.path.exists(ml_db):
-        try:
-            import sqlite3
-            ml = sqlite3.connect(f"file:{ml_db}?mode=ro", uri=True, timeout=2)
-            try:
-                ml.execute("PRAGMA busy_timeout = 2000")
-                row = ml.execute(
-                    "SELECT COALESCE(SUM(pnl_dollar), 0.0) FROM trade_outcomes "
-                    "WHERE timestamp_exit IS NOT NULL AND pnl_dollar IS NOT NULL"
-                ).fetchone()
-            finally:
-                ml.close()
-            return round(float(row[0] or 0.0), 2)
-        except Exception as exc:
-            print(f"  _realized_pnl_cumulative: ML ledger unavailable ({exc}) "
-                  f"— falling back to kairos.db closed lots (understated)")
-
-    row = conn.execute(
-        "SELECT COALESCE(SUM((sold_price - entry_price) * quantity), 0.0) AS realized "
-        "FROM holdings "
-        "WHERE sold_date IS NOT NULL AND sold_date <> '' AND sold_price IS NOT NULL"
-    ).fetchone()
+    """Cumulative realized P&L over closed trades (trade_outcomes view, net of
+    commissions — see kairos_ledger CONVENTIONS). Derived from broker fills, so
+    it can no longer shrink when lots are rewritten at broker cost."""
     try:
-        return round(float(row["realized"] or 0.0), 2)
-    except (TypeError, ValueError, IndexError, KeyError):
+        row = conn.execute(
+            "SELECT COALESCE(SUM(pnl_dollar), 0.0) FROM trade_outcomes "
+            "WHERE timestamp_exit IS NOT NULL AND pnl_dollar IS NOT NULL"
+        ).fetchone()
+        return round(float(row[0] or 0.0), 2)
+    except Exception as exc:
+        print(f"  _realized_pnl_cumulative: unavailable ({exc})")
         return 0.0
 
 
@@ -1918,8 +1330,8 @@ def write_nlv_snapshot() -> dict | None:
     NetLiquidation / TotalCashValue / UnrealizedPnL and counts open STK
     positions, and UPSERTs one row keyed on TODAY's ET date — so re-running the
     same day overwrites rather than duplicates. realized_pnl_cum comes from
-    _realized_pnl_cumulative() — the ML trade ledger, with the kairos.db
-    closed-lot sum only as a fallback. Returns the written row, or None on failure.
+    _realized_pnl_cumulative() (closed trades in the fills ledger). Returns the
+    written row, or None on failure.
     """
     from zoneinfo import ZoneInfo
     from kairos_log_db import get_connection, init_db
@@ -2618,13 +2030,13 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Kairos Executor")
     parser.add_argument("--reconcile-positions", action="store_true",
-                        help="Reconcile kairos.db holdings against IBKR instead of "
-                             "running the executor (broker = source of truth)")
+                        help="Compare the fills-ledger positions with IBKR instead of "
+                             "running the executor (never rewrites positions)")
     parser.add_argument("--execute", action="store_true",
-                        help="With --reconcile-positions: WRITE changes to kairos.db. "
-                             "Omitted = dry-run (print only, the safe default).")
+                        help="With --reconcile-positions: also RECORD fills the live "
+                             "path missed. Omitted = compare only (the safe default).")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Explicit dry-run for --reconcile-positions (default).")
+                        help="Explicit compare-only for --reconcile-positions (default).")
     parser.add_argument("--write-nlv-snapshot", action="store_true",
                         help="Capture today's account value from IBKR into "
                              "kairos.db nlv_snapshots (read-only on IBKR) and exit.")
@@ -2633,7 +2045,8 @@ if __name__ == "__main__":
     if cli_args.write_nlv_snapshot:
         write_nlv_snapshot()
     elif cli_args.reconcile_positions:
-        # Dry-run is the default; only a deliberate --execute writes.
-        reconcile_positions_against_broker(dry_run=not cli_args.execute)
+        # Compare-only is the default; only a deliberate --execute records fills.
+        from kairos_ledger import broker_check
+        broker_check(record=cli_args.execute)
     else:
         main()

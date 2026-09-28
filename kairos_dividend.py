@@ -9,7 +9,7 @@ Two completely separate mechanisms (per the architecture doc):
        - Protected position review: alert (no auto-action) when a
          protected holding falls >20% from cost basis.
        - Config→DB flag sync: mirror the config-authoritative protected /
-         drip_enabled lists onto the holdings table.
+         drip_enabled lists onto position_state.
 
   2. HOT-DIVIDEND SIGNALS (event-driven, layered on top)
        - Sub-1  Dividend increase >=5%  → bullish, registers HOT-DIVIDEND
@@ -321,15 +321,17 @@ def _active_signal_tags(ticker: str) -> list[str]:
 # ── Component: config→DB flag sync ───────────────────────────────────
 
 def sync_flags_from_config() -> dict:
-    """Mirror the config-authoritative protected / drip lists onto holdings.
+    """Mirror the config-authoritative protected / drip lists onto position_state.
 
-    Config is the source of truth (Decision 2). Open lots of listed tickers
-    get the flag set; lots of unlisted tickers get it cleared, so removing a
-    ticker from config un-protects it on the next run.
+    Config is the source of truth (Decision 2). Open positions in listed
+    tickers get the flag set; unlisted tickers get it cleared, so removing a
+    ticker from config un-protects it on the next run. The write goes through
+    kairos_exits.set_position_flags — the exit engine owns position_state.
     """
     summary = {"protected_set": 0, "drip_set": 0}
     try:
-        from kairos_log_db import set_holding_flags, get_connection
+        from kairos_log_db import get_connection
+        from kairos_exits import set_position_flags
         protected = set(_protected_tickers())
         drip = set(_drip_tickers())
 
@@ -341,7 +343,7 @@ def sync_flags_from_config() -> dict:
         tickers = {r["ticker"].upper() for r in rows} | protected | drip
 
         for t in tickers:
-            n = set_holding_flags(
+            n = set_position_flags(
                 t,
                 drip_enabled=(t in drip),
                 protected=(t in protected),
@@ -361,8 +363,10 @@ def reconcile_drip(ib, dry_run: bool = False) -> list[dict]:
     """Reconcile IBKR share counts vs Kairos for drip_enabled tickers.
 
     A positive delta with no corresponding Kairos trade is treated as a DRIP
-    reinvestment: logged as a DRIP decision and added as a new cost-basis lot
-    at the dividend payment-date close (Decision 3). Returns list of deltas.
+    reinvestment and logged as a DRIP decision (audit trail). No lot is
+    written: the reinvested shares enter the fills ledger as broker executions
+    (Flex nightly), and until they do the broker check reports the gap.
+    Returns list of deltas.
     """
     applied: list[dict] = []
     try:

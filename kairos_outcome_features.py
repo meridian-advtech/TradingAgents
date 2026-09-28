@@ -1,20 +1,28 @@
 """
-Kairos Outcome Features — B2a: persist closed-trade outcome features.
+Kairos Outcome Features — the nightly trade-record job.
 
-Behaviour-neutral, post-hoc enrichment. Computes max-favorable-excursion (MFE),
-give-back, and post-exit run-up for CLOSED long trades and writes them into the
-trade_outcomes feature columns (added idempotently in kairos_ml_outcomes.py):
+Three steps, in order (the fills-ledger addendum, 2026-09-28):
+  (a) Flex Web Service pull of the configured query → record_fills
+      (source 'flex_nightly') + record_position_events. Catches every fill the
+      live path and the broker check missed, and late commissions. An HTTP or
+      token error posts an alert naming the token — never fails silently.
+  (b) rebuild_trades() — deterministic FIFO over fills + position_events.
+  (c) Outcome features for CLOSED long trades, written to trade_features (the
+      trade_outcomes view reads them from there):
 
     mfe_pct                — (max High in [entry, exit] − entry)/entry × 100
     give_back_pct          — mfe_pct − pnl_pct  (points of the in-hold peak surrendered)
     post_exit_peak_pct     — (max High in (exit, exit+window] − exit)/exit × 100
                              ONLY once the full window has elapsed; else NULL
     post_exit_window_days  — the window used
-    exit_reason            — trigger copied from kairos.db position_exits_history
+    forgone_gain_{5,14,30,60}d_pct — see kairos_ml_outcomes.FORGONE_HORIZONS
+    prediction_accuracy / thesis_score — the entry thesis scored against the
+                             realized close (was stamped at close time by the
+                             old ledger; this job is now its only writer)
     features_filled_at     — set when mfe/give-back are computed
 
-This does NOT touch write_trade_close, the scheduler, kairos_reason.py, or any
-live trading path. Run it on demand / on a cadence to backfill features.
+exit_reason is no longer written here: the view takes it from the trade's last
+exit_annotations row (or 'CORPORATE-ACTION' for a cash merger).
 
 Price fetch REUSES the Arbiter's batched yfinance helpers (kairos_arbiter.
 _download_daily / _parse_utc). The MFE / give-back / post-exit MATH below is a
@@ -24,7 +32,8 @@ near-duplicate of kairos_arbiter.enrich_closed_trades for now.
     compute_features_for_trade() here instead of re-deriving the same metrics.
 
 CLI:
-    python3 kairos_outcome_features.py --backfill            # fill all missing
+    python3 kairos_outcome_features.py --backfill            # (a)+(b)+(c)
+    python3 kairos_outcome_features.py --backfill --no-flex  # skip the Flex pull
     python3 kairos_outcome_features.py --backfill --dry-run  # print, write nothing
     python3 kairos_outcome_features.py --backfill --window 7
 """
@@ -40,53 +49,6 @@ sys.path.insert(0, SCRIPT_DIR)
 # Reuse the Arbiter's batched price-fetch + timestamp parsing verbatim (no edits
 # to kairos_arbiter.py — these are imported, not copied).
 from kairos_arbiter import _download_daily, _parse_utc
-
-
-# ── exit_reason lookup (kairos.db position_exits_history) ────────────
-
-def _load_exit_reasons() -> dict:
-    """{ticker: [{exit_date(dt), exit_reason}, ...]} from position_exits_history.
-
-    The append-only history gives multiple exits per ticker; _match_exit_reason
-    picks the one nearest each trade's exit timestamp (Δt match).
-    """
-    from kairos_log_db import get_connection
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            "SELECT ticker, exit_date, exit_reason FROM position_exits_history"
-        ).fetchall()
-    finally:
-        conn.close()
-    out: dict = defaultdict(list)
-    for r in rows:
-        out[r["ticker"]].append({
-            "exit_date": _parse_utc(r["exit_date"]),
-            "exit_reason": r["exit_reason"],
-        })
-    return out
-
-
-def _match_exit_reason(reasons: dict, ticker: str, exit_dt) -> str | None:
-    """The exit_reason for this ticker nearest the trade's exit timestamp.
-
-    position_exits_history holds a row per exit, so a re-traded ticker has
-    several candidates; the nearest-by-date match attributes each trade to its
-    own close instead of the latest.
-    """
-    cands = reasons.get(ticker) or []
-    if not cands:
-        return None
-    if exit_dt is None:
-        return cands[0]["exit_reason"]
-    best, best_diff = None, None
-    for c in cands:
-        if c["exit_date"] is None:
-            continue
-        diff = abs((c["exit_date"] - exit_dt).total_seconds())
-        if best_diff is None or diff < best_diff:
-            best, best_diff = c["exit_reason"], diff
-    return best if best is not None else cands[0]["exit_reason"]
 
 
 # ── Per-trade feature computation ────────────────────────────────────
@@ -228,6 +190,58 @@ def _select_rows(conn, window_days, only_missing, now):
     return todo
 
 
+def _thesis_scores(conn, trade_id: str, pnl_pct, hold_mins) -> tuple:
+    """(prediction_accuracy, thesis_score) for a closed trade, or (None, None)
+    when no thesis prediction was logged for it."""
+    from kairos_ml_outcomes import _score_prediction_accuracy
+    pred = conn.execute(
+        "SELECT predicted_direction, predicted_timeframe_days, predicted_return_pct "
+        "FROM thesis_predictions WHERE decision_id = ? ORDER BY id DESC LIMIT 1",
+        (trade_id,)).fetchone()
+    if pred is None or pnl_pct is None:
+        return None, None
+    acc = _score_prediction_accuracy(
+        predicted_direction=pred["predicted_direction"],
+        predicted_timeframe_days=pred["predicted_timeframe_days"],
+        predicted_return_pct=pred["predicted_return_pct"],
+        actual_pnl_pct=float(pnl_pct), hold_duration_mins=int(hold_mins or 0))
+    scores = [r[0] for r in conn.execute(
+        "SELECT checkpoint_score FROM thesis_checkpoints WHERE decision_id = ? "
+        "AND checkpoint_score IS NOT NULL", (trade_id,))]
+    return acc, (round(sum(scores) / len(scores), 4) if scores else None)
+
+
+def fill_thesis_scores(dry_run: bool = False) -> int:
+    """Score the entry thesis of every closed trade that has none yet."""
+    from kairos_log_db import get_connection
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT t.trade_id, t.pnl_pct, t.hold_duration_mins FROM trades t "
+            "LEFT JOIN trade_features tf ON tf.trade_id = t.trade_id "
+            "WHERE t.timestamp_exit IS NOT NULL AND t.pnl_pct IS NOT NULL "
+            "AND tf.prediction_accuracy IS NULL "
+            "AND EXISTS (SELECT 1 FROM thesis_predictions tp WHERE tp.decision_id = t.trade_id)"
+        ).fetchall()
+        n = 0
+        for r in rows:
+            acc, ts = _thesis_scores(conn, r["trade_id"], r["pnl_pct"], r["hold_duration_mins"])
+            if acc is None:
+                continue
+            n += 1
+            if not dry_run:
+                conn.execute(
+                    "INSERT INTO trade_features (trade_id, prediction_accuracy, thesis_score, source) "
+                    "VALUES (?, ?, ?, 'nightly') ON CONFLICT(trade_id) DO UPDATE SET "
+                    "prediction_accuracy = excluded.prediction_accuracy, "
+                    "thesis_score = excluded.thesis_score", (r["trade_id"], acc, ts))
+        if not dry_run:
+            conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
 def fill_features(window_days: int = 5, only_missing: bool = True,
                   dry_run: bool = False) -> dict:
     """Compute + persist outcome features for closed trades.
@@ -235,9 +249,8 @@ def fill_features(window_days: int = 5, only_missing: bool = True,
     Returns a summary dict. With dry_run=True, prints each trade's computed
     features and writes nothing.
     """
-    from kairos_ml_outcomes import (init_db, get_connection,
-                                    FORGONE_HORIZONS, forgone_column)
-    init_db()  # ensure the feature columns exist (idempotent)
+    from kairos_ml_outcomes import FORGONE_HORIZONS, forgone_column
+    from kairos_log_db import get_connection
 
     now = datetime.now(timezone.utc)
     conn = get_connection()
@@ -270,7 +283,6 @@ def fill_features(window_days: int = 5, only_missing: bool = True,
         print(f"  Fetching daily OHLC for {len(tickers)} ticker(s) {start} → {end} ...")
         hist = _download_daily(tickers, start, end)
 
-    reasons = _load_exit_reasons()
     filled_at = now.strftime("%Y-%m-%d %H:%M:%S UTC")
 
     write_conn = None if dry_run else get_connection()
@@ -291,8 +303,6 @@ def fill_features(window_days: int = 5, only_missing: bool = True,
                 print(f"  SKIP {r['ticker']} ({r['trade_id'][:8]}): no in-hold price rows")
                 continue
 
-            exit_dt = _parse_utc(r["timestamp_exit"])
-            exit_reason = _match_exit_reason(reasons, r["ticker"], exit_dt)
             if feats["post_exit_peak_pct"] is not None:
                 summary["matured"] += 1
             else:
@@ -303,7 +313,6 @@ def fill_features(window_days: int = 5, only_missing: bool = True,
                 f"mfe={feats['mfe_pct']:+.2f}%  give_back={feats['give_back_pct']:+.2f}%  "
                 f"post_exit_peak="
                 f"{('%.2f%%' % feats['post_exit_peak_pct']) if feats['post_exit_peak_pct'] is not None else 'pending'}"
-                f"  exit_reason={(exit_reason or 'n/a')[:32]}"
                 f"  window={'matured' if feats['window_elapsed'] else 'open'}"
             )
 
@@ -312,29 +321,24 @@ def fill_features(window_days: int = 5, only_missing: bool = True,
 
             # Forgone horizons are written with COALESCE semantics in reverse:
             # a horizon that has not yet matured is None and must NOT overwrite
-            # a value already stored, so only non-None horizons are updated.
-            fg_cols, fg_vals = [], []
-            for h in FORGONE_HORIZONS:
-                col = forgone_column(h)
-                if feats.get(col) is not None:
-                    fg_cols.append(f"  {col} = ?")
-                    fg_vals.append(feats[col])
-            fg_sql = ("," + ",".join(fg_cols) + ", forgone_filled_at = ?") if fg_cols else ""
-            if fg_cols:
-                fg_vals.append(filled_at)
-
+            # a value already stored.
+            fg = {forgone_column(h): feats.get(forgone_column(h)) for h in FORGONE_HORIZONS}
+            any_fg = any(v is not None for v in fg.values())
+            cols = ["mfe_pct", "give_back_pct", "post_exit_peak_pct",
+                    "post_exit_window_days", "features_filled_at", *fg.keys(),
+                    "forgone_filled_at"]
+            vals = [feats["mfe_pct"], feats["give_back_pct"], feats["post_exit_peak_pct"],
+                    feats["post_exit_window_days"], filled_at, *fg.values(),
+                    filled_at if any_fg else None]
+            updates = ", ".join(
+                f"{c} = COALESCE(excluded.{c}, trade_features.{c})"
+                if c in fg or c == "forgone_filled_at" else f"{c} = excluded.{c}"
+                for c in cols)
             write_conn.execute(
-                "UPDATE trade_outcomes SET "
-                "  mfe_pct = ?, give_back_pct = ?, post_exit_peak_pct = ?, "
-                "  post_exit_window_days = ?, exit_reason = ?, features_filled_at = ?"
-                + fg_sql +
-                " WHERE trade_id = ?",
-                (
-                    feats["mfe_pct"], feats["give_back_pct"],
-                    feats["post_exit_peak_pct"], feats["post_exit_window_days"],
-                    exit_reason, filled_at, *fg_vals, r["trade_id"],
-                ),
-            )
+                f"INSERT INTO trade_features (trade_id, {', '.join(cols)}, source) "
+                f"VALUES (?, {', '.join('?' * len(cols))}, 'nightly') "
+                f"ON CONFLICT(trade_id) DO UPDATE SET {updates}",
+                (r["trade_id"], *vals))
             summary["written"] += 1
         if not dry_run:
             write_conn.commit()
@@ -353,11 +357,14 @@ def fill_features(window_days: int = 5, only_missing: bool = True,
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Kairos outcome features — backfill MFE/give-back/post-exit (B2a)")
+        description="Kairos nightly trade-record job — Flex pull, rebuild, outcome features")
     parser.add_argument("--backfill", action="store_true",
-                        help="Compute + persist features for all closed trades missing them")
+                        help="Run the nightly job: Flex pull, rebuild_trades, features")
+    parser.add_argument("--no-flex", action="store_true",
+                        help="Skip step (a), the Flex Web Service pull")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Print computed features per trade; write nothing")
+                        help="Print computed features per trade; write nothing "
+                             "(also skips the Flex pull and the rebuild)")
     parser.add_argument("--window", type=int, default=5,
                         help="Post-exit window in days (default: 5)")
     args = parser.parse_args()
@@ -365,19 +372,27 @@ def main() -> int:
     if not args.backfill:
         parser.error("nothing to do — pass --backfill")
 
-    fill_features(window_days=args.window, only_missing=True, dry_run=args.dry_run)
+    import kairos_ledger
+    if not args.dry_run:
+        # (a) Flex pull — alerts (naming the token) on failure, never raises.
+        if not args.no_flex:
+            kairos_ledger.nightly_flex_pull()
+        # (b) rebuild — runs even if the pull failed: live + broker-check fills
+        # still need matching, and the rebuild is deterministic.
+        try:
+            print(f"  rebuild_trades: {kairos_ledger.rebuild_trades()}")
+        except Exception as exc:
+            kairos_ledger.alert(f":rotating_light: *Nightly rebuild_trades FAILED*: {exc}")
 
-    # Backstop for closes that never received an outcome_label (see
-    # kairos_ml_outcomes.label_unlabeled_closes). Runs nightly with this job so
-    # an unlabelled close can never silently drop out of training again.
+    # (c) features
+    fill_features(window_days=args.window, only_missing=True, dry_run=args.dry_run)
     try:
-        from kairos_ml_outcomes import label_unlabeled_closes
-        n = label_unlabeled_closes(dry_run=args.dry_run)
+        n = fill_thesis_scores(dry_run=args.dry_run)
         if n:
-            print(f"  outcome_label backstop: {n} closed trade(s) "
-                  f"{'would be ' if args.dry_run else ''}labelled")
+            print(f"  thesis scores: {n} closed trade(s) "
+                  f"{'would be ' if args.dry_run else ''}scored")
     except Exception as exc:
-        print(f"  outcome_label backstop failed: {exc}")
+        print(f"  thesis scoring failed: {exc}")
     return 0
 
 

@@ -475,9 +475,10 @@ def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -
     candidate has actually performed, or whether this specific ticker has been
     traded before and how that went.
 
-    Sourced from kairos_ml_outcomes.db (append-only, P&L frozen at exit) —
-    NOT kairos.db holdings, whose closed lots the reconciler rewrites at
-    broker cost, decaying their realized P&L toward zero. That source made
+    Sourced from the trade_outcomes view (derived from broker fills since
+    2026-09-28). Before that it read kairos_ml_outcomes, NOT the old holdings
+    table, whose closed lots the reconciler rewrote at broker cost, decaying
+    their realized P&L toward zero. That source made
     HOT-INSIDER read -$1,306 when it has actually earned +$33,052 (2026-08-27).
 
     Two blocks:
@@ -489,7 +490,7 @@ def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -
     Read-only, best-effort: any failure returns "" and the prompt is unchanged.
     """
     import sqlite3 as _sq
-    ml_path = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
+    ml_path = os.path.join(SCRIPT_DIR, "kairos.db")
     if not os.path.exists(ml_path):
         return ""
     try:

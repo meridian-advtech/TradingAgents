@@ -68,7 +68,7 @@ from datetime import datetime, timedelta, timezone
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 
-ML_DB = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
+ML_DB = os.path.join(SCRIPT_DIR, "kairos.db")
 CACHE = os.path.join(SCRIPT_DIR, ".atr_trail_backtest_prices.pkl")
 
 # Reused verbatim from the enrichment / prior-backtest harness.

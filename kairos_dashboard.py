@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 
 SCRIPT_DIR    = os.path.dirname(os.path.abspath(__file__))
 DB_PATH       = os.path.join(SCRIPT_DIR, "kairos.db")
-ML_DB_PATH    = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
+ML_DB_PATH    = os.path.join(SCRIPT_DIR, "kairos.db")
 # Trailing window shown beside lifetime per-signal stats (see
 # load_ml_signal_attribution). Matches SIGNAL_RECENT_DAYS in kairos_reason.py
 # and kairos_arbiter.py so all three surfaces show the same window.
@@ -797,15 +797,15 @@ def query_db() -> dict:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
 
-    # Equity decisions (with optional outcomes join)
+    # Equity decisions. pnl / hold_pnl stay NULL: they came from the outcomes
+    # table, which never received a row and is now outcomes_legacy.
     equity_rows = conn.execute("""
         SELECT d.id, d.timestamp, d.ticker, d.action, d.quantity,
                d.rationale, d.execution_price, d.execution_status,
                d.commission, d.net_liq_after, d.conviction_trade,
                'equity' AS asset_class,
-               o.pnl, o.hold_pnl
+               NULL AS pnl, NULL AS hold_pnl
         FROM decisions d
-        LEFT JOIN outcomes o ON o.decision_id = d.id
         WHERE (d.execution_status != 'Skipped' OR d.execution_status IS NULL)
         ORDER BY d.id DESC LIMIT 50
     """).fetchall()
@@ -860,7 +860,7 @@ def query_db() -> dict:
 # ── ML trade ledger (single source of truth for closed-trade stats) ────
 
 def load_ml_trade_stats(since: str | None = None) -> dict | None:
-    """Closed-trade stats from the reconciled ML ledger (kairos_ml_outcomes.db).
+    """Closed-trade stats from the trade_outcomes view (kairos.db, built from fills).
 
     `since` ("YYYY-MM-DD") restricts the set to trades that EXITED on or after
     that date — used for the current-system era view. Stored timestamps come in
@@ -1284,12 +1284,13 @@ def _parse_exit_type(reason: str) -> tuple[str, str]:
 def _load_exit_reasons() -> dict[tuple, dict]:
     """Load stored exit reasons keyed by (TICKER, sold-day) for a precise join.
 
-    Reads the append-only position_exits_history: a repeat-traded ticker now has
-    a row per close, so keying on ticker + same calendar day (exit_date vs. a
-    holding's sold_date) attributes each closed lot to its OWN exit reason
-    instead of borrowing the latest. A day with no matching history row renders
-    "Not recorded" rather than an unrelated reason. (On the rare two-closes-same-
-    day collision the later id wins — acceptable for this display join.)
+    Reads exit_annotations (one row per SELL decision, written with the
+    decision) for SELLs that actually filled: a repeat-traded ticker has a row
+    per close, so keying on ticker + the calendar day of the exit fill (the
+    holdings view's sold_date) attributes each closed lot to its OWN exit
+    reason. A day with no matching row renders "Not recorded" rather than an
+    unrelated reason. (On a two-closes-same-day collision the later decision
+    wins — acceptable for this display join.)
     """
     reasons: dict[tuple, dict] = {}
     if not os.path.exists(DB_PATH):
@@ -1297,11 +1298,12 @@ def _load_exit_reasons() -> dict[tuple, dict]:
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
-        # Ordered by id so that, on a same-(ticker,day) collision, the later
-        # (higher-id) exit is the one that survives in the dict.
+        # Ordered by decision id so that, on a same-(ticker,day) collision, the
+        # later exit is the one that survives in the dict.
         rows = conn.execute(
-            "SELECT ticker, exit_date, exit_reason FROM position_exits_history "
-            "ORDER BY id ASC"
+            "SELECT xa.ticker, MIN(f.executed_at) AS exit_date, xa.exit_reason "
+            "FROM exit_annotations xa JOIN fills f ON f.decision_id = xa.decision_id "
+            "GROUP BY xa.decision_id ORDER BY xa.decision_id ASC"
         ).fetchall()
         conn.close()
     except sqlite3.Error:
@@ -1322,12 +1324,13 @@ def _load_exit_reasons() -> dict[tuple, dict]:
 
 
 def _load_entry_signals() -> dict[tuple, list]:
-    """Entry signals per BUY, keyed by (TICKER, timestamp) for a precise join.
+    """Entry signals per trade, keyed by (TICKER, entry_date) for a precise join.
 
-    A closed lot's entry_date matches its BUY decision's timestamp exactly (to
-    the second), so this keys off both — correctly attributing signals even for
-    repeat-traded tickers. Signals live in decisions.data_inputs →
-    confluence.signals; conviction/no-signal buys yield an empty list.
+    The holdings view's entry_date is its trade's first entry fill (from the
+    fills ledger), so this keys off the same trades.timestamp_entry and reads
+    the signals recorded with the BUY decision (entry_annotations) — correct
+    even for repeat-traded tickers. Trades with no annotation (pre-Kairos era,
+    opening balances) yield an empty list.
     """
     signals: dict[tuple, list] = {}
     if not os.path.exists(DB_PATH):
@@ -1336,7 +1339,8 @@ def _load_entry_signals() -> dict[tuple, list]:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT ticker, timestamp, data_inputs FROM decisions WHERE action = 'BUY'"
+            "SELECT DISTINCT l.ticker, l.entry_date, ea.signals FROM lots l "
+            "LEFT JOIN entry_annotations ea ON ea.trade_id = l.trade_id"
         ).fetchall()
         conn.close()
     except sqlite3.Error:
@@ -1344,17 +1348,13 @@ def _load_entry_signals() -> dict[tuple, list]:
 
     for r in rows:
         tkr = (r["ticker"] or "").strip().upper()
-        ts = r["timestamp"] or ""
+        ts = r["entry_date"] or ""
         if not tkr or not ts:
             continue
         try:
-            di = json.loads(r["data_inputs"]) if r["data_inputs"] else {}
-            sigs = (di.get("confluence", {}) or {}).get("signals") or di.get("signals") or []
-            sigs = [str(s) for s in sigs if s]
+            sigs = [str(x) for x in (json.loads(r["signals"]) if r["signals"] else []) if x]
         except (json.JSONDecodeError, TypeError):
             sigs = []
-        # Last BUY at a given (ticker, ts) wins — timestamps are second-precise
-        # so collisions are effectively the same decision.
         signals[(tkr, ts)] = sigs
     return signals
 
@@ -1390,8 +1390,8 @@ def build_closed_trades(holdings: list[dict]) -> list[dict]:
 
     A trade is closed when sold_date/sold_price are set. Realized P&L is
     (sold_price - entry_price) * quantity; % is against that lot's cost basis.
-    Exit reason/type is a best-effort join to position_exits_history by ticker +
-    day; absent, exit_reason is None and exit_type "Not recorded" (never faked).
+    Exit reason/type is a best-effort join to exit_annotations by ticker + day;
+    absent, exit_reason is None and exit_type "Not recorded" (never faked).
     """
     exit_reasons = _load_exit_reasons()
     entry_signals = _load_entry_signals()

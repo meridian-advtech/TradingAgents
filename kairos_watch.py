@@ -22,8 +22,8 @@ producing outcomes". Between 2026-08-11 and 2026-08-17 the answer to the first
 was yes and the answer to the second was no, and nothing was watching the
 second, so a full week passed with zero fills and no alert.
 
-Read-only with respect to trading. It reads kairos.db and
-kairos_ml_outcomes.db, writes only its own dedupe state file, and posts Slack.
+Read-only with respect to trading. It reads kairos.db (incl. the
+trade_outcomes view), writes only its own dedupe state file, and posts Slack.
 """
 
 from __future__ import annotations

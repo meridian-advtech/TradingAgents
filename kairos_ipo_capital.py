@@ -195,7 +195,7 @@ def fetch_portfolio_snapshot(ib=None) -> Optional[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Position conviction lookup (thesis_predictions in kairos_ml_outcomes.db)
+# Position conviction lookup (thesis_predictions in kairos.db)
 # ─────────────────────────────────────────────────────────────────────
 
 def get_active_position_conviction(ticker: str) -> Optional[float]:

@@ -1,85 +1,45 @@
 """
-Kairos ML Outcomes — Machine-Learning-Ready Trade Outcome Database
+Kairos ML Outcomes — thesis tables, the exit-regime snapshot, and ML readers.
 
-Defines and manages a SQLite table `trade_outcomes` with 22 fields
-designed for ML feature extraction.  Replaces the human-readable
-kairos_ledger.txt for analytical purposes (ledger kept in parallel
-until this schema is validated).
+Since the fills-ledger migration (2026-09-28) this module WRITES NO TRADE
+RECORD. trade_outcomes is a read-only view in kairos.db built by kairos_ledger
+from broker fills + annotations; kairos_ml_outcomes.db is gone (its
+thesis_predictions / thesis_checkpoints tables moved, unchanged, into kairos.db).
 
-DB location: ~/TradingAgents/kairos_ml_outcomes.db
+What lives here:
+  * thesis_predictions / thesis_checkpoints schema (writer: kairos_ml_thesis)
+  * build_exit_params_snapshot — the exit regime stamped on every SELL's
+    exit_annotations row by kairos_ledger.record_decision
+  * ATTRIBUTION_SOURCES / TRUSTED_ATTRIBUTION_SOURCES, FORGONE_HORIZONS
+  * read_outcomes_for_ml, get_thesis_target, get_invalidation_level (readers)
+  * _score_prediction_accuracy (used by the nightly features job)
 
-Usage:
-    from kairos_ml_outcomes import init_db, write_trade_open, write_trade_close, read_outcomes_for_ml
-
-    init_db()
-    trade_id = write_trade_open(...)
-    write_trade_close(trade_id, ...)
-    df = read_outcomes_for_ml()
+Removed with the migration (their job is now done by kairos_ledger):
+write_trade_open, write_trade_close, record_exit_outcome, _stamp_close,
+select_rows_closed_by_sale, label_unlabeled_closes, list_provisional_entries,
+reconcile_provisional_entries.
 """
 
 import json
 import os
 import re
 import sqlite3
-import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
-# Primary state DB and live config. Both are READ ONLY from this module — the
-# only reason they are reachable here is to stamp a close with the exit regime
-# it happened under (see build_exit_params_snapshot).
-KAIROS_DB_PATH = os.path.join(SCRIPT_DIR, "kairos.db")
+# Everything lives in kairos.db now (thesis tables + the trade_outcomes view).
+DB_PATH = os.path.join(SCRIPT_DIR, "kairos.db")
+KAIROS_DB_PATH = DB_PATH
 CONFIG_PATH = os.path.join(SCRIPT_DIR, "kairos_config.json")
 
 
 # ── Schema ───────────────────────────────────────────────────────────
 
-SCHEMA_TRADE_OUTCOMES = """
-CREATE TABLE IF NOT EXISTS trade_outcomes (
-    trade_id                TEXT PRIMARY KEY,
-    timestamp_entry         TEXT NOT NULL,
-    timestamp_exit          TEXT,
-    ticker                  TEXT NOT NULL,
-    action                  TEXT NOT NULL,
-    quantity                INTEGER NOT NULL,
-    price_entry             REAL NOT NULL,
-    price_exit              REAL,
-    pnl_dollar              REAL,
-    pnl_pct                 REAL,
-    hold_duration_mins      INTEGER,
-    signals_fired           TEXT,
-    confluence_score        INTEGER,
-    conviction              INTEGER,
-    ml_confidence_at_entry  REAL,
-    ml_signal_at_entry      TEXT,
-    ml_trained_on_at_entry  INTEGER,
-    -- VESTIGIAL (verified 0/315 filled, 2026-08-19). These seven date from the
-    -- original multi-model council design (two voting members + an arbiter tie
-    -- breaker) that was never built that way. The shipped architecture makes a
-    -- single Claude decision call, so nothing ever populates them. Retained
-    -- rather than dropped: DROP COLUMN would rewrite a live trading table for
-    -- no functional gain, and the write path already passes them as None.
-    -- Do NOT wire these to synthetic values to "fill them in" — an empty column
-    -- is honest, a fabricated one corrupts the corpus. Revisit only if a true
-    -- multi-member council is ever implemented.
-    council_member_1_rec    TEXT,
-    council_member_1_confidence REAL,
-    council_member_2_rec    TEXT,
-    council_member_2_confidence REAL,
-    council_agreement       INTEGER,
-    arbiter_invoked         INTEGER,
-    arbiter_rec             TEXT,
-    market_regime           TEXT,
-    sector                  TEXT,
-    outcome_label           TEXT
-);
-"""
-
 # Thesis validation tables — predictions captured at entry, then checkpointed
 # during the hold, finally scored at close.  decision_id links to
-# trade_outcomes.trade_id (UUID created in write_trade_open).
+# trade_outcomes.trade_id (the BUY decision's trade_id, minted by
+# kairos_ledger.record_decision).
 SCHEMA_THESIS_PREDICTIONS = """
 CREATE TABLE IF NOT EXISTS thesis_predictions (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -121,63 +81,6 @@ CREATE INDEX IF NOT EXISTS idx_thesis_chk_decision_id
     ON thesis_checkpoints(decision_id);
 """
 
-# Per-signal aggregate view. signal_type comes from thesis_predictions; if a
-# trade has no prediction (legacy / non-BUY), it is grouped under 'UNKNOWN'.
-SCHEMA_SIGNAL_PERFORMANCE_VIEW = """
-DROP VIEW IF EXISTS signal_performance;
-CREATE VIEW signal_performance AS
-SELECT
-    COALESCE(tp.signal_type, 'UNKNOWN') AS signal_type,
-    COUNT(*) AS total_trades,
-    AVG(CASE WHEN trade_outcomes.pnl_pct > 0 THEN 1.0 ELSE 0.0 END) AS win_rate,
-    AVG(trade_outcomes.pnl_pct) AS avg_return_pct,
-    AVG(trade_outcomes.hold_duration_mins) / 1440.0 AS avg_hold_days,
-    AVG(trade_outcomes.prediction_accuracy) AS avg_prediction_accuracy
-FROM trade_outcomes
-LEFT JOIN thesis_predictions AS tp
-    ON tp.decision_id = trade_outcomes.trade_id
-WHERE trade_outcomes.outcome_label IS NOT NULL
-GROUP BY COALESCE(tp.signal_type, 'UNKNOWN');
-"""
-
-# Columns to ensure exist on trade_outcomes (idempotent ALTER TABLE).
-_TRADE_OUTCOMES_EXTRA_COLUMNS = [
-    ("prediction_accuracy", "REAL"),
-    ("thesis_score", "REAL"),
-    # Set to 1 when the row was opened before the real fill price was known
-    # (Filled BUY with no immediate fill_price). price_entry holds a best-effort
-    # estimate until the position reconciler trues it up against the broker.
-    ("entry_price_provisional", "INTEGER"),
-    # B2a: closed-trade outcome features, populated post-hoc by
-    # kairos_outcome_features.py (behaviour-neutral; not written by
-    # write_trade_close). features_filled_at stays NULL until computed.
-    ("mfe_pct", "REAL"),                 # max favorable excursion during hold
-    ("give_back_pct", "REAL"),           # mfe_pct - pnl_pct (peak surrendered)
-    ("post_exit_peak_pct", "REAL"),      # max favorable move AFTER exit (too-early signal)
-    ("post_exit_window_days", "INTEGER"),
-    ("exit_reason", "TEXT"),             # trigger, copied from kairos.db position_exits
-    ("features_filled_at", "TEXT"),      # NULL until features computed
-    # Provenance of signals_fired — how the attribution was determined, which
-    # is the difference between "this signal drove the trade" and "this signal
-    # happened to be firing for this ticker that day". See ATTRIBUTION_SOURCES.
-    ("signal_attribution_source", "TEXT"),
-    # Forgone gain at longer horizons (see FORGONE_HORIZONS). The 5-day window
-    # is too short to see winner-harvesting: a position sold into a multi-week
-    # advance looks costless at 5 days and expensive at 60. Each horizon is
-    # independently NULL until its own window matures.
-    ("forgone_gain_14d_pct", "REAL"),
-    ("forgone_gain_30d_pct", "REAL"),
-    ("forgone_gain_60d_pct", "REAL"),
-    ("forgone_filled_at", "TEXT"),
-    # Regime tag: the exit-engine params + axis weights in force when this trade
-    # closed, as JSON (see build_exit_params_snapshot). The learning loop's
-    # regime window (kairos_axis_weights._in_regime) reads this to decide whether
-    # a closed trade is evidence about the CURRENT parameters or about a system
-    # that no longer exists. A row without it can never be evidence — which is
-    # why it is stamped at close, not backfilled on a cadence.
-    ("exit_params_snapshot", "TEXT"),
-]
-
 # Post-exit horizons over which forgone gain is measured, in CALENDAR days:
 # ~1 week, 2 weeks, 1 month, 2 months. Canonical definition for every horizon:
 #
@@ -213,6 +116,8 @@ ATTRIBUTION_SOURCES = (
     "rationale_text",  # tags parsed out of prose — a guess, last resort
     "none",            # nothing known anywhere; deliberately not fabricated
     "legacy_mixed",    # pre-2026-08-03 rows: union of ALL sources, unseparable
+    "excluded",        # opening balance / corporate-action chain (e.g. SATS->ECHO):
+                       # kept in positions and P&L, deliberately never learned from
 )
 
 # Sources that support a causal claim about why a trade was entered.
@@ -239,106 +144,25 @@ def get_connection() -> sqlite3.Connection:
 
 
 def init_db():
-    """Create the trade_outcomes table + thesis tables/view if missing."""
+    """Create the thesis tables (kairos.db) and the ledger schema if missing."""
     conn = get_connection()
-    conn.executescript(SCHEMA_TRADE_OUTCOMES)
-    conn.executescript(SCHEMA_THESIS_PREDICTIONS)
-    conn.executescript(SCHEMA_THESIS_CHECKPOINTS)
-
-    # Add prediction_accuracy / thesis_score columns idempotently.
-    existing_cols = {row["name"] for row in conn.execute(
-        "PRAGMA table_info(trade_outcomes)"
-    ).fetchall()}
-    for col_name, col_type in _TRADE_OUTCOMES_EXTRA_COLUMNS:
-        if col_name not in existing_cols:
-            conn.execute(
-                f"ALTER TABLE trade_outcomes ADD COLUMN {col_name} {col_type}"
-            )
-
-    # Idempotent migration for thesis_checkpoints extra columns
-    existing_chk_cols = {row["name"] for row in conn.execute(
-        "PRAGMA table_info(thesis_checkpoints)"
-    ).fetchall()}
-    for col_name, col_type in _THESIS_CHECKPOINTS_EXTRA_COLUMNS:
-        if col_name not in existing_chk_cols:
-            conn.execute(
-                f"ALTER TABLE thesis_checkpoints ADD COLUMN {col_name} {col_type}"
-            )
-
-    # signal_performance view depends on the new columns — rebuild it.
-    conn.executescript(SCHEMA_SIGNAL_PERFORMANCE_VIEW)
-    conn.commit()
-    conn.close()
-
-
-# ── Write: trade open ────────────────────────────────────────────────
-
-def write_trade_open(
-    ticker: str,
-    action: str,
-    quantity: int,
-    price_entry: float,
-    timestamp_entry: Optional[str] = None,
-    signals_fired: Optional[list[str]] = None,
-    confluence_score: Optional[int] = None,
-    conviction: Optional[int] = None,
-    ml_confidence_at_entry: Optional[float] = None,
-    ml_signal_at_entry: Optional[str] = None,
-    ml_trained_on_at_entry: Optional[int] = None,
-    council_member_1_rec: Optional[str] = None,
-    council_member_1_confidence: Optional[float] = None,
-    council_member_2_rec: Optional[str] = None,
-    council_member_2_confidence: Optional[float] = None,
-    council_agreement: Optional[int] = None,
-    arbiter_invoked: Optional[int] = None,
-    arbiter_rec: Optional[str] = None,
-    market_regime: Optional[str] = None,
-    sector: Optional[str] = None,
-    trade_id: Optional[str] = None,
-    entry_price_provisional: bool = False,
-    signal_attribution_source: Optional[str] = None,
-) -> str:
-    """Record a new trade at open. Returns the trade_id (UUID).
-
-    Set entry_price_provisional=True when price_entry is a best-effort estimate
-    (Filled BUY whose fill price was not yet known); the position reconciler
-    backfills the true price later via reconcile_provisional_entries().
-    """
-    if trade_id is None:
-        trade_id = str(uuid.uuid4())
-    if timestamp_entry is None:
-        timestamp_entry = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    signals_json = json.dumps(signals_fired) if signals_fired else None
-
-    conn = get_connection()
-    conn.execute(
-        """INSERT INTO trade_outcomes
-           (trade_id, timestamp_entry, ticker, action, quantity, price_entry,
-            signals_fired, confluence_score,
-            conviction, ml_confidence_at_entry, ml_signal_at_entry,
-            ml_trained_on_at_entry,
-            council_member_1_rec, council_member_1_confidence,
-            council_member_2_rec, council_member_2_confidence,
-            council_agreement, arbiter_invoked, arbiter_rec,
-            market_regime, sector, entry_price_provisional,
-            signal_attribution_source)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            trade_id, timestamp_entry, ticker, action, quantity, price_entry,
-            signals_json, confluence_score,
-            conviction, ml_confidence_at_entry, ml_signal_at_entry,
-            ml_trained_on_at_entry,
-            council_member_1_rec, council_member_1_confidence,
-            council_member_2_rec, council_member_2_confidence,
-            council_agreement, arbiter_invoked, arbiter_rec,
-            market_regime, sector, 1 if entry_price_provisional else 0,
-            signal_attribution_source,
-        ),
-    )
-    conn.commit()
-    conn.close()
-    return trade_id
+    try:
+        conn.executescript(SCHEMA_THESIS_PREDICTIONS)
+        conn.executescript(SCHEMA_THESIS_CHECKPOINTS)
+        existing_chk_cols = {row["name"] for row in conn.execute(
+            "PRAGMA table_info(thesis_checkpoints)"
+        ).fetchall()}
+        for col_name, col_type in _THESIS_CHECKPOINTS_EXTRA_COLUMNS:
+            if col_name not in existing_chk_cols:
+                conn.execute(
+                    f"ALTER TABLE thesis_checkpoints ADD COLUMN {col_name} {col_type}"
+                )
+        conn.commit()
+        import kairos_ledger
+        kairos_ledger.ensure_schema(conn, views=kairos_ledger.is_migrated(conn)
+                                    or kairos_ledger._object_type(conn, "holdings") is None)
+    finally:
+        conn.close()
 
 
 # ── Exit-params snapshot (regime tagging) ────────────────────────────
@@ -509,243 +333,6 @@ def build_exit_params_snapshot(reconstructed: bool = False,
     return snap
 
 
-# ── Write: trade close ───────────────────────────────────────────────
-
-def _canonical_ts(ts: Optional[str]) -> Optional[str]:
-    """Coerce any Kairos timestamp spelling to the canonical '…THH:MM:SSZ'.
-
-    FIX (2026-08-20): timestamp_exit accumulated THREE spellings across the
-    corpus — 173 '…T…Z' (write_trade_close's own default), 39 'space, no
-    suffix', and 29 '…T…' with no Z — because record_exit_outcome takes
-    timestamp_exit as a caller-supplied argument and callers formatted it
-    however they liked. Mixed spellings are not cosmetic: several consumers
-    compare these values as SQL strings, and lexicographic order is not
-    chronological order across formats ('T' is ASCII 84, ' ' is 32), so a
-    T-format exit sorts ABOVE a space-format cutoff from later the same day.
-    That silently mis-windows evidence. Normalising at the write boundary
-    stops new rows adding to the problem; the 68 legacy rows are untouched
-    (a bulk rewrite of live trade history is a separate, explicit decision).
-
-    Unparseable input is returned unchanged rather than dropped — losing an
-    exit timestamp is worse than storing an odd one, and the downstream
-    _parse_utc is tolerant.
-    """
-    if not ts:
-        return ts
-    raw = (str(ts).strip()
-           .replace(" UTC", "")
-           .replace("Z", "")
-           .replace("T", " ")
-           .strip())
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(raw, fmt).strftime("%Y-%m-%dT%H:%M:%SZ")
-        except ValueError:
-            continue
-    return ts
-
-
-def _stamp_close(conn: sqlite3.Connection, row: sqlite3.Row, price_exit: float,
-                 timestamp_exit: str, exit_reason: Optional[str] = None,
-                 arm_since: Optional[str] = None,
-                 snapshot: Optional[dict] = None) -> dict:
-    """Write every close field on one trade_outcomes row, in the caller's txn.
-
-    The single definition of "a closed row": exit timestamp/price, PnL,
-    duration, outcome_label, give-back, exit_reason, the exit-params snapshot
-    (regime tag + this position's own armed-trail context) and the thesis
-    prediction score. Both close writers go through here, so a row can no
-    longer end up half-stamped because two writers picked different rows.
-    arm_since bounds the armed-trail lookup (default: this row's own entry).
-    snapshot, if given, is stamped instead of a live capture (a reconciliation
-    passes a reconstructed=True snapshot for a close that happened in the past).
-    Does not commit.
-    """
-    price_entry = row["price_entry"]
-    action = row["action"]
-    quantity = row["quantity"] or 0
-    timestamp_entry = row["timestamp_entry"]
-
-    # PnL calculation: direction-aware
-    if action == "BUY":
-        pnl_dollar = (price_exit - price_entry) * quantity
-    else:  # SELL (short)
-        pnl_dollar = (price_entry - price_exit) * quantity
-
-    pnl_pct = ((price_exit - price_entry) / price_entry * 100) if price_entry else 0.0
-    if action == "SELL":
-        pnl_pct = -pnl_pct
-
-    # Duration
-    hold_duration_mins = _compute_duration_mins(timestamp_entry, timestamp_exit)
-
-    # Outcome label
-    if abs(pnl_dollar) < 0.01:
-        outcome_label = "SCRATCH"
-    elif pnl_dollar > 0:
-        outcome_label = "WIN"
-    else:
-        outcome_label = "LOSS"
-
-    give_back_pct = None
-    if row["mfe_pct"] is not None:
-        give_back_pct = round(row["mfe_pct"] - pnl_pct, 4)
-
-    # Regime tag. Guarded end-to-end: a close must never fail because the config
-    # or kairos.db could not be read — an unstamped row costs the learning loop
-    # one trade, an exception here costs the trade record itself. COALESCE keeps
-    # an already-present snapshot (e.g. one reconstructed by
-    # kairos_backfill_evidence) rather than overwriting it with today's regime.
-    try:
-        # ticker + entry_date let the snapshot pick up this position's OWN
-        # arming context (which of the three ATR parameters governed its
-        # trail). entry_date bounds the lookup so a re-entered ticker cannot
-        # inherit the arm context of a previous, already-closed position.
-        snapshot_json = json.dumps(snapshot if snapshot is not None else
-                                   build_exit_params_snapshot(
-            ticker=row["ticker"], entry_date=arm_since or timestamp_entry))
-    except Exception:
-        snapshot_json = None
-
-    conn.execute(
-        """UPDATE trade_outcomes
-           SET timestamp_exit = ?,
-               price_exit = ?,
-               pnl_dollar = ?,
-               pnl_pct = ?,
-               hold_duration_mins = ?,
-               outcome_label = ?,
-               give_back_pct = COALESCE(?, give_back_pct),
-               exit_reason = COALESCE(?, exit_reason),
-               exit_params_snapshot = COALESCE(exit_params_snapshot, ?)
-           WHERE trade_id = ?""",
-        (timestamp_exit, price_exit, round(pnl_dollar, 4),
-         round(pnl_pct, 4), hold_duration_mins, outcome_label,
-         give_back_pct, exit_reason, snapshot_json, row["trade_id"]),
-    )
-
-    # Score the original thesis prediction (if any) against the actual close.
-    trade_id = row["trade_id"]
-    pred = conn.execute(
-        "SELECT predicted_direction, predicted_timeframe_days, "
-        "predicted_return_pct FROM thesis_predictions "
-        "WHERE decision_id = ? ORDER BY id DESC LIMIT 1",
-        (trade_id,),
-    ).fetchone()
-
-    prediction_accuracy: Optional[float] = None
-    thesis_score: Optional[float] = None
-
-    if pred is not None:
-        prediction_accuracy = _score_prediction_accuracy(
-            predicted_direction=pred["predicted_direction"],
-            predicted_timeframe_days=pred["predicted_timeframe_days"],
-            predicted_return_pct=pred["predicted_return_pct"],
-            actual_pnl_pct=pnl_pct,
-            hold_duration_mins=hold_duration_mins,
-        )
-
-        chk_rows = conn.execute(
-            "SELECT checkpoint_score FROM thesis_checkpoints "
-            "WHERE decision_id = ? AND checkpoint_score IS NOT NULL",
-            (trade_id,),
-        ).fetchall()
-        scores = [r["checkpoint_score"] for r in chk_rows
-                  if r["checkpoint_score"] is not None]
-        if scores:
-            thesis_score = round(sum(scores) / len(scores), 4)
-
-        conn.execute(
-            """UPDATE trade_outcomes
-               SET prediction_accuracy = ?,
-                   thesis_score = ?
-               WHERE trade_id = ?""",
-            (prediction_accuracy, thesis_score, trade_id),
-        )
-
-    return {
-        "trade_id": trade_id,
-        "pnl_dollar": round(pnl_dollar, 4),
-        "pnl_pct": round(pnl_pct, 4),
-        "hold_duration_mins": hold_duration_mins,
-        "outcome_label": outcome_label,
-        "prediction_accuracy": prediction_accuracy,
-        "thesis_score": thesis_score,
-    }
-
-
-def write_trade_close(
-    trade_id: str,
-    price_exit: float,
-    timestamp_exit: Optional[str] = None,
-) -> dict:
-    """Close an existing trade by explicit trade_id: compute PnL, duration, label.
-
-    Live exits no longer call this — record_exit_outcome (at the sell_holdings
-    chokepoint) closes and fully stamps every row a sale consumes. What remains
-    is the explicit-id API, and it never re-closes a row a sale already closed:
-
-      * row already exited AND labelled AND snapshotted  -> pure no-op, no write
-      * row already exited but missing label/snapshot    -> fill ONLY the missing
-        fields; exit price / timestamp / PnL recorded by the sale are kept
-      * row still open                                   -> full close
-
-    Returns a dict with the computed (or existing) fields; "noop" is True when
-    nothing was written.
-    """
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            "SELECT * FROM trade_outcomes WHERE trade_id = ?", (trade_id,)
-        ).fetchone()
-        if row is None:
-            raise ValueError(f"trade_id {trade_id!r} not found in trade_outcomes")
-
-        if row["timestamp_exit"] is not None:
-            result = {
-                "trade_id": trade_id,
-                "pnl_dollar": row["pnl_dollar"],
-                "pnl_pct": row["pnl_pct"],
-                "hold_duration_mins": row["hold_duration_mins"],
-                "outcome_label": row["outcome_label"],
-                "prediction_accuracy": row["prediction_accuracy"],
-                "thesis_score": row["thesis_score"],
-                "noop": True,
-            }
-            if row["outcome_label"] is not None and row["exit_params_snapshot"] is not None:
-                return result
-            label = row["outcome_label"]
-            if label is None and row["pnl_dollar"] is not None:
-                pd_ = row["pnl_dollar"]
-                label = "SCRATCH" if abs(pd_) < 0.01 else ("WIN" if pd_ > 0 else "LOSS")
-            try:
-                snapshot_json = json.dumps(build_exit_params_snapshot(
-                    ticker=row["ticker"], entry_date=row["timestamp_entry"]))
-            except Exception:
-                snapshot_json = None
-            conn.execute(
-                """UPDATE trade_outcomes
-                   SET outcome_label = COALESCE(outcome_label, ?),
-                       exit_params_snapshot = COALESCE(exit_params_snapshot, ?)
-                   WHERE trade_id = ?""",
-                (label, snapshot_json, trade_id))
-            conn.commit()
-            result["outcome_label"] = label
-            result["noop"] = False
-            return result
-
-        if timestamp_exit is None:
-            timestamp_exit = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        else:
-            timestamp_exit = _canonical_ts(timestamp_exit)
-        result = _stamp_close(conn, row, price_exit, timestamp_exit)
-        conn.commit()
-        result["noop"] = False
-        return result
-    finally:
-        conn.close()
-
-
 def _score_prediction_accuracy(
     predicted_direction: Optional[str],
     predicted_timeframe_days: Optional[int],
@@ -793,31 +380,6 @@ def _score_prediction_accuracy(
     return round(score, 4)
 
 
-def _compute_duration_mins(ts_entry: str, ts_exit: str) -> int:
-    """Parse ISO timestamps and return duration in minutes."""
-    fmts = [
-        "%Y-%m-%dT%H:%M:%SZ",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%d %H:%M:%S UTC",
-        "%Y-%m-%d %H:%M:%S",
-    ]
-    dt_entry = _parse_ts(ts_entry, fmts)
-    dt_exit = _parse_ts(ts_exit, fmts)
-    if dt_entry and dt_exit:
-        delta = dt_exit - dt_entry
-        return max(0, int(delta.total_seconds() / 60))
-    return 0
-
-
-def _parse_ts(ts: str, fmts: list[str]) -> Optional[datetime]:
-    for fmt in fmts:
-        try:
-            return datetime.strptime(ts, fmt)
-        except ValueError:
-            continue
-    return None
-
-
 # ── Read: ML export ──────────────────────────────────────────────────
 
 def read_outcomes_for_ml(closed_only: bool = True) -> list[dict]:
@@ -826,8 +388,7 @@ def read_outcomes_for_ml(closed_only: bool = True) -> list[dict]:
     If closed_only=True (default), only returns trades with a non-null
     outcome_label (i.e., closed trades with PnL computed).
 
-    Each dict has all 22 fields.  signals_fired is deserialized from
-    JSON back to a Python list.
+    signals_fired is deserialized from JSON back to a Python list.
     """
     conn = get_connection()
     if closed_only:
@@ -851,141 +412,6 @@ def read_outcomes_for_ml(closed_only: bool = True) -> list[dict]:
                 pass
         results.append(d)
     return results
-
-
-# ── Close backstop + sale-driven close ───────────────────────────────
-
-def label_unlabeled_closes(dry_run: bool = False, grace_minutes: int = 60) -> int:
-    """Backstop: set outcome_label on closed rows that never received one.
-
-    Until 2026-09-28 the sell_holdings chokepoint wrote timestamp_exit / pnl but
-    left outcome_label NULL for a follow-on write_trade_close that matched a
-    different row, so a close that skipped it — and the extra lots of a
-    multi-lot close — kept a NULL label forever and was invisible to training.
-    On 2026-09-28 that was 51 closed trades (July-September, all with pnl
-    recorded), 49 of them trusted. record_exit_outcome now labels every row it
-    closes; this stays as the safety net for anything that still slips through.
-
-    Same rule as write_trade_close. The grace window leaves a close that is
-    still mid-flight alone, so this never races the normal path.
-    Returns rows labelled (or that would be, in dry run).
-    """
-    from datetime import datetime, timedelta, timezone
-    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=grace_minutes)).strftime("%Y-%m-%d %H:%M:%S")
-    conn = get_connection()
-    try:
-        where = ("timestamp_exit IS NOT NULL AND outcome_label IS NULL "
-                 "AND pnl_dollar IS NOT NULL "
-                 "AND replace(replace(substr(timestamp_exit,1,19),'T',' '),'Z','') < ?")
-        n = conn.execute(f"SELECT COUNT(*) FROM trade_outcomes WHERE {where}", (cutoff,)).fetchone()[0]
-        if not dry_run and n:
-            conn.execute(
-                f"""UPDATE trade_outcomes SET outcome_label =
-                      CASE WHEN abs(pnl_dollar) < 0.01 THEN 'SCRATCH'
-                           WHEN pnl_dollar > 0 THEN 'WIN' ELSE 'LOSS' END
-                    WHERE {where}""", (cutoff,))
-            conn.commit()
-        return n
-    finally:
-        conn.close()
-
-
-def select_rows_closed_by_sale(open_rows: list, sold_qty: float,
-                               flat: bool) -> tuple[list, float]:
-    """Which open ledger rows a sale closes. THE one authority for this.
-
-    open_rows must be the ticker's open rows (timestamp_exit IS NULL) oldest
-    entry first. Returns (rows_to_close, residual_qty).
-
-      flat=True   the sale left NO open lot in kairos.db holdings, so every open
-                  row is closed, whatever the ledger quantities say. holdings is
-                  trued up to the broker by the reconciler; ledger quantities
-                  are not (an add-on BUY's row can carry more or fewer shares
-                  than were actually added), so when the two disagree on a full
-                  exit, holdings wins and nothing is left open as a ghost.
-      flat=False  a trim: FIFO by timestamp_entry, whole rows only, while the
-                  row's quantity is covered by what is left of sold_qty. The
-                  ledger has no way to split a row (trade_id is the join key to
-                  thesis_predictions / thesis_checkpoints), so a row that is only
-                  partly sold stays OPEN and unstamped — a still-held lot is
-                  never closed. The uncovered shares come back as residual_qty.
-                  A row with no positive quantity cannot be FIFO-matched and is
-                  left for the flat close.
-    """
-    if flat:
-        return list(open_rows), 0.0
-    closing, remaining = [], float(sold_qty or 0)
-    for r in open_rows:
-        q = float(r["quantity"] or 0)
-        if q <= 0 or q > remaining + 1e-9:
-            break
-        closing.append(r)
-        remaining -= q
-    return closing, max(0.0, remaining)
-
-
-def record_exit_outcome(
-    ticker: str,
-    timestamp_exit: str,
-    price_exit: float,
-    exit_reason: str,
-    sold_qty: float,
-    flat: bool,
-    position_entry: Optional[str] = None,
-) -> list[str]:
-    """Close and fully stamp every trade_outcomes row a sale consumes.
-
-    Called at the sell_holdings chokepoint (the single point every equity close
-    funnels through), AFTER the holdings update has committed — sold_qty is the
-    quantity sold and flat says whether the ticker has any open lot left.
-    select_rows_closed_by_sale decides which rows close; each of them gets, in
-    one transaction: timestamp_exit, price_exit, pnl, hold duration,
-    outcome_label, give-back, exit_reason and exit_params_snapshot (via
-    _stamp_close). There is no second writer any more.
-
-    position_entry is the entry date of the holdings position being sold. The
-    exit engine arms a trail per POSITION (kairos_atr_trail.arm_context is
-    keyed on ticker), so every row of that position shares its arm context —
-    bounding the lookup by each row's own entry would drop it from an add-on
-    row entered after the position armed.
-
-    FIX (2026-09-28): this used to close exactly ONE row (the oldest) and leave
-    outcome_label NULL so a follow-on find_open_trade -> write_trade_close could
-    stamp it — but find_open_trade picked the NEWEST unlabelled row, a different
-    one. Two lots: one row closed unstamped, the other stamped (19 of 94 closes
-    since 2026-09-09 had no snapshot). Three or more: the extras never closed
-    (22 ghost rows). A trim: the newest-row guess could close a lot still held.
-
-    Returns the trade_ids closed. Callers MUST wrap this so a DB failure never
-    blocks or raises into the trade path.
-    """
-    # Callers supply this string in whatever spelling they happen to use; this
-    # is the write path that produced the corpus's three timestamp formats.
-    timestamp_exit = _canonical_ts(timestamp_exit)
-    conn = get_connection()
-    try:
-        open_rows = conn.execute(
-            """SELECT * FROM trade_outcomes
-               WHERE ticker = ? AND timestamp_exit IS NULL
-               ORDER BY timestamp_entry ASC, rowid ASC""",
-            (ticker,),
-        ).fetchall()
-        closing, residual = select_rows_closed_by_sale(open_rows, sold_qty, flat)
-        for row in closing:
-            _stamp_close(conn, row, price_exit, timestamp_exit, exit_reason,
-                         arm_since=position_entry)
-        conn.commit()
-        if residual > 1e-9 and open_rows:
-            print(f"  ML Outcomes: {ticker} trim of {sold_qty:g} left {residual:g} "
-                  f"share(s) unmatched to a whole ledger row — oldest open row "
-                  f"stays open until the position is flat")
-        if closing:
-            print(f"  ML Outcomes: closed {len(closing)} {ticker} ledger row(s) "
-                  f"{'(flat)' if flat else '(FIFO trim)'}: "
-                  + ", ".join(r["trade_id"][:8] for r in closing))
-        return [r["trade_id"] for r in closing]
-    finally:
-        conn.close()
 
 
 def get_thesis_target(ticker: str) -> Optional[float]:
@@ -1125,60 +551,6 @@ def get_invalidation_level(ticker: str, entry_price: float) -> Optional[float]:
 
     _INVALIDATION_CACHE[key] = level
     return level
-
-
-# ── Reconcile provisional entry prices ───────────────────────────────
-
-def list_provisional_entries() -> list[dict]:
-    """Return open trades whose entry price is still a provisional estimate.
-
-    Each dict: {trade_id, ticker, price_entry, quantity, timestamp_entry}.
-    """
-    conn = get_connection()
-    rows = conn.execute(
-        """SELECT trade_id, ticker, price_entry, quantity, timestamp_entry
-           FROM trade_outcomes
-           WHERE entry_price_provisional = 1 AND outcome_label IS NULL
-           ORDER BY timestamp_entry"""
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-
-def reconcile_provisional_entries(prices: dict) -> int:
-    """Backfill the true entry price on rows opened before the fill price was known.
-
-    Args:
-        prices: {ticker: confirmed_entry_price} — typically the broker's average
-                cost for each currently-held position.
-
-    For every open, provisional row whose ticker has a confirmed price, set
-    price_entry to that price and clear the provisional flag. Returns the number
-    of rows reconciled.
-    """
-    if not prices:
-        return 0
-    conn = get_connection()
-    rows = conn.execute(
-        """SELECT trade_id, ticker FROM trade_outcomes
-           WHERE entry_price_provisional = 1 AND outcome_label IS NULL"""
-    ).fetchall()
-    reconciled = 0
-    for r in rows:
-        confirmed = prices.get(r["ticker"])
-        if confirmed is None or confirmed <= 0:
-            continue
-        conn.execute(
-            """UPDATE trade_outcomes
-               SET price_entry = ?, entry_price_provisional = 0
-               WHERE trade_id = ?""",
-            (round(float(confirmed), 4), r["trade_id"]),
-        )
-        reconciled += 1
-    if reconciled:
-        conn.commit()
-    conn.close()
-    return reconciled
 
 
 # ── main (standalone init) ───────────────────────────────────────────

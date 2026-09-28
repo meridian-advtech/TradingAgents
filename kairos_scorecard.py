@@ -33,7 +33,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ML_DB = os.path.join(HERE, "kairos_ml_outcomes.db")
+ML_DB = os.path.join(HERE, "kairos.db")
 K_DB = os.path.join(HERE, "kairos.db")
 CFG = os.path.join(HERE, "kairos_config.json")
 

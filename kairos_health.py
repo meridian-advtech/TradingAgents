@@ -216,8 +216,9 @@ def check_database_accessible() -> Tuple[str, str]:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
-        # Get list of tables
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        # Get list of tables — holdings is a VIEW over the fills ledger since
+        # 2026-09-28, so views count as present.
+        cursor.execute("SELECT name FROM sqlite_master WHERE type IN ('table', 'view')")
         existing_tables = [row[0] for row in cursor.fetchall()]
         
         missing_tables = []

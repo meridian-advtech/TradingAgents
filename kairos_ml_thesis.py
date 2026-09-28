@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
+DB_PATH = os.path.join(SCRIPT_DIR, "kairos.db")
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "kairos_config.json")
 
 # Fallback cadence when a signal type has no configured hold window.

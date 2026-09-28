@@ -5,7 +5,7 @@ valuation at entry shows no relationship to how a trade turned out, the
 "valuation blind spot" is not costing anything measurable and the work stops
 here rather than proceeding to touch the Council prompt.
 
-Read-only. Reads closed trades from kairos_ml_outcomes.db, point-in-time TTM
+Read-only. Reads closed trades from kairos.db trade_outcomes, point-in-time TTM
 fundamentals from kairos.db, and sectors from security_master. Writes nothing
 and changes no behaviour.
 
@@ -37,7 +37,7 @@ from collections import defaultdict
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
-ML_DB = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
+ML_DB = os.path.join(SCRIPT_DIR, "kairos.db")
 DB = os.path.join(SCRIPT_DIR, "kairos.db")
 
 from kairos_fundamentals import get_fundamentals_ttm, load_universe  # noqa: E402

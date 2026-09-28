@@ -732,9 +732,8 @@ def reentry_guard_blocks(
               else _get_current_signals(ticker))
     exit_sigs = set(rec.get("exit_signals") or [])
     if not exit_sigs:
-        # Read-side fallback for the historical rows written before the
-        # sell_holdings fix: the thesis that was exited is the entry that
-        # preceded it. No bulk rewrite of position_exits_history needed.
+        # Read-side fallback for exits recorded with no signals (most legacy
+        # exits): the thesis that was exited is the entry that preceded it.
         exit_sigs = set(entry_signals_before(ticker, rec.get("exit_date")))
     new_signals = cur - exit_sigs
 
@@ -816,6 +815,63 @@ def _in_close_window(cfg: dict | None = None) -> bool:
         return start_min <= cur_min <= end_min
     except Exception:
         return False
+
+
+# ── position_state — the exit engine is its ONLY writer ──────────────
+
+def update_peak_gain(ticker: str, gain_pct: float) -> None:
+    """Raise the position's high-water mark in position_state.
+
+    Never lowers a live peak. A peak recorded before the ticker last went flat
+    is stale (see kairos_log_db.get_peak_gain) and is replaced outright, so a
+    re-entry never inherits the previous position's peak.
+    """
+    from datetime import datetime, timezone
+    from kairos_log_db import get_connection, get_peak_gain
+    current = get_peak_gain(ticker)
+    new_peak = max(float(gain_pct), current)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO position_state (ticker, peak_gain_pct, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(ticker) DO UPDATE SET peak_gain_pct = excluded.peak_gain_pct, "
+            "updated_at = excluded.updated_at", (ticker, new_peak, now))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def set_position_flags(ticker: str, drip_enabled: bool | None = None,
+                       protected: bool | None = None) -> int:
+    """Set drip_enabled / protected on a ticker's position_state row.
+
+    Called by the daily dividend sync to mirror the config-authoritative lists
+    (replaces kairos_log_db.set_holding_flags, which updated holdings lots).
+    Pass None to leave a flag unchanged. Returns 1 if a row was written.
+    """
+    from datetime import datetime, timezone
+    from kairos_log_db import get_connection
+    sets, vals = [], []
+    if drip_enabled is not None:
+        sets.append("drip_enabled = excluded.drip_enabled")
+    if protected is not None:
+        sets.append("protected = excluded.protected")
+    if not sets:
+        return 0
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn = get_connection()
+    try:
+        # updated_at is deliberately NOT touched on a flag change: it dates the
+        # PEAK, and bumping it would make a stale peak look fresh.
+        conn.execute(
+            "INSERT INTO position_state (ticker, drip_enabled, protected, updated_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(ticker) DO UPDATE SET " + ", ".join(sets),
+            (ticker, 1 if drip_enabled else 0, 1 if protected else 0, now))
+        conn.commit()
+        return 1
+    finally:
+        conn.close()
 
 
 def _load_open_holdings() -> list[dict]:
@@ -946,7 +1002,6 @@ def run_exit_engine(ib=None, regime: str | None = None, dry_run: bool = False) -
         # Update the high-water mark (skip in dry-run).
         if not dry_run and peak_gain_pct > stored_peak:
             try:
-                from kairos_log_db import update_peak_gain
                 update_peak_gain(ticker, round(peak_gain_pct, 3))
             except Exception as exc:
                 print(f"    WARNING: peak update failed for {ticker}: {exc}")
@@ -988,16 +1043,12 @@ def run_exit_engine(ib=None, regime: str | None = None, dry_run: bool = False) -
             continue
         sell_price = execution.get("fill_price") or current_price
 
-        # sell_holdings (inside _log_sell) records the exit reason + signals to
-        # position_exits in the same txn that closes the lots — this is the
-        # single enforcement point, so no separate upsert is needed here.
+        # _log_sell records the SELL decision with its exit_annotations (reason +
+        # signals + regime snapshot) in one transaction, then the order's fills;
+        # the position itself is derived from those fills.
         _log_sell(ticker, total_qty, avg_cost, sell_price, holding_days, reason,
                   execution, exit_signals=current_signals)
         _alert_stoploss(ticker, avg_cost, sell_price, gain_pct, holding_days, reason)
-
-        # ML Outcomes: sell_holdings (above) closed and fully stamped the ledger
-        # rows this sale consumed. No newest-row find_open_trade guess here — it
-        # picked a different row than the sale and could close a still-held lot.
 
         # Wash-sale violation check on loss sells.
         if sell_price < avg_cost:

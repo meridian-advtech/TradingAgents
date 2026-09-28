@@ -92,7 +92,7 @@ def _place_market_sell(ib, ticker: str, qty: int) -> dict:
                                           context="_place_market_sell")
     if qty <= 0:
         # oversell_blocked tells callers NOT to log a close — no order was sent,
-        # so nothing may be written to holdings / the ML ledger.
+        # so no decision may be recorded for it.
         return {"status": "Cancelled", "oversell_blocked": True,
                 "reason": clamp_note or "oversell prevented"}
 
@@ -110,7 +110,13 @@ def _place_market_sell(ib, ticker: str, qty: int) -> dict:
             if trade.isDone():
                 break
 
-        result = {"status": trade.orderStatus.status, "order_id": trade.order.orderId}
+        result = {"status": trade.orderStatus.status, "order_id": trade.order.orderId,
+                  "perm_id": trade.order.permId or trade.orderStatus.permId or None}
+        try:
+            from kairos_ledger import fills_as_dicts
+            result["fills"] = fills_as_dicts(trade)
+        except Exception as exc:
+            print(f"    WARNING: could not capture fills for the ledger: {exc}")
 
         if trade.fills:
             fill = trade.fills[0]
@@ -133,10 +139,12 @@ def _place_market_sell(ib, ticker: str, qty: int) -> dict:
 def _log_sell(ticker: str, qty: int, entry_price: float, sell_price: float,
               holding_days: int, reason: str, execution: dict,
               exit_signals: list[str] | None = None) -> None:
-    """Log stop-loss sell to kairos.db (decisions + holdings).
+    """Record a SELL: decision + exit_annotations, then the order's fills.
 
-    exit_signals: signals present at exit, forwarded to sell_holdings for the
-    re-entry guard (the exit engine passes its current_signals here).
+    The position/lots are derived from the fills (kairos_ledger), so nothing
+    is "closed" here by assumption — an order that did not fill closes nothing.
+    exit_signals: signals present at exit (the exit engine passes its
+    current_signals); unioned with the entry's signals for the re-entry guard.
     """
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     sell_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -169,8 +177,10 @@ def _log_sell(ticker: str, qty: int, entry_price: float, sell_price: float,
         trigger = "MANUAL"
 
     try:
-        from kairos_log_db import insert_decision, sell_holdings
-        decision_id = insert_decision(
+        import kairos_ledger
+        exit_ann = kairos_ledger.build_exit_annotation(ticker, reason, exit_signals)
+        decision_id, _ = kairos_ledger.record_execution(
+            execution, context="_log_sell",
             timestamp=ts,
             ticker=ticker,
             action="SELL",
@@ -188,10 +198,10 @@ def _log_sell(ticker: str, qty: int, entry_price: float, sell_price: float,
             execution_price=sell_price,
             execution_status=execution.get("status", "Submitted"),
             commission=execution.get("commission"),
+            exit=exit_ann,
         )
-
-        closed_lots = sell_holdings(ticker, qty, sell_date, sell_price,
-                                    reason, exit_signals)
+        closed_lots = (kairos_ledger.closed_lots_for_decision(decision_id)
+                       if decision_id else [])
         print(f"    DB: decision #{decision_id}, {len(closed_lots)} lot(s) closed")
 
         # Ledger entry — record the closed trade for pattern analysis
@@ -354,10 +364,6 @@ def run_stoploss(regime: str | None = None, ib=None) -> dict:
 
         _log_sell(ticker, total_qty, avg_cost, sell_price, holding_days,
                   reason, execution)
-
-        # ML Outcomes: sell_holdings (above) closed and fully stamped the ledger
-        # rows this sale consumed. No newest-row find_open_trade guess here — it
-        # picked a different row than the sale and could close a still-held lot.
 
         _alert_stoploss(ticker, avg_cost, sell_price, drawdown_pct,
                         holding_days, reason)

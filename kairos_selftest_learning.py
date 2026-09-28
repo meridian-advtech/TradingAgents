@@ -3,7 +3,7 @@ Kairos learning-loop selftest — gates the unfreeze (Task 5).
 
 Runs the redesigned two-sided / regime-windowed / freshness-gated compute+propose+
 apply pipeline entirely against DISPOSABLE /tmp copies of the config + DBs. It never
-touches the live kairos_config.json, kairos.db, or kairos_ml_outcomes.db. Exercises:
+touches the live kairos_config.json or kairos.db. Exercises:
 
   1. regime window excludes pre-change (out-of-regime) trades         (2a)
   2. contributing-row min_sample gates                                (2a)
@@ -460,23 +460,44 @@ def main():
           in M.SNAPSHOT_PARAM_PATHS
           and "exits.trailing_stop.target_armed.atr_enabled"
           not in A.PARAM_WHITELIST)
-    check("exit_params_snapshot is schema-managed",
-          "exit_params_snapshot" in dict(M._TRADE_OUTCOMES_EXTRA_COLUMNS))
+    import kairos_ledger as L
+    check("exit_params_snapshot is schema-managed (exit_annotations)",
+          "exit_params_snapshot TEXT" in L.SCHEMA_TABLES)
 
-    ml_live = os.path.join(tmp, "ml_live.db")
+    # A real SELL through the fills ledger: record_decision stamps the snapshot
+    # on exit_annotations, and the trade_outcomes view serves it for the trade.
+    # The temp kairos.db (axis weights) is copied so the snapshot reads them.
+    ml_live = os.path.join(tmp, "ledger_live.db")
     if os.path.exists(ml_live):
         os.remove(ml_live)
+    shutil.copy(kairos_log_db.DB_PATH, ml_live)
     old_db, old_cfg, old_k = M.DB_PATH, M.CONFIG_PATH, M.KAIROS_DB_PATH
+    old_ldb, old_kdb = L.DB_PATH, kairos_log_db.DB_PATH
     try:
-        M.DB_PATH, M.CONFIG_PATH, M.KAIROS_DB_PATH = ml_live, A.CONFIG_PATH, kairos_log_db.DB_PATH
+        M.DB_PATH = M.KAIROS_DB_PATH = L.DB_PATH = kairos_log_db.DB_PATH = ml_live
+        M.CONFIG_PATH = A.CONFIG_PATH
         M.init_db()
-        tid = M.write_trade_open("SELFTEST", "BUY", 10, 100.0)
-        M.write_trade_close(tid, 110.0)
+        did, tid = L.record_decision(
+            timestamp="2026-09-01 14:00:00 UTC", ticker="SELFTEST", action="BUY",
+            quantity=10, execution_status="Filled",
+            entry={"signals": ["HOT-INSIDER"], "signal_attribution_source": "confluence"})
+        L.record_fills([{"exec_id": "st-b", "perm_id": 1, "ticker": "SELFTEST",
+                         "side": "BUY", "quantity": 10, "price": 100.0, "commission": 0.0,
+                         "executed_at": "2026-09-01T14:00:00Z"}], did)
+        L.rebuild_trades()
+        sdid, _ = L.record_decision(
+            timestamp="2026-09-02 14:00:00 UTC", ticker="SELFTEST", action="SELL",
+            quantity=10, execution_status="Filled",
+            exit=L.build_exit_annotation("SELFTEST", "TRAILING-STOP: selftest"))
+        L.record_fills([{"exec_id": "st-s", "perm_id": 2, "ticker": "SELFTEST",
+                         "side": "SELL", "quantity": 10, "price": 110.0, "commission": 0.0,
+                         "executed_at": "2026-09-02T14:00:00Z"}], sdid)
+        L.rebuild_trades()
         conn = M.get_connection()
         raw = conn.execute("SELECT exit_params_snapshot FROM trade_outcomes "
                            "WHERE trade_id = ?", (tid,)).fetchone()[0]
         conn.close()
-        check("write_trade_close stamps a snapshot", raw is not None)
+        check("a SELL stamps a snapshot (exit_annotations → trade_outcomes)", raw is not None)
         snap = json.loads(raw or "{}")
         check("live snapshot key order matches the stored corpus",
               list(snap.keys()) == ["params", "axis_weights", "reconstructed",
@@ -530,6 +551,7 @@ def main():
               and not A._in_regime(json.dumps(rec), "params", TRAIL, 6.0))
     finally:
         M.DB_PATH, M.CONFIG_PATH, M.KAIROS_DB_PATH = old_db, old_cfg, old_k
+        L.DB_PATH, kairos_log_db.DB_PATH = old_ldb, old_kdb
 
     # ── role sign is explicit per full path, never by suffix ────────
     # The old test was `path.endswith("trail_pct")`, which gives atr_mult
@@ -1114,7 +1136,7 @@ def main():
           ete["n_excluded_out_of_regime"] == 0)
 
     # ── snapshot coverage: every proposable path is recorded ────────
-    # A path the loop can propose on but write_trade_close does not stamp has no
+    # A path the loop can propose on but a SELL's snapshot does not stamp has no
     # value in any snapshot, so _in_regime is False for every trade and the param
     # sits gated at n=0 forever — failing closed, but indistinguishably from a
     # regime that simply has not filled in yet.

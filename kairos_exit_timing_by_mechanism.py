@@ -37,7 +37,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ML_DB = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
+ML_DB = os.path.join(SCRIPT_DIR, "kairos.db")
 
 HORIZONS = (5, 14, 30, 60)
 

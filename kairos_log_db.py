@@ -1,9 +1,15 @@
 """
 Kairos Log Database — Milestone 6
 
-Creates kairos.db with two tables (decisions + outcomes), provides a
-shared API for inserting/querying, and migrates existing
+Creates kairos.db, provides the shared read API, and migrates existing
 kairos_decisions.log entries into the database.
+
+The equity TRADE RECORD is no longer written here. Since the fills-ledger
+migration (2026-09-28) holdings / trade_outcomes are read-only views over
+broker fills (kairos_ledger); decisions are written by
+kairos_ledger.record_decision together with their annotations. The readers
+below (get_open_holdings, get_tax_context, entry_signals_before,
+get_position_exit, get_peak_gain, …) keep their old contracts.
 
 Usage:
   python kairos_log_db.py           # Create DB + migrate existing logs
@@ -47,68 +53,9 @@ CREATE TABLE IF NOT EXISTS decisions (
 );
 """
 
-SCHEMA_OUTCOMES = """
-CREATE TABLE IF NOT EXISTS outcomes (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    decision_id INTEGER NOT NULL REFERENCES decisions(id),
-    close_price REAL,
-    pnl         REAL,
-    hold_pnl    REAL,
-    recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-"""
-
-SCHEMA_HOLDINGS = """
-CREATE TABLE IF NOT EXISTS holdings (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    ticker        TEXT NOT NULL,
-    entry_date    TEXT NOT NULL,
-    entry_price   REAL NOT NULL,
-    quantity      REAL NOT NULL,
-    sold_date     TEXT,
-    sold_price    REAL,
-    drip_enabled  INTEGER NOT NULL DEFAULT 0,
-    protected     INTEGER NOT NULL DEFAULT 0,
-    peak_gain_pct REAL NOT NULL DEFAULT 0
-);
-"""
-
-# Per-ticker record of the most recent exit, used by the Exit Architecture v2
-# re-entry guard (no-higher-price unless a genuinely new signal fired).
-# One row per ticker — upserted on every engine/thesis/stop sell.
-SCHEMA_POSITION_EXITS = """
-CREATE TABLE IF NOT EXISTS position_exits (
-    ticker       TEXT PRIMARY KEY,
-    exit_date    TEXT,
-    exit_price   REAL,
-    exit_reason  TEXT,
-    exit_signals TEXT
-);
-"""
-
-# Append-only exit history — the successor to position_exits. One row per exit
-# EVENT (never upserted), so a re-traded ticker keeps every close instead of only
-# its latest. entry_date / lot_ids attribute the exit to the specific closed
-# holdings lot(s) so simultaneous same-ticker lots (the FCX-style two-lot case)
-# are disambiguated, not just timestamped. The old position_exits table is kept
-# frozen alongside for one release cycle as a safety net (see migrate script).
-# Recency per ticker is by id (append order = chronological): the highest id for
-# a ticker is its most-recent exit — this is what the re-entry guard reads.
-SCHEMA_POSITION_EXITS_HISTORY = """
-CREATE TABLE IF NOT EXISTS position_exits_history (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    ticker       TEXT NOT NULL,
-    exit_date    TEXT,
-    exit_price   REAL,
-    exit_reason  TEXT,
-    exit_signals TEXT,
-    entry_date   TEXT,
-    lot_ids      TEXT,
-    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_position_exits_history_ticker
-    ON position_exits_history(ticker);
-"""
+# holdings / outcomes / position_exits / position_exits_history were replaced
+# by the fills ledger (kairos_ledger) on 2026-09-28; the tables survive as
+# *_legacy (read-only, drop on/after 2026-10-28) and holdings is now a view.
 
 SCHEMA_CRYPTO_DECISIONS = """
 CREATE TABLE IF NOT EXISTS crypto_decisions (
@@ -329,18 +276,14 @@ def get_connection() -> sqlite3.Connection:
 
 
 def init_db(reset: bool = False):
-    """Create tables (optionally drop first)."""
+    """Create tables (optionally drop first). The equity trade-record schema
+    (fills, annotations, derived trades, views) comes from kairos_ledger."""
     conn = get_connection()
-    if reset:
-        conn.execute("DROP TABLE IF EXISTS outcomes")
-        conn.execute("DROP TABLE IF EXISTS holdings")
-        conn.execute("DROP TABLE IF EXISTS decisions")
     if reset:
         conn.execute("DROP TABLE IF EXISTS options_positions")
         conn.execute("DROP TABLE IF EXISTS options_decisions")
     conn.executescript(
-        SCHEMA_DECISIONS + SCHEMA_OUTCOMES + SCHEMA_HOLDINGS
-        + SCHEMA_POSITION_EXITS + SCHEMA_POSITION_EXITS_HISTORY
+        SCHEMA_DECISIONS
         + SCHEMA_CRYPTO_DECISIONS + SCHEMA_CRYPTO_HOLDINGS
         + SCHEMA_OPTIONS_DECISIONS + SCHEMA_OPTIONS_POSITIONS
         + SCHEMA_IPO_LOCKUP + SCHEMA_NLV_SNAPSHOTS
@@ -372,20 +315,6 @@ def init_db(reset: bool = False):
         conn.execute("SELECT degraded FROM options_decisions LIMIT 1")
     except sqlite3.OperationalError:
         conn.execute("ALTER TABLE options_decisions ADD COLUMN degraded INTEGER NOT NULL DEFAULT 0")
-    # Migrate: add drip_enabled / protected columns to holdings if missing
-    try:
-        conn.execute("SELECT drip_enabled FROM holdings LIMIT 1")
-    except sqlite3.OperationalError:
-        conn.execute("ALTER TABLE holdings ADD COLUMN drip_enabled INTEGER NOT NULL DEFAULT 0")
-    try:
-        conn.execute("SELECT protected FROM holdings LIMIT 1")
-    except sqlite3.OperationalError:
-        conn.execute("ALTER TABLE holdings ADD COLUMN protected INTEGER NOT NULL DEFAULT 0")
-    # Migrate: add peak_gain_pct column to holdings if missing (Exit Architecture v2)
-    try:
-        conn.execute("SELECT peak_gain_pct FROM holdings LIMIT 1")
-    except sqlite3.OperationalError:
-        conn.execute("ALTER TABLE holdings ADD COLUMN peak_gain_pct REAL NOT NULL DEFAULT 0")
     # Migrate: add axis_weights_snapshot column to decisions if missing (Phase C —
     # JSON {axis: weight} of the active learned-calibration weights in context when
     # the decision's reasoning prompt was built; feeds Phase D efficacy analysis).
@@ -398,10 +327,10 @@ def init_db(reset: bool = False):
     # clamped trail, and which of the three parameters the clamp handed the
     # decision to (see kairos_atr_trail.BIND_STATES).
     #
-    # Its own table rather than columns on `holdings`, because the close path
-    # reads this AFTER the lot is marked sold, and because one row per arming
-    # is the audit trail — the trail applied to a live position has to be
-    # reconstructable after the fact, not inferred from today's config.
+    # Its own table rather than columns on the position, because the close
+    # path reads this AFTER the position is flat, and because one row per
+    # arming is the audit trail — the trail applied to a live position has to
+    # be reconstructable after the fact, not inferred from today's config.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS armed_trail_context (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -423,72 +352,18 @@ def init_db(reset: bool = False):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_armed_trail_ticker "
                  "ON armed_trail_context(ticker, armed_at)")
     conn.commit()
+    import kairos_ledger
+    if not kairos_ledger.is_migrated(conn) and \
+            kairos_ledger._object_type(conn, "holdings") == "table":
+        print("  WARNING: kairos.db still has the pre-ledger holdings TABLE — run "
+              "kairos_migrate_fills.py before trading on this code.")
+        kairos_ledger.ensure_schema(conn, views=False)
+    else:
+        kairos_ledger.ensure_schema(conn, views=True)
     conn.close()
 
 
 # ── Public API (used by kairos_execute.py and kairos_report.py) ──────
-
-def insert_decision(
-    timestamp: str,
-    ticker: str,
-    action: str,
-    quantity: int,
-    rationale: str,
-    data_inputs: dict | None = None,
-    execution_price: float | None = None,
-    execution_status: str | None = None,
-    commission: float | None = None,
-    net_liq_after: float | None = None,
-    position_after: dict | None = None,
-    conviction_trade: bool = False,
-) -> int:
-    """Insert a decision row and return its id."""
-    conn = get_connection()
-    cur = conn.execute(
-        """INSERT INTO decisions
-           (timestamp, ticker, action, quantity, rationale, data_inputs,
-            execution_price, execution_status, commission, net_liq_after,
-            position_after, conviction_trade)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            timestamp,
-            ticker,
-            action,
-            quantity,
-            rationale,
-            json.dumps(data_inputs) if data_inputs else None,
-            execution_price,
-            execution_status,
-            commission,
-            net_liq_after,
-            json.dumps(position_after) if position_after else None,
-            1 if conviction_trade else 0,
-        ),
-    )
-    row_id = cur.lastrowid
-    conn.commit()
-    conn.close()
-    return row_id
-
-
-def insert_outcome(
-    decision_id: int,
-    close_price: float | None = None,
-    pnl: float | None = None,
-    hold_pnl: float | None = None,
-) -> int:
-    """Insert an outcome row and return its id."""
-    conn = get_connection()
-    cur = conn.execute(
-        """INSERT INTO outcomes (decision_id, close_price, pnl, hold_pnl)
-           VALUES (?, ?, ?, ?)""",
-        (decision_id, close_price, pnl, hold_pnl),
-    )
-    row_id = cur.lastrowid
-    conn.commit()
-    conn.close()
-    return row_id
-
 
 def get_all_decisions() -> list[dict]:
     conn = get_connection()
@@ -497,27 +372,17 @@ def get_all_decisions() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def get_all_outcomes() -> list[dict]:
-    conn = get_connection()
-    rows = conn.execute(
-        """SELECT o.*, d.ticker, d.action, d.quantity, d.execution_price, d.rationale
-           FROM outcomes o JOIN decisions d ON o.decision_id = d.id
-           ORDER BY o.id"""
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-
 # ── Decision History API ─────────────────────────────────────────────
 
 def get_decision_history(limit: int = 20) -> list[dict]:
-    """Return last N decisions with any associated outcome data."""
+    """Return last N decisions. The pnl / hold_pnl / outcome_close keys are kept
+    (always NULL) for callers of the old decisions⋈outcomes shape — the
+    outcomes table never received a row and is now outcomes_legacy."""
     conn = get_connection()
     rows = conn.execute(
         """SELECT d.*,
-                  o.pnl, o.hold_pnl, o.close_price AS outcome_close
+                  NULL AS pnl, NULL AS hold_pnl, NULL AS outcome_close
            FROM decisions d
-           LEFT JOIN outcomes o ON o.decision_id = d.id
            ORDER BY d.id DESC
            LIMIT ?""",
         (limit,),
@@ -529,20 +394,7 @@ def get_decision_history(limit: int = 20) -> list[dict]:
     return results
 
 
-# ── Holdings API ─────────────────────────────────────────────────────
-
-def insert_holding(ticker: str, entry_date: str, entry_price: float, quantity: float) -> int:
-    """Record a new holding lot (called on BUY fills)."""
-    conn = get_connection()
-    cur = conn.execute(
-        "INSERT INTO holdings (ticker, entry_date, entry_price, quantity) VALUES (?, ?, ?, ?)",
-        (ticker, entry_date, entry_price, quantity),
-    )
-    row_id = cur.lastrowid
-    conn.commit()
-    conn.close()
-    return row_id
-
+# ── Holdings API (read-only over the fills ledger) ───────────────────
 
 def insert_drip(
     ticker: str,
@@ -550,16 +402,16 @@ def insert_drip(
     price: float,
     date: str,
     net_liq_after: float | None = None,
-) -> tuple[int, int]:
-    """Record a DRIP reinvestment.
+) -> int:
+    """Record a DRIP reinvestment DECISION (audit trail only).
 
-    Logs a DRIP decision (action="DRIP") and opens a new holding lot at the
-    reinvestment price so share count and cost basis stay in sync. The exact
-    fractional share count is preserved in the holding lot (REAL) and in the
-    decision's data_inputs JSON; decisions.quantity is INTEGER so it carries
-    only the whole-share part. Returns (decision_id, holding_id).
+    No lot is written: the reinvested shares reach the ledger the same way
+    every other share does — as broker executions (Flex nightly / broker
+    check). Writing a synthetic lot here is exactly the kind of second source
+    of truth the ledger exists to remove. Returns the decision id.
     """
-    decision_id = insert_decision(
+    import kairos_ledger
+    decision_id, _ = kairos_ledger.record_decision(
         timestamp=date,
         ticker=ticker,
         action="DRIP",
@@ -570,236 +422,70 @@ def insert_drip(
         execution_status="Filled",
         net_liq_after=net_liq_after,
     )
-    holding_id = insert_holding(ticker, date, price, shares)
-    return decision_id, holding_id
+    return decision_id
 
 
-def set_holding_flags(
-    ticker: str,
-    drip_enabled: bool | None = None,
-    protected: bool | None = None,
-) -> int:
-    """Set drip_enabled / protected flags on all open lots of a ticker.
-
-    Pass None to leave a flag unchanged. Returns the number of lots updated.
-    Used by the daily dividend sync to mirror the config-authoritative lists
-    onto the holdings table.
-    """
-    sets: list[str] = []
-    vals: list = []
-    if drip_enabled is not None:
-        sets.append("drip_enabled = ?")
-        vals.append(1 if drip_enabled else 0)
-    if protected is not None:
-        sets.append("protected = ?")
-        vals.append(1 if protected else 0)
-    if not sets:
-        return 0
-    vals.append(ticker)
+def _open_state_tickers(flag: str) -> list[str]:
     conn = get_connection()
-    cur = conn.execute(
-        f"UPDATE holdings SET {', '.join(sets)} WHERE ticker = ? AND sold_date IS NULL",
-        vals,
-    )
-    n = cur.rowcount
-    conn.commit()
-    conn.close()
-    return n
+    try:
+        rows = conn.execute(
+            f"SELECT DISTINCT ps.ticker FROM position_state ps "
+            f"JOIN holdings h ON h.ticker = ps.ticker AND h.sold_date IS NULL "
+            f"WHERE ps.{flag} = 1 ORDER BY ps.ticker"
+        ).fetchall()
+        return [r["ticker"] for r in rows]
+    finally:
+        conn.close()
 
 
 def get_protected_tickers() -> list[str]:
-    """Distinct tickers flagged protected on an open lot (DB-side view)."""
-    conn = get_connection()
-    rows = conn.execute(
-        "SELECT DISTINCT ticker FROM holdings "
-        "WHERE protected = 1 AND sold_date IS NULL ORDER BY ticker"
-    ).fetchall()
-    conn.close()
-    return [r["ticker"] for r in rows]
+    """Distinct open tickers flagged protected (position_state)."""
+    return _open_state_tickers("protected")
 
 
 def get_drip_tickers() -> list[str]:
-    """Distinct tickers flagged drip_enabled on an open lot (DB-side view)."""
-    conn = get_connection()
-    rows = conn.execute(
-        "SELECT DISTINCT ticker FROM holdings "
-        "WHERE drip_enabled = 1 AND sold_date IS NULL ORDER BY ticker"
-    ).fetchall()
-    conn.close()
-    return [r["ticker"] for r in rows]
+    """Distinct open tickers flagged drip_enabled (position_state)."""
+    return _open_state_tickers("drip_enabled")
 
 
 def is_protected(ticker: str) -> bool:
-    """True if any open lot of `ticker` is flagged protected."""
-    conn = get_connection()
-    row = conn.execute(
-        "SELECT 1 FROM holdings WHERE ticker = ? AND protected = 1 "
-        "AND sold_date IS NULL LIMIT 1",
-        (ticker,),
-    ).fetchone()
-    conn.close()
-    return row is not None
+    """True if an open position in `ticker` is flagged protected."""
+    return ticker in get_protected_tickers()
 
 
 def entry_signals_before(ticker: str, before_ts: str | None = None, conn=None) -> list[str]:
-    """Signals that drove the most recent FILLED BUY of `ticker` at or before
+    """Signals that drove the most recent BUY of `ticker` at or before
     `before_ts` (latest overall if None).
 
-    Source is decisions.data_inputs.confluence.signals, written at decision
-    time — deliberately NOT trade_outcomes.signals_fired, which is partly
-    reconstructed from rationale text and known to over-attribute.
+    Source is entry_annotations (written with the BUY decision, in the same
+    transaction) — deliberately NOT a signals list reconstructed at exit time.
+    Only BUYs that actually produced fills count, i.e. a real trade.
 
     Exists because 282 of 331 position_exits_history rows (85%, measured
-    2026-09-28) carried empty exit_signals. Four exit paths never passed them
-    at all (REALLOCATION, THESIS-INVALID, PRICE-CONTRADICTION, TAX-HARVEST),
-    and even the exits engine passes signals CURRENT at exit, which are often
-    genuinely none. The re-entry guard compares new signals against these, so
-    an empty set made every current signal look 'new' and the guard waved
-    everything through — it had never blocked a single buy.
+    2026-09-28) carried empty exit_signals, so the re-entry guard compared new
+    signals against nothing and waved everything through.
     """
     own = conn is None
     if own:
         conn = get_connection()
     try:
+        sql = ("SELECT ea.signals FROM decisions d "
+               "JOIN entry_annotations ea ON ea.trade_id = d.trade_id "
+               "WHERE d.ticker = ? AND d.action = 'BUY' "
+               "AND EXISTS (SELECT 1 FROM trades t WHERE t.trade_id = d.trade_id) ")
+        args: list = [ticker]
         if before_ts:
-            row = conn.execute(
-                "SELECT data_inputs FROM decisions WHERE ticker = ? AND action = 'BUY' "
-                "AND execution_status = 'Filled' AND substr(timestamp,1,19) <= substr(?,1,19) "
-                "ORDER BY id DESC LIMIT 1", (ticker, before_ts)).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT data_inputs FROM decisions WHERE ticker = ? AND action = 'BUY' "
-                "AND execution_status = 'Filled' ORDER BY id DESC LIMIT 1",
-                (ticker,)).fetchone()
+            sql += "AND substr(d.timestamp,1,19) <= substr(?,1,19) "
+            args.append(before_ts)
+        row = conn.execute(sql + "ORDER BY d.id DESC LIMIT 1", args).fetchone()
         if not row or not row[0]:
             return []
-        di = json.loads(row[0])
-        sigs = (di.get("confluence") or {}).get("signals") or di.get("signals") or []
-        return [str(s) for s in sigs if s]
+        return [str(s) for s in json.loads(row[0]) if s]
     except Exception:
         return []
     finally:
         if own:
             conn.close()
-
-
-def sell_holdings(
-    ticker: str,
-    qty_to_sell: float,
-    sold_date: str,
-    sold_price: float,
-    reason: str,
-    exit_signals: list[str] | None = None,
-) -> list[dict]:
-    """Mark oldest open lots as sold (FIFO). Returns list of closed lots.
-
-    `reason` is REQUIRED and records which exit condition closed the position:
-    every equity close funnels through here, so recording the exit reason at
-    this one point makes it impossible to close a position silently. The reason
-    (+ exit price/date and any exit_signals) is written to position_exits in the
-    same transaction that marks the lots sold — it both feeds the dashboard's
-    closed-trade list and powers the re-entry guard (get_position_exit).
-    """
-    conn = get_connection()
-    lots = conn.execute(
-        f"SELECT {HOLDINGS_SELECT} FROM holdings WHERE ticker = ? AND sold_date IS NULL ORDER BY entry_date ASC",
-        (ticker,),
-    ).fetchall()
-
-    closed = []
-    closed_lot_ids = []  # holdings ids of the lots this exit event closed (FIFO)
-    remaining = qty_to_sell
-    for lot in lots:
-        if remaining <= 0:
-            break
-        lot_qty = lot["quantity"]
-        sell_qty = min(lot_qty, remaining)
-
-        if sell_qty >= lot_qty:
-            # Close entire lot
-            conn.execute(
-                "UPDATE holdings SET sold_date = ?, sold_price = ? WHERE id = ?",
-                (sold_date, sold_price, lot["id"]),
-            )
-        else:
-            # Partial sell: reduce lot, create closed split
-            conn.execute(
-                "UPDATE holdings SET quantity = ? WHERE id = ?",
-                (lot_qty - sell_qty, lot["id"]),
-            )
-            conn.execute(
-                "INSERT INTO holdings (ticker, entry_date, entry_price, quantity, sold_date, sold_price) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (ticker, lot["entry_date"], lot["entry_price"], sell_qty, sold_date, sold_price),
-            )
-        closed.append({
-            "entry_date": lot["entry_date"],
-            "entry_price": lot["entry_price"],
-            "quantity": sell_qty,
-            "holding_days": lot["holding_days"],
-        })
-        closed_lot_ids.append(lot["id"])
-        remaining -= sell_qty
-
-    # Did this sale leave the ticker flat? Read in the same txn as the lot
-    # updates. The ML ledger closes EVERY open row on a flat exit (its row
-    # quantities are not trued up to the broker; holdings is).
-    flat = conn.execute(
-        "SELECT COUNT(*) FROM holdings WHERE ticker = ? AND sold_date IS NULL "
-        "AND quantity > 1e-9", (ticker,),
-    ).fetchone()[0] == 0
-
-    # Record the exit reason for every close (same txn as the lot updates), as a
-    # new APPEND-ONLY history row — never an upsert, so a re-traded ticker keeps
-    # every close. entry_date/lot_ids attribute this exit to the specific lot(s)
-    # closed (oldest FIFO lot + all touched ids) so simultaneous same-ticker lots
-    # are disambiguated. Only when a lot actually closed — a no-op sell records
-    # nothing. (The frozen legacy position_exits table is intentionally NOT
-    # written here anymore; get_position_exit now reads history.)
-    if closed:
-        # Record the thesis being exited, not just what happened to be firing
-        # at the moment of sale: union the caller's exit_signals with the
-        # signals that drove the entry. Every close passes through here, so this
-        # covers the four exit paths that never passed signals at all.
-        recorded = list(dict.fromkeys(
-            list(exit_signals or []) + entry_signals_before(ticker, conn=conn)))
-        conn.execute(
-            """INSERT INTO position_exits_history
-               (ticker, exit_date, exit_price, exit_reason, exit_signals, entry_date, lot_ids)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (ticker, sold_date, sold_price, reason,
-             json.dumps(recorded) if recorded else None,
-             closed[0]["entry_date"],
-             ",".join(str(i) for i in closed_lot_ids)),
-        )
-
-    conn.commit()
-    conn.close()
-
-    # Mirror the exit into the ML outcomes DB (separate database). This is the
-    # single point every equity close funnels through, and the ONLY writer that
-    # closes trade_outcomes rows for a sale: it picks the rows (FIFO, or all of
-    # them when flat) and stamps each one completely — label, exit_reason,
-    # snapshot. Best-effort only: a failure here must NEVER block or raise into
-    # the trade path, so it is fully wrapped and only logs a warning (the
-    # nightly label_unlabeled_closes backstop still runs). Only when a lot
-    # actually closed (a real exit).
-    if closed:
-        try:
-            from kairos_ml_outcomes import record_exit_outcome
-            record_exit_outcome(
-                ticker=ticker,
-                timestamp_exit=sold_date,
-                price_exit=sold_price,
-                exit_reason=reason,
-                sold_qty=qty_to_sell,
-                flat=flat,
-                position_entry=closed[0]["entry_date"],
-            )
-        except Exception as exc:
-            print(f"  WARNING: ML outcomes exit-metadata update failed for {ticker}: {exc}")
-
-    return closed
 
 
 def get_open_holdings(ticker: str) -> list[dict]:
@@ -885,83 +571,56 @@ def get_tax_context(ticker: str) -> dict:
     }
 
 
-# ── Exit Architecture v2 — peak tracking + last-exit ─────────────────
-
-def update_peak_gain(ticker: str, gain_pct: float) -> int:
-    """Raise the stored peak_gain_pct on all open lots of a ticker.
-
-    The trailing stop tracks the position's high-water mark. We store the
-    running max of the position-level unrealized gain on every open lot so a
-    FIFO partial sell can never lose the peak. Never lowers an existing peak.
-    Returns the number of lots updated.
-    """
-    conn = get_connection()
-    cur = conn.execute(
-        "UPDATE holdings SET peak_gain_pct = ? "
-        "WHERE ticker = ? AND sold_date IS NULL AND peak_gain_pct < ?",
-        (gain_pct, ticker, gain_pct),
-    )
-    n = cur.rowcount
-    conn.commit()
-    conn.close()
-    return n
-
+# ── Exit Architecture v2 — peak tracking + last-exit (readers) ───────
 
 def get_peak_gain(ticker: str) -> float:
-    """Return the highest peak_gain_pct across a ticker's open lots (0 if none)."""
-    conn = get_connection()
-    row = conn.execute(
-        "SELECT MAX(peak_gain_pct) AS peak FROM holdings "
-        "WHERE ticker = ? AND sold_date IS NULL",
-        (ticker,),
-    ).fetchone()
-    conn.close()
-    return float(row["peak"]) if row and row["peak"] is not None else 0.0
+    """The position's high-water mark (position_state), 0 if none.
 
-
-def upsert_position_exit(
-    ticker: str,
-    exit_date: str,
-    exit_price: float,
-    exit_reason: str,
-    exit_signals: list[str] | None = None,
-) -> None:
-    """Record an exit for a ticker as a new append-only history row.
-
-    Powers the re-entry guard: a later BUY above this exit price is blocked
-    unless a signal fires that was NOT present at this exit. Despite the legacy
-    name, this now APPENDS (never overwrites) — each call is a distinct exit
-    event. Lot attribution (entry_date/lot_ids) is left null here because this
-    entry point has no lot context; the lot-aware writer is sell_holdings.
+    position_state is per TICKER and outlives a position, so a peak recorded
+    before the ticker last went flat must not leak into a re-entry: a peak
+    whose updated_at predates the oldest currently-open lot is stale and
+    reads as 0. (Writer: kairos_exits.update_peak_gain.)
     """
     conn = get_connection()
-    conn.execute(
-        """INSERT INTO position_exits_history
-           (ticker, exit_date, exit_price, exit_reason, exit_signals)
-           VALUES (?, ?, ?, ?, ?)""",
-        (ticker, exit_date, exit_price, exit_reason,
-         json.dumps(exit_signals) if exit_signals else None),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        row = conn.execute(
+            "SELECT ps.peak_gain_pct, ps.updated_at, "
+            "       (SELECT MIN(t.timestamp_entry) FROM trades t "
+            "         WHERE t.ticker_current = ps.ticker AND t.action = 'BUY' "
+            "           AND t.qty_open > 1e-6) AS opened_at "
+            "FROM position_state ps WHERE ps.ticker = ?", (ticker,)).fetchone()
+    finally:
+        conn.close()
+    if not row or row["opened_at"] is None or row["peak_gain_pct"] is None:
+        return 0.0
+    if row["updated_at"] < row["opened_at"]:
+        return 0.0
+    return float(row["peak_gain_pct"])
 
 
 def get_position_exit(ticker: str) -> dict | None:
-    """Return the MOST-RECENT exit record for a ticker, or None if never exited.
+    """The MOST-RECENT exit for a ticker, or None if never exited.
 
-    Reads the append-only position_exits_history: the highest id for a ticker is
-    its latest exit (append order is chronological). The returned dict's
-    exit_signals is decoded back into a list[str]. Contract is unchanged from the
-    old latest-per-ticker table — only the backing store moved.
+    Reads exit_annotations (one row per SELL decision) joined to its decision
+    for the date and to its fills for the realized price. Only SELLs that
+    actually produced fills count — an order that never filled is not an exit. Contract unchanged:
+    {ticker, exit_date, exit_price, exit_reason, exit_signals: list[str]}.
     """
     conn = get_connection()
-    row = conn.execute(
-        "SELECT ticker, exit_date, exit_price, exit_reason, exit_signals "
-        "FROM position_exits_history WHERE ticker = ? "
-        "ORDER BY id DESC LIMIT 1",
-        (ticker,),
-    ).fetchone()
-    conn.close()
+    try:
+        row = conn.execute(
+            "SELECT xa.ticker, d.timestamp AS exit_date, "
+            "       COALESCE((SELECT SUM(f.quantity * f.price) / SUM(f.quantity) "
+            "                   FROM fills f WHERE f.decision_id = d.id), "
+            "                d.execution_price) AS exit_price, "
+            "       xa.exit_reason, xa.exit_signals "
+            "FROM exit_annotations xa JOIN decisions d ON d.id = xa.decision_id "
+            "WHERE xa.ticker = ? AND EXISTS (SELECT 1 FROM fills f WHERE f.decision_id = d.id) "
+            "ORDER BY d.id DESC LIMIT 1",
+            (ticker,),
+        ).fetchone()
+    finally:
+        conn.close()
     if row is None:
         return None
     rec = dict(row)
@@ -1440,36 +1099,7 @@ def migrate_log():
 
     conn.commit()
     conn.close()
-
-    # Seed holdings from migrated BUY decisions
-    _seed_holdings_from_decisions()
-
     return migrated
-
-
-def _seed_holdings_from_decisions():
-    """Create holding lots for any BUY decisions that don't have matching holdings."""
-    conn = get_connection()
-    existing_holdings = conn.execute("SELECT COUNT(*) FROM holdings").fetchone()[0]
-    if existing_holdings > 0:
-        conn.close()
-        return
-
-    buys = conn.execute(
-        "SELECT timestamp, ticker, quantity, execution_price "
-        "FROM decisions WHERE action = 'BUY' AND execution_status = 'Filled'"
-    ).fetchall()
-
-    for b in buys:
-        # Parse date from timestamp like "2026-03-25 15:08:07 UTC"
-        entry_date = b["timestamp"].replace(" UTC", "").strip()
-        conn.execute(
-            "INSERT INTO holdings (ticker, entry_date, entry_price, quantity) VALUES (?, ?, ?, ?)",
-            (b["ticker"], entry_date, b["execution_price"], b["quantity"]),
-        )
-
-    conn.commit()
-    conn.close()
 
 
 # ── main ────────────────────────────────────────────────────────────
@@ -1499,14 +1129,12 @@ def main():
     print(banner("Verification"))
     conn = get_connection()
     dec_count = conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
-    out_count = conn.execute("SELECT COUNT(*) FROM outcomes").fetchone()[0]
     hold_count = conn.execute("SELECT COUNT(*) FROM holdings").fetchone()[0]
     open_count = conn.execute("SELECT COUNT(*) FROM holdings WHERE sold_date IS NULL").fetchone()[0]
     opt_dec = conn.execute("SELECT COUNT(*) FROM options_decisions").fetchone()[0]
     opt_pos = conn.execute("SELECT COUNT(*) FROM options_positions").fetchone()[0]
     conn.close()
     print(f"  Decisions: {dec_count}")
-    print(f"  Outcomes:  {out_count}")
     print(f"  Holdings:  {hold_count} ({open_count} open)")
     print(f"  Options:   {opt_dec} decision(s), {opt_pos} position(s)")
 

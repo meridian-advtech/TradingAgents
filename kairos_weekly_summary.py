@@ -21,7 +21,7 @@ It must stand alone without the dashboard. J is at low touch for 3-6 months
 and will not be opening it, so anything that only exists there is, for this
 period, information that does not exist.
 
-Read-only. It reads kairos.db and kairos_ml_outcomes.db and posts to Slack.
+Read-only. It reads kairos.db and posts to Slack.
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ def _now_utc() -> datetime:
 def _parse_ts(raw):
     """One parser for both databases.
 
-    kairos.db writes '2026-09-10 00:00:51 UTC'; kairos_ml_outcomes.db writes
+    decisions write '2026-09-10 00:00:51 UTC'; trade_outcomes exits read
     '2026-09-11T14:01:53Z'. Reusing kairos_axis_weights._parse_exit_ts, which
     already normalises all three shapes the corpus contains, rather than
     keeping a second half-complete parser here — the first draft of this file

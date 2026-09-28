@@ -66,7 +66,7 @@ import kairos_spawn
 
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "kairos_config.json")
 KAIROS_DB = os.path.join(SCRIPT_DIR, "kairos.db")
-ML_DB = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
+ML_DB = os.path.join(SCRIPT_DIR, "kairos.db")
 STATE_FILE = os.path.join(SCRIPT_DIR, "kairos_state.json")
 PERFORMANCE_FILE = os.path.join(SCRIPT_DIR, "kairos_performance.json")
 COMMANDER_LOG = os.path.join(SCRIPT_DIR, "kairos_commander.log")
@@ -541,7 +541,7 @@ def cmd_why(ticker: str) -> str:
         finally:
             conn.close()
 
-    # 2. Most recent thesis prediction from kairos_ml_outcomes.db
+    # 2. Most recent thesis prediction (thesis_predictions, kairos.db)
     thesis = None
     conn = _open_db(ML_DB)
     if conn is not None:

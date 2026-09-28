@@ -1,7 +1,6 @@
 """Selftest for kairos_watch — fire every alert condition in a sandbox.
 
-Each condition below is driven from a DISPOSABLE /tmp kairos.db and
-kairos_ml_outcomes.db. Nothing here touches the live databases,
+Each condition below is driven from DISPOSABLE /tmp databases. Nothing here touches the live databases,
 kairos_config.json, or Slack.
 
 Two things are asserted per condition: that it fires on the state it is meant
@@ -532,10 +531,11 @@ def main():
         "kairos_arbiter.py":           "Arbiter run FAILED (not the daily report)",
         "kairos_autonomy.py":          "rollback could not be verified",
         "kairos_dividend.py":          "protected position down >N% — human review",
-        "kairos_execute.py":           "log-integrity / long-only violation / "
-                                       "reconcile abort (all-clear goes to #log)",
         "kairos_health.py":            "health check failed",
         "kairos_healthcheck.py":       "infrastructure findings",
+        "kairos_ledger.py":            "trade-record write failed / positions ledger "
+                                       "≠ broker (come look) / long-only violation / "
+                                       "Flex nightly pull failed",
         "kairos_reallocation.py":      "reallocation aborted / buy leg failed",
         "kairos_regime.py":            "regime transition (rare; changes guardrails)",
         "kairos_run.py":               "scheduler crash",

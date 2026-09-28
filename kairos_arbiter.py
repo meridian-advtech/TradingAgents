@@ -8,7 +8,7 @@ judge whether conviction scores are calibrated, whether signals are firing on
 appropriate setups, and what patterns explain wins and losses.
 
 Data sources:
-  kairos_ml_outcomes.db
+  kairos.db (trade_outcomes view + thesis tables)
     trade_outcomes      — closed/open trades w/ pnl_pct, signals_fired,
                           confluence_score, sector, outcome_label
     thesis_predictions  — conviction_score (1–10), signal_type, predicted move
@@ -79,7 +79,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ML_DB_PATH = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
+ML_DB_PATH = os.path.join(SCRIPT_DIR, "kairos.db")
 KAIROS_DB_PATH = os.path.join(SCRIPT_DIR, "kairos.db")
 REPORTS_DIR = os.path.join(SCRIPT_DIR, "arbiter_reports")
 

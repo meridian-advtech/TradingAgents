@@ -42,7 +42,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ML_DB_PATH = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
+ML_DB_PATH = os.path.join(SCRIPT_DIR, "kairos.db")
 CONFIG_PATH = os.path.join(SCRIPT_DIR, "kairos_config.json")
 
 AXIS = "conviction_calibration"       # original Phase B1 axis (kept as a default)
