@@ -2,12 +2,14 @@
 Kairos Ollama Agent — Two-Model Architecture
 
 Two specialized local LLMs via Ollama:
-  Screen model (mistral-small3.2) — fast Tier 1 screening of 264+ tickers
-  Reason model (llama3.3)         — quality Tier 2 reasoning for ≤15 tickers
+  Screen model (phi4-mini)        — fast Tier 1 screening of 264+ tickers
+  Reason model (qwen3.8:27b-mlx)  — local classification: news relevance,
+                                    stale sources, crypto signals, formatting
+  Models are set in kairos_config.json; the constants below are fallbacks only.
 
 Division of labor:
   Ollama (this module) — fast, free, private, always-on routine tasks
-  Claude Code          — complex investment reasoning and final decisions
+  Anthropic API        — investment reasoning and final decisions (kairos_run / kairos_router)
 
 HTTP API: http://localhost:11434 (Ollama default)
 Config:   kairos_config.json → ollama.{screen_model, reason_model}
@@ -25,8 +27,10 @@ KEEP_ALIVE = "0"      # default: unload immediately after use
 KEEP_ALIVE_SCREEN = "2m"   # screen model stays loaded across batches; explicitly unloaded after screening
 WARMUP_TIMEOUT = 90   # generous timeout for cold-start model reload (~30s)
 
-# Fallback model if config is missing
-_FALLBACK_MODEL = "llama3.2"
+# Fallbacks if kairos_config.json is missing or unreadable. Must be models that
+# are actually installed — a fallback to an absent model silently degrades cycles.
+DEFAULT_SCREEN_MODEL = "phi4-mini"
+DEFAULT_REASON_MODEL = "qwen3.8:27b-mlx"
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _CONFIG_FILE = os.path.join(_SCRIPT_DIR, "kairos_config.json")
@@ -40,26 +44,26 @@ def _load_ollama_config() -> dict:
     global _config
     if _config is not None:
         return _config
-    defaults = {"screen_model": "mistral-small3.2", "reason_model": "llama3.3"}
+    defaults = {"screen_model": DEFAULT_SCREEN_MODEL, "reason_model": DEFAULT_REASON_MODEL}
     if os.path.exists(_CONFIG_FILE):
         try:
             with open(_CONFIG_FILE) as f:
                 data = json.load(f)
             defaults.update(data.get("ollama", {}))
-        except (json.JSONDecodeError, IOError):
-            pass
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"  [Ollama] WARNING: could not read {_CONFIG_FILE} ({e}); using fallback models")
     _config = defaults
     return _config
 
 
 def get_screen_model() -> str:
     """Return the model name for Tier 1 screening (speed-optimized)."""
-    return _load_ollama_config().get("screen_model", "mistral-small3.2")
+    return _load_ollama_config().get("screen_model", DEFAULT_SCREEN_MODEL)
 
 
 def get_reason_model() -> str:
     """Return the model name for Tier 2 reasoning (quality-optimized)."""
-    return _load_ollama_config().get("reason_model", "llama3.3")
+    return _load_ollama_config().get("reason_model", DEFAULT_REASON_MODEL)
 
 
 # ── Base client ──────────────────────────────────────────────────────
@@ -129,7 +133,7 @@ def warmup(model: str | None = None) -> bool:
 
     After KEEP_ALIVE elapses, Ollama unloads models to free memory.
     The first real call after idle would pay a ~30s reload penalty
-    (mistral-small3.2 ≈ 15GB). This function eats that latency
+    (qwen3.8:27b-mlx ≈ 18GB). This function eats that latency
     up front so the pipeline's timed calls don't timeout.
 
     Returns True if the model responded, False on failure.

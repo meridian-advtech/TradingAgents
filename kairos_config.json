@@ -81,7 +81,7 @@
     "effort_decision": "high",
     "effort_router": "medium",
     "effort_thesis": "low",
-    "_comment": "Claude Code CLI invoked via subprocess for Phase 2 reasoning. Set cli_path if claude is not on PATH. model: claude-opus-5 (2026-08-03, upgraded from claude-sonnet-5) \u2014 used ONLY for the main decision call in kairos_run.py, which reads cfg.claude.model. kairos_router.py and kairos_thesis_review.py have claude-sonnet-5 hardcoded independently and are unaffected by this key \u2014 router/thesis stay on Sonnet 5 by design (cost-appropriate for volume; decision call gets Opus 5 depth). effort_*: per call type \u2014 decision=high, router=medium, thesis=low. API default is high; passed via output_config={'effort': ...}."
+    "_comment": "Phase 2 reasoning calls the Anthropic API via the Python SDK (ANTHROPIC_API_KEY); cli_path is legacy and unused. model: claude-opus-5 (2026-08-03, upgraded from claude-sonnet-5) \u2014 used ONLY for the main decision call in kairos_run.py, which reads cfg.claude.model. kairos_router.py and kairos_thesis_review.py have claude-sonnet-5 hardcoded independently and are unaffected by this key \u2014 router/thesis stay on Sonnet 5 by design (cost-appropriate for volume; decision call gets Opus 5 depth). effort_*: per call type \u2014 decision=high, router=medium, thesis=low. API default is high; passed via output_config={'effort': ...}."
   },
   "slack": {
     "bot_token": "",

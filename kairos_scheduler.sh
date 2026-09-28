@@ -175,7 +175,7 @@ fi
 cd "$KAIROS_DIR"
 
 # Ollama memory management: unload models from VRAM after 5 min of inactivity.
-# This frees ~15 GB (mistral-small3.2) between 30-min scheduler cycles.
+# This frees ~18 GB (qwen3.8:27b-mlx reason model) between 30-min scheduler cycles.
 # Per-request keep_alive is also set in kairos_ollama.py; this env var acts as
 # the server-wide fallback default for any requests that don't specify it.
 export OLLAMA_KEEP_ALIVE="5m"
