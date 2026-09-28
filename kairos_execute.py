@@ -58,6 +58,17 @@ def _reallocation_min_conviction() -> int:
         return 5
 
 
+def _min_entry_conviction() -> int:
+    """General BUY conviction floor — execution.min_entry_conviction (default 6).
+    Read fresh each call so a config edit applies next cycle without restart."""
+    try:
+        cfg_path = os.path.join(SCRIPT_DIR, "kairos_config.json")
+        with open(cfg_path) as f:
+            return int(json.load(f).get("execution", {}).get("min_entry_conviction", 6))
+    except Exception:
+        return 6
+
+
 def _try_reallocation(ticker, new_conviction, signal_tags, ib, nlv,
                       trade, qty, decision, path):
     """Evaluate and (if recommended) execute a capital reallocation to fund a
@@ -2221,6 +2232,33 @@ def main():
                 continue
         else:
             qty = compute_position_size(confluence, nlv, ref_price)
+
+        # ── Entry conviction floor (BUY only) ─────────────────────
+        # Added 2026-09-28. Conviction is the first entry-time feature found to
+        # separate winners from losers. On 107 labelled trades, win rate rose
+        # monotonically with it — 4: 33%, 5: 33%, 6: 55%, 7: 69%, 8: 86% — and
+        # the 27 trades at conviction <=5 lost -$16.4K between them. Before
+        # this there was NO general entry floor (only reallocation's 5 and
+        # mode C's 4), so those buys executed at any conviction.
+        # Missing conviction is allowed through and logged, not blocked: an
+        # absent field is a data problem, not evidence the trade is weak.
+        if action == "BUY":
+            _floor = _min_entry_conviction()
+            _conv = trade.get("conviction")
+            try:
+                _conv = int(_conv) if _conv not in (None, "") else None
+            except (TypeError, ValueError):
+                _conv = None
+            if _conv is None:
+                print(f"    [CONVICTION] {ticker}: no conviction on trade — floor not applied")
+            elif _conv < _floor:
+                _why = (f"CONVICTION FLOOR: {_conv} < {_floor} "
+                        f"(entries at <=5 historically 33% win, -$16.4K over 27 trades)")
+                print(f"    BLOCKED: {_why}")
+                skipped_count += 1
+                skip_reasons.append({"ticker": ticker, "reason": _why})
+                log_execution(decision, trade, {"status": "Skipped", "reason": _why})
+                continue
 
         # ── Re-entry guard (BUY only) ─────────────────────────────
         # Don't re-buy a ticker ABOVE its last exit price unless a genuinely

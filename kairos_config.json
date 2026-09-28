@@ -880,5 +880,8 @@
   "performance": {
     "baseline_date": "2026-07-01",
     "baseline_note": "Current-system era: post sizing-fix (6/29), exit_timing weight (6/30), target-armed trail (7/2)"
+  },
+  "execution": {
+    "min_entry_conviction": 6
   }
 }
