@@ -499,7 +499,7 @@ def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -
             conn.execute("PRAGMA busy_timeout = 2000")
             rows = conn.execute(
                 "SELECT t.ticker, t.pnl_pct, t.pnl_dollar, t.signals_fired, "
-                "       t.mfe_pct, t.timestamp_exit, t.exit_reason, "
+                "       t.mfe_pct, t.timestamp_exit, t.timestamp_entry, t.exit_reason, "
                 "       t.forgone_gain_30d_pct AS fg30, "
                 "       t.signal_attribution_source AS src, "
                 "       p.predicted_return_pct AS pred "
@@ -514,18 +514,21 @@ def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -
     if not rows:
         return ""
 
-    # Per-signal stats use ONLY causally-attributed rows. 270 legacy rows
-    # (signal_attribution_source='legacy_mixed') were tagged by unioning every
-    # source, crediting signals with trades they never drove. Measured
-    # 2026-09-28, blending them in turned HOT-INSIDER from a losing signal
-    # (clean: 13 trades, 38% win, -3.65% avg, -$11.3K) into an apparent top
-    # earner (+$19.3K), and HOT-CONGRESS / HOT-OPTIONS have ZERO clean trades.
-    # This block feeds live buy decisions, so contaminated evidence here is
-    # worse than none.
+    # Per-signal stats use ONLY rows whose trigger is known from the decision
+    # record (TRUSTED_ATTRIBUTION_SOURCES). 239 of 270 'legacy_mixed' rows were
+    # re-attributed to 'decision_record' on 2026-09-28; the 31 without a
+    # decision record stay excluded.
+    #
+    # Correction recorded deliberately: earlier on 2026-09-28 this comment said
+    # legacy contamination had turned HOT-INSIDER from a loser into an apparent
+    # top earner. That was wrong. Re-attribution removed no HOT-INSIDER tags —
+    # the legacy tags were right. The gap was TIME: 'clean' then meant
+    # 'since August', HOT-INSIDER's worst stretch, while +$37.4K of its lifetime
+    # +$19.3K came from May alone. Hence the 90-day columns below.
     try:
         from kairos_ml_outcomes import TRUSTED_ATTRIBUTION_SOURCES as _TRUSTED
     except Exception:
-        _TRUSTED = ("explicit", "confluence")
+        _TRUSTED = ("explicit", "confluence", "decision_record")
     clean_rows = [r for r in rows if r["src"] in _TRUSTED]
     all_sigs_seen: set = set()
     for r in rows:
@@ -534,19 +537,30 @@ def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -
         except (json.JSONDecodeError, TypeError):
             pass
 
+    from datetime import date as _date, timedelta as _td
+    _cutoff = (_date.today() - _td(days=90)).isoformat()   # SIGNAL_RECENT_DAYS
+
     agg: dict = {}
     for r in clean_rows:
         try:
             sigs = json.loads(r["signals_fired"]) if r["signals_fired"] else []
         except (json.JSONDecodeError, TypeError):
             sigs = []
+        # Window on ENTRY date: a signal is judged by when it FIRED. Keying on
+        # exit put May-entered winners sold in July inside the "recent" window.
+        is_recent = str(r["timestamp_entry"] or "")[:10] >= _cutoff
         for s in ([str(x) for x in sigs if x] or ["(no signal logged)"]):
             a = agg.setdefault(s, {"n": 0, "w": 0, "pct": 0.0, "usd": 0.0,
-                                   "hit": 0, "hit_n": 0})
+                                   "hit": 0, "hit_n": 0,
+                                   "rn": 0, "rpct": 0.0, "rusd": 0.0})
             a["n"] += 1
             a["w"] += 1 if r["pnl_pct"] > 0 else 0
             a["pct"] += r["pnl_pct"]
             a["usd"] += r["pnl_dollar"] or 0.0
+            if is_recent:
+                a["rn"] += 1
+                a["rpct"] += r["pnl_pct"]
+                a["rusd"] += r["pnl_dollar"] or 0.0
             if r["pred"] is not None and r["mfe_pct"] is not None:
                 a["hit_n"] += 1
                 a["hit"] += 1 if r["mfe_pct"] >= r["pred"] else 0
@@ -554,21 +568,26 @@ def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -
     lines = [
         "Realized outcomes by entry signal (closed trades, P&L frozen at exit),",
         f"from the {len(clean_rows)} trades whose trigger was recorded at decision",
-        "time. Older trades with reconstructed attribution are excluded — they",
-        "credited signals with trades they did not drive.",
+        "time. A few older trades with no decision record are excluded.",
         "'Thesis hit' = price reached the predicted target at some point, even",
         "if the trade later closed lower — high accuracy with low return means",
         "the signal predicts direction but the move is small or given back.",
+        "The LAST 90D columns matter as much as lifetime: a signal can carry a",
+        "strong lifetime total from one good period while having stopped",
+        "working since. When the two disagree, weigh the recent figure.",
         "",
-        f"  {'signal':<22}{'trades':>7}{'win':>6}{'avg':>9}{'thesis hit':>12}{'realized':>12}",
+        f"  {'signal':<22}{'trades':>7}{'win':>6}{'avg':>9}{'thesis hit':>12}{'realized':>12}"
+        f"   {'90d n':>6}{'90d avg':>9}{'90d $':>10}",
     ]
     for s, a in sorted(agg.items(), key=lambda kv: -kv[1]["usd"]):
         if a["n"] < 3:
             continue
         hit = f"{a['hit']/a['hit_n']*100:.0f}%" if a["hit_n"] else "n/a"
+        recent = (f"   {a['rn']:>6}{a['rpct']/a['rn']:>8.2f}%{a['rusd']:>+10,.0f}"
+                  if a["rn"] else f"   {0:>6}{'—':>9}{'—':>10}")
         lines.append(
             f"  {s:<22}{a['n']:>7}{a['w']/a['n']*100:>5.0f}%"
-            f"{a['pct']/a['n']:>8.2f}%{hit:>12}{a['usd']:>+12,.0f}"
+            f"{a['pct']/a['n']:>8.2f}%{hit:>12}{a['usd']:>+12,.0f}{recent}"
         )
     no_evidence = sorted(s for s in all_sigs_seen
                          if s and agg.get(s, {"n": 0})["n"] < 3)

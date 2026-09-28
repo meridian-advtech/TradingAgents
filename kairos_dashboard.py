@@ -23,6 +23,10 @@ from datetime import datetime, timedelta, timezone
 SCRIPT_DIR    = os.path.dirname(os.path.abspath(__file__))
 DB_PATH       = os.path.join(SCRIPT_DIR, "kairos.db")
 ML_DB_PATH    = os.path.join(SCRIPT_DIR, "kairos_ml_outcomes.db")
+# Trailing window shown beside lifetime per-signal stats (see
+# load_ml_signal_attribution). Matches SIGNAL_RECENT_DAYS in kairos_reason.py
+# and kairos_arbiter.py so all three surfaces show the same window.
+SIGNAL_RECENT_DAYS = 90
 PERF_FILE     = os.path.join(SCRIPT_DIR, "kairos_performance.json")
 DASHBOARD_OUT = os.path.join(SCRIPT_DIR, "kairos_dashboard.html")
 LEDGER_FILE   = os.path.join(SCRIPT_DIR, "kairos_ledger.txt")
@@ -951,18 +955,22 @@ def load_ml_signal_attribution(since: str | None = None) -> list | None:
     if not os.path.exists(ML_DB_PATH):
         return None
     try:
+        from kairos_ml_outcomes import TRUSTED_ATTRIBUTION_SOURCES as _TRUSTED
+    except Exception:
+        _TRUSTED = ("explicit", "confluence", "decision_record")
+    try:
         conn = sqlite3.connect(f"file:{ML_DB_PATH}?mode=ro", uri=True, timeout=2)
         try:
             conn.execute("PRAGMA busy_timeout = 2000")
             rows = conn.execute(
                 "SELECT signals_fired, pnl_pct, pnl_dollar, hold_duration_mins, "
-                "timestamp_exit FROM trade_outcomes "
+                "timestamp_exit, timestamp_entry FROM trade_outcomes "
                 "WHERE timestamp_exit IS NOT NULL AND pnl_pct IS NOT NULL "
-                # Causally-attributed rows only. The 270 'legacy_mixed' rows
-                # unioned every source and credited signals with trades they
-                # never drove — blended in, HOT-INSIDER read +$19.3K when its
-                # clean record is 13 trades, -$11.3K (measured 2026-09-28).
-                "AND signal_attribution_source IN ('explicit','confluence')"
+                # Trusted attribution only — imported, never hardcoded, so a new
+                # trusted source (decision_record, 2026-09-28) reaches every
+                # consumer at once instead of silently missing one.
+                f"AND signal_attribution_source IN ({','.join('?' * len(_TRUSTED))})",
+                tuple(_TRUSTED),
             ).fetchall()
         finally:
             conn.close()
@@ -976,25 +984,36 @@ def load_ml_signal_attribution(since: str | None = None) -> list | None:
         return None
 
     groups: dict[str, list] = {}
-    for sigs_raw, pct, usd, mins, _ts in rows:
+    for sigs_raw, pct, usd, mins, _ts_exit, ts in rows:  # ts = ENTRY date (window key)
         try:
             sigs = json.loads(sigs_raw) if sigs_raw else []
         except (json.JSONDecodeError, TypeError):
             sigs = []
         sigs = [str(s) for s in sigs if s] or ["(unattributed)"]
         for s in sigs:
-            groups.setdefault(s, []).append((float(pct), float(usd or 0.0), mins))
+            groups.setdefault(s, []).append((float(pct), float(usd or 0.0), mins, str(ts)[:10]))
+
+    # Trailing window alongside lifetime. A lifetime total hid HOT-INSIDER's
+    # decline for four months: +$19.3K overall, but +$37.4K of that was May
+    # alone and June onward was ~-$18K across 72 trades (measured 2026-09-28).
+    # Signals decay; a single number cannot show it.
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=SIGNAL_RECENT_DAYS)).isoformat()
 
     out = []
     for name, items in groups.items():
-        holds = [m for _, _, m in items if m is not None]
+        holds = [m for _, _, m, _ in items if m is not None]
+        recent = [(p, u) for p, u, _, d in items if d >= cutoff]
         out.append({
             "name": name,
             "n":    len(items),
-            "win":  round(sum(1 for p, _, _ in items if p > 0) / len(items) * 100, 1),
-            "avg":  round(sum(p for p, _, _ in items) / len(items), 2),
-            "pnl":  round(sum(u for _, u, _ in items), 2),
+            "win":  round(sum(1 for p, _, _, _ in items if p > 0) / len(items) * 100, 1),
+            "avg":  round(sum(p for p, _, _, _ in items) / len(items), 2),
+            "pnl":  round(sum(u for _, u, _, _ in items), 2),
             "hold": round(sum(holds) / len(holds) / 1440.0, 1) if holds else None,
+            "recent_n":   len(recent),
+            "recent_avg": round(sum(p for p, _ in recent) / len(recent), 2) if recent else None,
+            "recent_pnl": round(sum(u for _, u in recent), 2),
         })
     return sorted(out, key=lambda r: -r["pnl"])
 
@@ -4174,7 +4193,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     let stats = null;
     if (Array.isArray(DATA.signal_attribution) && DATA.signal_attribution.length) {
       stats = DATA.signal_attribution.map(function (r) {
-        return { name: r.name, n: r.n, pnl: r.pnl, win: r.win, avg: r.avg, hold: r.hold };
+        return { name: r.name, n: r.n, pnl: r.pnl, win: r.win, avg: r.avg, hold: r.hold,
+                 recent_n: r.recent_n, recent_avg: r.recent_avg, recent_pnl: r.recent_pnl };
       });
     }
 
@@ -4229,7 +4249,16 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         + '<div class="dvtrack"><div class="dvaxis"></div>'
         + '<div class="dvbar ' + side + '" style="width:' + w.toFixed(1) + '%"></div></div>'
         + '<div class="dvval ' + (r.pnl >= 0 ? "pnl-pos" : "pnl-neg") + '">'
-        + usdSig(r.pnl) + '</div></div>';
+        + usdSig(r.pnl)
+        // Trailing 90d under the lifetime figure. A lifetime total hid
+        // HOT-INSIDER's four-month decline behind one great May.
+        + (r.recent_n != null
+            ? '<div style="font-size:10px;font-weight:500;margin-top:2px" class="'
+              + (r.recent_pnl >= 0 ? "pnl-pos" : "pnl-neg") + '">90d: '
+              + (r.recent_n ? usdSig(r.recent_pnl) + ' · ' + r.recent_n : 'none')
+              + '</div>'
+            : '')
+        + '</div></div>';
     }).join("");
 
     html += '</div>';
@@ -4241,9 +4270,10 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
       && DATA.signal_attribution.length;
     if (usingLedger) {
       const un = stats.filter(function (r) { return r.name === NO_SIGNAL; })[0];
-      html += '<div class="caveat">Realized P&amp;L per signal, from the '
-        + 'reconciled ML ledger. A confluence trade counts under every signal '
-        + 'that fired, so the bars sum to more than the book.'
+      html += '<div class="caveat">Realized P&amp;L per signal, lifetime, with '
+        + 'the last 90 days beneath it — a lifetime total can hide a signal that '
+        + 'has stopped working. Decision-time attribution only. A confluence trade '
+        + 'counts under every signal that fired, so the bars sum to more than the book.'
         + (un ? ' ' + un.n + ' trades carry no logged entry signal.' : '')
         + '</div>';
     } else {

@@ -206,6 +206,9 @@ def forgone_column(days: int) -> str:
 ATTRIBUTION_SOURCES = (
     "explicit",        # the entry path named its own trigger — trade-level truth
     "confluence",      # confluence tags captured during sizing — trade-level
+    "decision_record", # legacy row re-attributed from decisions.data_inputs —
+                       # the same decision-time field 'confluence' is written
+                       # from (validated 217/217 identical on 2026-09-28)
     "ticker_context",  # signals firing for the TICKER that day — not causation
     "rationale_text",  # tags parsed out of prose — a guess, last resort
     "none",            # nothing known anywhere; deliberately not fabricated
@@ -213,7 +216,11 @@ ATTRIBUTION_SOURCES = (
 )
 
 # Sources that support a causal claim about why a trade was entered.
-TRUSTED_ATTRIBUTION_SOURCES = ("explicit", "confluence")
+# 'decision_record' is trusted because it is read from exactly the field that
+# 'confluence' rows are written from, and the two agreed on every one of 217
+# rows checked. Adding it restored 239 historical trades that the legacy
+# quarantine was discarding.
+TRUSTED_ATTRIBUTION_SOURCES = ("explicit", "confluence", "decision_record")
 
 # Columns to ensure exist on thesis_checkpoints (idempotent ALTER TABLE).
 _THESIS_CHECKPOINTS_EXTRA_COLUMNS = [

@@ -716,19 +716,24 @@ def _signals_list(raw) -> list[str]:
         return []
 
 
-_TRUSTED_SRC = ("explicit", "confluence")
+try:
+    from kairos_ml_outcomes import TRUSTED_ATTRIBUTION_SOURCES as _TRUSTED_SRC
+except Exception:
+    _TRUSTED_SRC = ("explicit", "confluence", "decision_record")
+
+SIGNAL_RECENT_DAYS = 90   # same window as kairos_reason / kairos_dashboard
 
 
 def _trusted_signals(t: dict) -> list[str]:
-    """Signals for per-signal analysis — ONLY when causally attributed.
+    """Signals for per-signal analysis — only when the trigger is known from
+    the decision record. Imported from kairos_ml_outcomes rather than
+    hardcoded, so a new trusted source reaches this consumer automatically.
 
-    Legacy rows ('legacy_mixed') unioned every tagging source and credited
-    signals with trades they never drove. Measured 2026-09-28: blended in, they
-    turned HOT-INSIDER (clean: 13 trades, -3.65% avg) into an apparent top
-    earner, and HOT-CONGRESS / HOT-OPTIONS have no clean trades at all. The
-    Arbiter's per-signal conclusions feed the learning loop, so contaminated
-    attribution here propagates into proposals. Untrusted rows return [] and
-    are grouped as '(unreliable attribution)' rather than credited to signals.
+    Rows without a decision record (31 'legacy_mixed' as of 2026-09-28) return
+    [] and are grouped as '(unreliable attribution)'. Note: an earlier version
+    of this docstring claimed legacy contamination had inflated HOT-INSIDER.
+    That was wrong — its legacy tags were correct; the real issue was that its
+    lifetime total came almost entirely from May. See by_signal_recent.
     """
     if t.get("signal_attribution_source") not in _TRUSTED_SRC:
         return []
@@ -752,9 +757,12 @@ def _conviction_bucket(score) -> str:
 def compute_aggregates(closed: list[dict]) -> dict:
     """Win rate / avg return broken out by signal and by conviction bucket."""
     by_signal: dict[str, list[float]] = defaultdict(list)
+    by_signal_recent: dict[str, list[float]] = defaultdict(list)
     by_bucket: dict[str, list[float]] = defaultdict(list)
     wins = losses = 0
     returns: list[float] = []
+    from datetime import date as _date, timedelta as _td
+    _recent_cutoff = (_date.today() - _td(days=SIGNAL_RECENT_DAYS)).isoformat()
 
     for t in closed:
         # Prefer the authoritative realized P&L attached by enrich_closed_trades;
@@ -775,8 +783,12 @@ def compute_aggregates(closed: list[dict]) -> dict:
             sigs = _trusted_signals(t) or ["(none)"]
         else:
             sigs = ["(unreliable attribution)"]
+        # ENTRY date — judge a signal by when it fired, not when it was sold.
+        _recent = str(t.get("timestamp_entry") or "")[:10] >= _recent_cutoff
         for s in sigs:
             by_signal[s].append(pnl)
+            if _recent:
+                by_signal_recent[s].append(pnl)
 
         by_bucket[_conviction_bucket(t.get("conviction_score"))].append(pnl)
 
@@ -798,6 +810,8 @@ def compute_aggregates(closed: list[dict]) -> dict:
         "overall_win_rate": round(wins / total, 3) if total else 0.0,
         "avg_return_pct": round(sum(returns) / len(returns), 2) if returns else 0.0,
         "by_signal": summarize(by_signal),
+        "by_signal_recent": summarize(by_signal_recent),
+        "recent_window_days": SIGNAL_RECENT_DAYS,
         "by_conviction_bucket": summarize(by_bucket),
     }
 
