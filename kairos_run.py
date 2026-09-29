@@ -2611,6 +2611,15 @@ def run_scheduled_cycle(args) -> None:
             tb = traceback.format_exc()
             print(f"  WARNING: Broker check failed: {exc}\n{tb}")
             _log_phase_crash("broker_check", exc, tb)
+        # Late fills are now linked; correct any decision the order
+        # housekeeping marked Expired/Cancelled/Submitted that actually filled.
+        try:
+            from kairos_execute import true_up_order_status_from_fills
+            n_true = true_up_order_status_from_fills()
+            if n_true:
+                print(f"  Order status true-up — {n_true} decision(s) marked Filled from the fills ledger")
+        except Exception as exc:
+            print(f"  WARNING: order status true-up failed: {exc}")
 
     # Increment cycle and persist
     state["cycle_count"] = cycle + 1

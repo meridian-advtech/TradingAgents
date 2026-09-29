@@ -1132,6 +1132,47 @@ def cancel_stale_orders(max_age_hours: int = 8) -> int:
     return cancelled
 
 
+def true_up_order_status_from_fills() -> int:
+    """Mark decisions 'Filled' when the fills ledger shows they filled.
+
+    Why this exists: the executor waits ~45s for a fill, then logs a limit
+    order as 'Submitted'. When it fills later, nothing updated the row.
+    reconcile_submitted_orders then saw the order gone from IBKR's open orders
+    and assumed it EXPIRED ("no fill recorded" — it only looked at the
+    decision row), and cancel_stale_orders matches by ticker+qty and can stamp
+    'Cancelled' on the wrong row. Result (found 2026-09-28): 60 BUYs marked
+    Expired/Cancelled/Submitted had actually filled.
+
+    The fills ledger is the truth, and broker_check links late fills to their
+    decision by perm_id, so running this right after broker_check trues up
+    every status the order-housekeeping routines guessed wrong. Only ever moves
+    a row TO 'Filled'; never touches a row with no linked fills.
+    """
+    from kairos_log_db import get_connection
+    conn = get_connection()
+    n = 0
+    try:
+        rows = conn.execute(
+            "SELECT d.id, d.execution_status, d.execution_price, d.rationale, "
+            "       SUM(f.quantity) AS qty, SUM(f.quantity * f.price) / SUM(f.quantity) AS vwap "
+            "FROM decisions d JOIN fills f ON f.decision_id = d.id "
+            "WHERE d.execution_status IN ('Submitted','PreSubmitted','Expired','Cancelled','Inactive') "
+            "GROUP BY d.id").fetchall()
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        for r in rows:
+            note = (f" [STATUS TRUE-UP {stamp}: was {r['execution_status']}; fills ledger "
+                    f"shows {r['qty']:g} filled @ {r['vwap']:.4f}]")
+            conn.execute(
+                "UPDATE decisions SET execution_status = 'Filled', "
+                "execution_price = COALESCE(execution_price, ?), rationale = ? WHERE id = ?",
+                (round(r["vwap"], 4), (r["rationale"] or "") + note, r["id"]))
+            n += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return n
+
+
 def _looks_like_possible_fill(row) -> bool:
     """True if a Submitted row carries evidence of a possible (mislogged) fill:
     a non-null execution_price AND a position_after whose quantity is positive.

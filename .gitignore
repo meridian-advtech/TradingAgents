@@ -98,3 +98,6 @@ kairos_news_summary.txt
 
 # ATR-trail backtest price cache (large binary, regenerable)
 .atr_trail_backtest_prices.pkl
+
+# === LOCAL IMPORTS (broker statements, one-off scripts) — never commit ===
+imports/

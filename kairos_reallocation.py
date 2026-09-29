@@ -782,16 +782,22 @@ def execute_reallocation(
     # trade["quantity"], but new_trade still carries the ORIGINAL pre-reallocation
     # size (often ~0 — the cash-breach round-down that triggered reallocation in
     # the first place). The order we actually placed/filled was final_qty, so
-    # stamp the actual filled quantity here. Prefer the broker's reported filled
-    # position; fall back to final_qty. Without this the holding was written with
+    # stamp the actual filled quantity here. Without this the holding was written with
     # quantity=0 despite a real fill (e.g. GL/T on 2026-06-17).
+    #
+    # Filled quantity = the sum of THIS order's executions. It used to read
+    # new_position.quantity, which is the whole position after the fill — for
+    # a ticker already held that logged the total (DE: 56 logged vs 15 filled,
+    # found 2026-09-28). No executions yet → the order quantity; the fills
+    # ledger records late fills either way.
     filled_qty = final_qty
-    new_pos = buy_execution.get("new_position") if buy_execution else None
-    if isinstance(new_pos, dict) and new_pos.get("quantity"):
-        try:
-            filled_qty = int(float(new_pos["quantity"]))
-        except (TypeError, ValueError):
-            filled_qty = final_qty
+    _fills = (buy_execution or {}).get("fills") or []
+    try:
+        _sum = sum(float(f.get("quantity") or 0) for f in _fills)
+        if _sum > 0:
+            filled_qty = int(round(_sum))
+    except (TypeError, ValueError, AttributeError):
+        filled_qty = final_qty
     buy_trade["quantity"] = filled_qty
     log_execution(decision, buy_trade, buy_execution)
 

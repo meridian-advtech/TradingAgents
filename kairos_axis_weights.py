@@ -1974,6 +1974,20 @@ def compute_param(path: str) -> dict:
         if band["lo"] is not None and band["hi"] is not None:
             proposed = _clamp(proposed, band["lo"], band["hi"])
         proposed_value = round(proposed, 4)
+        # Round INWARD at the edges. Clamping to a band edge and then rounding
+        # to 4 dp can land up to 0.00005 outside it (2026-09-28: trail_pct
+        # clamped to 4.497945, rounded to 4.4979; profit_floor_pp 1.436465 ->
+        # 1.4365), and apply_param_to_config then refuses the proposal at a
+        # 1e-9 tolerance. Every refusal so far (autonomy_log 16, 17, 33) was
+        # this, not a real band breach.
+        _edges = [(lo, hi)]
+        if band["lo"] is not None and band["hi"] is not None:
+            _edges.append((band["lo"], band["hi"]))
+        for _lo, _hi in _edges:
+            if _lo is not None and proposed_value < _lo:
+                proposed_value = math.ceil(_lo * 1e4 - 1e-9) / 1e4
+            if _hi is not None and proposed_value > _hi:
+                proposed_value = math.floor(_hi * 1e4 + 1e-9) / 1e4
         # Ordered-pair guard, LAST — after every clamp, because the clamps are
         # what determine the value that would actually be written.
         _cross = _ordering_violation(path, proposed_value)

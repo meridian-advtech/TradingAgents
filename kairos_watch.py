@@ -153,10 +153,26 @@ def check_rollback_fired(since_hours: int = 36) -> list:
         ts = _parse_ts(r["verdict_at"])
         if ts is None or ts < cutoff:
             continue
-        failed = r["verdict"] != "rolled_back"
+        failed = r["verdict"] == "rollback_failed"
+        refused = r["verdict"] == "apply_failed"
         base, post = r["baseline_error"], r["post_error"]
         moved = (f"error {base:.4f} → {post:.4f}pp"
                  if base is not None and post is not None else "error unmeasurable")
+        if refused:
+            # An auto-apply the config writer REFUSED: nothing was written, so
+            # there is nothing to revert and no harmful value is live. This
+            # used to be reported as a critical "ROLLBACK FAILED" (2026-09-22,
+            # 2026-09-28) — a false alarm that trains people to ignore the
+            # real one.
+            out.append({
+                "key": f"rollback:{r['id']}",
+                "title": "Auto-apply refused (no change made)",
+                "severity": "warning",
+                "body": (f"`{r['axis']}` proposal *{r['new_weight']}* was refused "
+                         f"by the config guards; the live value is unchanged "
+                         f"(*{r['prior_weight']}*). {r['note'] or ''}"),
+            })
+            continue
         if failed:
             body = (f"*{r['verdict'].replace('_', ' ').upper()}* on "
                     f"`{r['axis']}` — {moved}.\n"
