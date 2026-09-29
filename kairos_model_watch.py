@@ -3,7 +3,7 @@
 Kairos Model Watch — Weekly Tier 1 AI Model Release Scan
 
 Runs weekly (Monday 07:30 ET, pre-market) via com.kairos.model_watch.plist.
-Calls Claude (Sonnet 5, web search enabled) to check whether any new model
+Calls Claude (cfg.claude.watch_model, web search enabled) to check whether any new model
 release in the past week meets the Tier 1 immediate-evaluation criteria
 defined in the Olympus Hardware Discussion (2026-06-10):
 
@@ -112,9 +112,15 @@ def run_scan() -> list[dict]:
     """Call Claude with web search to check for Tier 1 model releases."""
     import anthropic
 
+    _model = "claude-sonnet-5-5"
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "kairos_config.json")) as _f:
+            _model = json.load(_f).get("claude", {}).get("watch_model", _model)
+    except Exception:
+        pass
     client = anthropic.Anthropic()  # uses ANTHROPIC_API_KEY env var
     response = client.messages.create(
-        model="claude-sonnet-5",
+        model=_model,
         max_tokens=4096,
         output_config={"effort": "medium"},
         tools=[{

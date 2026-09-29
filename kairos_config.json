@@ -77,11 +77,14 @@
     "cli_path": "/opt/homebrew/bin/claude",
     "reasoning_timeout_s": 240,
     "poll_interval_s": 5,
-    "model": "claude-opus-5",
+    "model": "claude-opus-5-5",
+    "router_model": "claude-sonnet-5-5",
+    "thesis_model": "claude-sonnet-5-5",
+    "watch_model": "claude-sonnet-5-5",
     "effort_decision": "high",
     "effort_router": "medium",
     "effort_thesis": "low",
-    "_comment": "Phase 2 reasoning calls the Anthropic API via the Python SDK (ANTHROPIC_API_KEY); cli_path is legacy and unused. model: claude-opus-5 (2026-08-03, upgraded from claude-sonnet-5) \u2014 used ONLY for the main decision call in kairos_run.py, which reads cfg.claude.model. kairos_router.py and kairos_thesis_review.py have claude-sonnet-5 hardcoded independently and are unaffected by this key \u2014 router/thesis stay on Sonnet 5 by design (cost-appropriate for volume; decision call gets Opus 5 depth). effort_*: per call type \u2014 decision=high, router=medium, thesis=low. API default is high; passed via output_config={'effort': ...}."
+    "_comment": "Phase 2 reasoning calls the Anthropic API via the Python SDK (ANTHROPIC_API_KEY); cli_path is legacy and unused. All Claude model IDs live here; no module hardcodes one. model = main decision call (kairos_run.py); router_model = kairos_router.py; thesis_model = kairos_thesis_review.py; watch_model = kairos_model_watch.py. 2026-09-29: upgraded claude-opus-5 -> claude-opus-5-5 and claude-sonnet-5 -> claude-sonnet-5-5 (released 2026-09-22 / 09-28; both verified live with output_config effort before switching). History: 2026-08-03 decision call moved Sonnet 5 -> Opus 5. effort_*: per call type - decision=high, router=medium, thesis=low; passed via output_config={'effort': ...}."
   },
   "slack": {
     "bot_token": "",
@@ -244,7 +247,7 @@
         "_atr_note": "ATR-scaled armed trail (kairos_backtest_atr_trail.py, n=156 armed closes over 3.7 months): trail = clamp(atr_mult * ATR14/price * 100, trail_lo_pct, trail_hi_pct), with ATR14 taken ONCE at arm time, not recomputed per cycle. Backtested +92.6 pts vs the fixed 6.2255 with median give-back 4.15 vs 5.47, zero closes over 10pp give-back, and no measurable whipsaw increase at 5/14/30d. [2.0,4.0] chosen over the [2.0,4.5] sibling deliberately: start tight and let the learning loop loosen it if exits prove premature. Give-back is capped at min(trail*intraday_mult, peak-profit_floor_pp), so trail_hi_pct is the parameter that bounds worst-case give-back: 4.0 * 1.5 = 6.0pp. atr_enabled ships FALSE \u2014 J flips it after reviewing the shadow period, same deployment pattern as target_armed and price_invalidation."
       },
       "_target_armed_note": "TARGET-ARMED trail (backtest-verified, +31.6pts over flat tiers on n=49): no trail arms until peak_gain_pct reaches the position's own logged thesis target (predicted_return_pct from thesis_predictions); THEN a flat trail_pct trail arms, harvesting only the give-back on the SURPLUS above what the thesis promised. Falls back to the flat tiers above for any ticker with no logged target. enabled=false ships as a no-op; J flips true after reviewing dry-run output.",
-      "profit_floor_pp": 1.6328,
+      "profit_floor_pp": 1.6392,
       "_profit_floor_note": "Once ANY trail is armed, allowed retreat is capped at (peak - profit_floor_pp) so an armed winner can never exit below ~breakeven+floor. Added 2026-07-02 after giveback analysis: target-armed positions with single-digit peaks had backstops wider than their peaks (guaranteed-loss exits). 0 disables."
     },
     "tax_gate": {

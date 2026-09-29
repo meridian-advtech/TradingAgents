@@ -235,7 +235,7 @@ def _load_claude_config() -> dict:
             with open(config_file) as f:
                 cfg = json.load(f)
             return {
-                "model": cfg.get("claude", {}).get("model", "claude-sonnet-5"),
+                "model": cfg.get("claude", {}).get("model", "claude-opus-5-5"),
                 "effort": cfg.get("claude", {}).get("effort_decision", "high"),
                 "timeout": cfg.get("claude", {}).get("reasoning_timeout_s", 60),
                 "slack_webhook_url": cfg.get("alerts", {}).get("slack_webhook_url", ""),
@@ -244,7 +244,7 @@ def _load_claude_config() -> dict:
         except (json.JSONDecodeError, IOError):
             pass
     return {
-        "model": "claude-sonnet-5",
+        "model": "claude-opus-5-5",
         "effort": "high",
         "timeout": 60,
         "slack_webhook_url": "",
@@ -394,7 +394,7 @@ def _call_anthropic_api(prompt_text: str, system_instruction: str, cfg: dict) ->
         anthropic.BadRequestError,
     )
 
-    model = cfg.get("model", "claude-sonnet-5")
+    model = cfg.get("model", "claude-opus-5-5")
     effort = cfg.get("effort", "high")
     timeout = cfg.get("timeout", 60)
 
@@ -611,7 +611,7 @@ def _invoke_claude_reasoning(prompt_file: str, cfg: dict) -> dict | None:
 
     invoke_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     print(f"  API call started at: {invoke_ts}")
-    print(f"  Model: {cfg.get('model', 'claude-sonnet-5')}  Timeout: {cfg['timeout']}s")
+    print(f"  Model: {cfg.get('model', 'claude-opus-5-5')}  Timeout: {cfg['timeout']}s")
 
     raw_response = _call_anthropic_api(prompt_text, system_instruction, cfg)
 

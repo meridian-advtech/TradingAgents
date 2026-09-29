@@ -393,6 +393,25 @@ def main() -> int:
                   f"{'would be ' if args.dry_run else ''}scored")
     except Exception as exc:
         print(f"  thesis scoring failed: {exc}")
+
+    # (d) ML retrain. train_model() otherwise loads the pickle from disk
+    # forever, so the model never learned from new closes unless someone
+    # retrained it by hand. Retrain nightly on the rebuilt ledger; the
+    # council prompt (kairos_reason SECTION 5b) reads the fresh CV accuracy
+    # and tells the council to discount the scores while it is below 55%,
+    # so influence arrives automatically once measured skill does.
+    if not args.dry_run:
+        try:
+            import kairos_ml
+            info = kairos_ml.train_model(force_retrain=True) or {}
+            print(f"  ml retrain: n={info.get('trade_count')} "
+                  f"cv_accuracy={info.get('accuracy')}")
+        except Exception as exc:
+            print(f"  ml retrain failed: {exc}")
+            try:
+                kairos_ledger.alert(f":warning: *Nightly ML retrain FAILED*: {exc}")
+            except Exception:
+                pass
     return 0
 
 
