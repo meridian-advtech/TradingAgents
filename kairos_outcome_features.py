@@ -374,6 +374,20 @@ def main() -> int:
 
     import kairos_ledger
     if not args.dry_run:
+        # (a0) Same-day broker check. reqExecutions() only returns TODAY, and
+        # Flex only has a day after the next overnight run, so a fill that
+        # lands after the last cycle's broker check (LEN 287, placed 16:37 ET
+        # 2026-10-05, filled 16:41-16:53 after hours) was invisible to the
+        # ledger — and to the exit engine — until the following night.
+        # Catching it here at 19:30 closes that gap to a few hours.
+        try:
+            bc = kairos_ledger.broker_check(client_id=12)
+            print(f"  broker_check: new fills={bc.get('new_fills')} "
+                  f"mismatches={len(bc.get('mismatches') or [])}")
+            from kairos_execute import true_up_order_status_from_fills
+            true_up_order_status_from_fills()
+        except Exception as exc:
+            print(f"  broker_check failed: {exc}")
         # (a) Flex pull — alerts (naming the token) on failure, never raises.
         if not args.no_flex:
             kairos_ledger.nightly_flex_pull()
