@@ -284,7 +284,12 @@ def gather_tax_context(shortlist: list[str] | None = None) -> str:
             c = get_tax_context(t)
         except Exception:
             continue
-        for s in c.get("recent_sells", [])[:2]:
+        _seen = set()
+        for s in c.get("recent_sells", []):
+            _k = (str(s.get("sold_date"))[:10], s.get("sold_price"))
+            if _k in _seen or len(_seen) >= 2:
+                continue  # holdings view returns one row per lot; show each sale once
+            _seen.add(_k)
             ep, sp = s.get("entry_price"), s.get("sold_price")
             loss = (ep is not None and sp is not None and sp < ep)
             lines.append(f"  {t:6} sold {str(s.get('sold_date'))[:10]} "
