@@ -417,6 +417,15 @@ def _model_present(wanted: str, installed: list[str]) -> bool:
 
 
 def check_ollama() -> CheckResult:
+    # 2026-10-12: Ollama is optional (ollama.enabled=false by default). When
+    # disabled the pipeline never calls it, so its absence is not a failure.
+    try:
+        with open(os.path.join(SCRIPT_DIR, "kairos_config.json")) as _f:
+            if not json.load(_f).get("ollama", {}).get("enabled", False):
+                return CheckResult("Ollama responsive", "disabled in config (not required)",
+                                   skipped=True)
+    except Exception:
+        pass
     screen, reason = _required_ollama_models()
     installed, error = _fetch_ollama_tags()
 
@@ -963,6 +972,111 @@ def check_recent_crashes(now_utc: datetime) -> CheckResult:
     )
 
 
+# ── Data quality (added 2026-10-12) ──────────────────────────────────
+# Liveness checks passed every 30 minutes for weeks while the pipeline
+# screened ~1/4 of the universe, its news summary failed 57/58 times, and the
+# weekly Arbiter timed out twice. These checks look at what the last cycle
+# actually PRODUCED, not just whether processes are up.
+
+DQ_MIN_UNIVERSE_COVERAGE = 0.85   # share of universe with price data
+DQ_MAX_CYCLE_AGE_MIN = 150        # only judge a recent cycle
+
+
+def _last_cycle_block(log_text: str) -> tuple[str | None, datetime | None]:
+    import re as _re
+    marks = list(_re.finditer(r"KAIROS SCHEDULER — Cycle \d+ — (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) UTC", log_text))
+    if not marks:
+        return None, None
+    # judge the last COMPLETED cycle: the block before the newest marker if
+    # the newest has no completion line yet
+    for m in reversed(marks):
+        block = log_text[m.start():]
+        nxt = log_text.find("KAIROS SCHEDULER — Cycle", m.end())
+        if nxt != -1:
+            block = log_text[m.start():nxt]
+        if "COMPLETE — next cycle" in block:
+            ts = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            return block, ts
+    return None, None
+
+
+def check_data_quality(now_utc: datetime) -> CheckResult:
+    import re as _re
+    name = "Data quality (last cycle)"
+    text, err = _read_scheduler_log_tail()
+    if text is None:
+        return CheckResult(name, err, skipped=True)
+    block, ts = _last_cycle_block(text)
+    if block is None:
+        return CheckResult(name, "no completed cycle in log tail", skipped=True)
+    age = (now_utc - ts).total_seconds() / 60
+    if age > DQ_MAX_CYCLE_AGE_MIN:
+        return CheckResult(name, f"last completed cycle {age:.0f} min old — not judged", skipped=True)
+
+    findings: list[Finding] = []
+    details: list[str] = []
+
+    # 1. Universe coverage
+    m = _re.search(r"\[tier0\] coverage: (\d+)/(\d+)", block)
+    if not m:
+        m2 = _re.search(r"Pre-filter passed \d+/(\d+) tickers \(quote data captured for (\d+)", block)
+        cov = (int(m2.group(2)), int(m2.group(1))) if m2 else None
+    else:
+        cov = (int(m.group(1)), int(m.group(2)))
+    if cov:
+        got, tot = cov
+        ratio = got / tot if tot else 0
+        details.append(f"universe {got}/{tot}")
+        if ratio < DQ_MIN_UNIVERSE_COVERAGE:
+            findings.append(Finding(
+                key=f"dq:universe:{int(ratio*10)}",
+                headline=f"Only {got}/{tot} universe tickers had price data last cycle ({ratio:.0%}).",
+                impact="Tickers without data are silently never screened — including held positions.",
+                fix="Check the [tier0] lines in kairos_scheduler.log for yfinance errors "
+                    "(file-descriptor limit, rate limiting) and the ulimit line in kairos_scheduler.sh.",
+            ))
+
+    # 2. Shortlist produced
+    if "Tier 2 shortlist:" not in block and "Shortlist saved" not in block:
+        findings.append(Finding(
+            key="dq:no-shortlist",
+            headline="Last cycle produced no screening shortlist.",
+            impact="No candidates reach the council — the entry side is idle.",
+            fix="Look for a Phase 0.5 crash or an early exit in the last cycle block.",
+        ))
+
+    # 3. News digest
+    try:
+        with open(os.path.join(SCRIPT_DIR, "kairos_news_digest.json")) as f:
+            nd = json.load(f)
+        nts = datetime.strptime(nd["timestamp"], "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
+        nage = (now_utc - nts).total_seconds() / 60
+        st = nd.get("stats", {})
+        details.append(f"news {nd.get('status')} {st.get('with_items', 0)}/{st.get('tickers', 0)}")
+        if nd.get("status") != "OK":
+            findings.append(Finding(
+                key="dq:news-unavailable",
+                headline=f"News digest status {nd.get('status')}: {nd.get('triage', {}).get('error', 'unknown error')}.",
+                impact="The council and thesis review run without news this cycle.",
+                fix="Check ANTHROPIC_API_KEY / FINNHUB_API_KEY in the launchd environment and kairos_news_shadow.jsonl.",
+            ))
+        elif nage > DQ_MAX_CYCLE_AGE_MIN:
+            findings.append(Finding(
+                key="dq:news-stale",
+                headline=f"News digest is {nage:.0f} min old.",
+                impact="News context is stale or the news step is not running.",
+                fix="Check the 'News digest:' line in the last cycle of kairos_scheduler.log.",
+            ))
+    except FileNotFoundError:
+        details.append("news digest not yet produced")
+    except Exception as exc:
+        details.append(f"news digest unreadable: {exc}")
+
+    # (Weekly Arbiter failures already alert #kairos-alerts from kairos_arbiter.py.)
+
+    return CheckResult(name, ", ".join(details) or "ok", findings)
+
+
 def run_checks(now_et: datetime, now_utc: datetime) -> list[CheckResult]:
     return [
         check_launch_agents(),
@@ -970,6 +1084,7 @@ def run_checks(now_et: datetime, now_utc: datetime) -> list[CheckResult]:
         check_ibkr_gateway(now_et),
         check_scheduler_progress(now_et, now_utc),
         check_recent_crashes(now_utc),
+        check_data_quality(now_utc),
     ]
 
 

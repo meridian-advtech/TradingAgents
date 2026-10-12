@@ -85,7 +85,7 @@ REPORTS_DIR = os.path.join(SCRIPT_DIR, "arbiter_reports")
 
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 MISTRAL_MODEL = "mistral-medium-latest"
-MISTRAL_TIMEOUT = 120
+MISTRAL_TIMEOUT = 300  # 2026-10-12: was 120; weekly input is large and timed out 2 Saturdays running
 
 ARBITER_CHANNEL = "#kairos-arbiter"   # not yet in kairos_config.json channel map
 ALERTS_CHANNEL = "alerts"             # logical key → C0AQA4ZH0P2
@@ -999,6 +999,17 @@ def build_user_prompt(mode: str, today: str, closed: list[dict],
 # ── Mistral ──────────────────────────────────────────────────────────
 
 def call_mistral(system_prompt: str, user_prompt: str, api_key: str) -> str:
+    """One retry on timeout/connection error (weekly runs failed 2x on a single timeout)."""
+    try:
+        return _call_mistral_once(system_prompt, user_prompt, api_key)
+    except (requests.Timeout, requests.ConnectionError) as exc:
+        print(f"  Mistral attempt 1 failed ({exc}); retrying once in 30s...")
+        import time as _t
+        _t.sleep(30)
+        return _call_mistral_once(system_prompt, user_prompt, api_key)
+
+
+def _call_mistral_once(system_prompt: str, user_prompt: str, api_key: str) -> str:
     resp = requests.post(
         MISTRAL_URL,
         headers={
