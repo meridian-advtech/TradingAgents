@@ -251,11 +251,15 @@ def fetch_coingecko() -> list[str]:
     return lines
 
 
+# 2026-10-12: Kalshi and Congress.gov removed from the prompt snapshot.
+# Kalshi was returning 20 arbitrary open events with no markets (Mars visits,
+# the next Pope, supervolcanoes) and Congress.gov a 1983 (98th Congress)
+# bill — noise the council was being asked to reason over. fetch_kalshi /
+# fetch_congress are kept for a proper re-implementation (specific Fed /
+# recession series; current Congress sorted by update date).
 SOURCES = {
     "Finnhub — Shortlist News Headlines": fetch_finnhub,
     "FRED — Federal Funds Rate": fetch_fred,
-    "Kalshi — Prediction Markets": fetch_kalshi,
-    "Congress.gov — Recent Finance Bills": fetch_congress,
     "CoinGecko — Crypto (BTC / ETH)": fetch_coingecko,
 }
 

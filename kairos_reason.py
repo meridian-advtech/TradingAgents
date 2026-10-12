@@ -267,10 +267,40 @@ def gather_portfolio(shortlist: list[str] | None = None) -> dict:
 
 # ── Step 3: Tax context ──────────────────────────────────────────────
 
-def gather_tax_context() -> dict:
-    """Pull tax lot data from kairos.db for the reasoning prompt."""
+def gather_tax_context(shortlist: list[str] | None = None) -> str:
+    """Recent-sale (wash-sale window) context for the shortlisted tickers.
+
+    FIX 2026-10-12: this used to call get_tax_context(TICKER) with TICKER
+    hardcoded to "AAPL", so every prompt said "No open holdings tracked".
+    Open-lot tax math for held candidates is already in Section 3b; what
+    Section 3 adds is which candidates were sold in the last 30 days, since
+    re-buying after a LOSS sale is blocked downstream as a wash sale.
+    """
     print(banner("Step 3 — Gathering Tax Context"))
     init_db()  # ensure tables exist
+    lines = []
+    for t in (shortlist or []):
+        try:
+            c = get_tax_context(t)
+        except Exception:
+            continue
+        for s in c.get("recent_sells", [])[:2]:
+            ep, sp = s.get("entry_price"), s.get("sold_price")
+            loss = (ep is not None and sp is not None and sp < ep)
+            lines.append(f"  {t:6} sold {str(s.get('sold_date'))[:10]} "
+                         f"@ ${sp:,.2f} (entry ${ep:,.2f}) — "
+                         + ("LOSS sale: a re-BUY within 30 days will be BLOCKED (wash sale)"
+                            if loss else "gain sale: re-buy allowed"))
+    if lines:
+        text = ("Shortlisted tickers sold in the last 30 days:\n" + "\n".join(lines))
+    else:
+        text = "No shortlisted ticker was sold in the last 30 days (no wash-sale constraints)."
+    print(f"  {len(lines)} recent sale(s) among shortlisted tickers")
+    return text
+
+
+def _legacy_gather_tax_context_aapl() -> dict:
+    """Pre-2026-10-12 behavior, kept for reference; not called."""
     ctx = get_tax_context(TICKER)
 
     if not ctx["has_position"]:
@@ -1080,13 +1110,29 @@ def write_prompt(market_data: str, portfolio: dict, tax_ctx: dict | None = None,
                  ledger_text: str | None = None,
                  shortlist: list[str] | None = None,
                  tax_efficiency_text: str | None = None,
-                 regime_section: str | None = None) -> str:
+                 regime_section: str | None = None,
+                 news_section: str | None = None) -> str:
     print(banner("Step 6 — Writing Reasoning Prompt"))
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "kairos_config.json")) as _cf:
+            min_conv = int(json.load(_cf).get("execution", {}).get("min_entry_conviction", 6))
+    except Exception:
+        min_conv = 6
+    news_block = ""
+    if news_section:
+        news_block = f"""
+{'=' * W}
+SECTION 1b: NEWS DIGEST (candidates)
+{'=' * W}
+
+{news_section}
+"""
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     tax_section = ""
     if tax_ctx:
-        tax_text = format_tax_section(tax_ctx)
+        tax_text = tax_ctx if isinstance(tax_ctx, str) else format_tax_section(tax_ctx)
         tax_section = f"""
 {'=' * W}
 SECTION 3: TAX CONTEXT
@@ -1522,9 +1568,8 @@ SECTION 4b: SIGNAL EVIDENCE (realized outcomes)
                     ml_lines.append(f"  {ticker:<6} ML Confidence: {confidence:.3f}  Signal: {signal}")
                 
                 ml_lines.append("")
-                ml_lines.append("Use ML scores as an additional signal factor. Higher confidence")
-                ml_lines.append("suggests historical patterns favor this trade. STRONG signals merit")
-                ml_lines.append("higher conviction; WEAK signals warrant caution or smaller size.")
+                ml_lines.append("Weight these scores ONLY as the accuracy note above allows: if it")
+                ml_lines.append("says at or near chance, ignore them entirely.")
                 ml_lines.append("")
                 
                 ml_section = "\n".join(ml_lines)
@@ -1539,19 +1584,19 @@ SECTION 4b: SIGNAL EVIDENCE (realized outcomes)
     prompt = f"""KAIROS REASONING PROMPT — {timestamp}
 {'=' * W}
 {blacklist_block}
-You are evaluating the following {len(candidate_tickers)} shortlisted tickers
-for the BEST single trade opportunity.
+You are evaluating the following {len(candidate_tickers)} shortlisted tickers.
+Recommend every candidate that has a genuine edge (see MULTI-TRADE RANKING).
 
 Your existing portfolio positions are listed separately below — do NOT
 default to adding to existing positions unless they are genuinely the
 best opportunity on the shortlist. Every candidate must compete equally.
 
 {regime_block}{tax_npv_block}{sector_warning_block}{'=' * W}
-SECTION 1: MARKET SNAPSHOT (5 SOURCES)
+SECTION 1: MARKET SNAPSHOT
 {'=' * W}
 
 {market_data}
-
+{news_block}
 {'=' * W}
 SECTION 2a: EXISTING POSITIONS (for context only)
 {'=' * W}
@@ -1581,10 +1626,10 @@ Analyze each factor for EVERY candidate ticker:
    monetary policy? How does this affect each sector represented?
 
 3. RISK APPETITE — What do crypto trends (BTC/ETH direction + volume)
-   and prediction markets signal about broader risk sentiment?
+   and the Section 0 regime indicators signal about broader risk sentiment?
 
-4. LEGISLATIVE RISK — Are any bills in Congress a threat or tailwind
-   for any candidate on the shortlist?
+4. EVENT RISK — Is there a known catalyst (earnings date, regulatory or
+   legal action, M&A) in the news that could move a candidate either way?
 
 5. PORTFOLIO FIT — How does each candidate fit the existing portfolio?
    Would adding a new position improve diversification? Is cash
@@ -1610,13 +1655,10 @@ Analyze each factor for EVERY candidate ticker:
    - HOT-KALSHI: prediction market shift; factor direction into thesis
    Multiple signals on one ticker compound confidence.
 
-9. ML PATTERN RECOGNITION — Review Section 5b ML confidence scores and signals:
-   - STRONG (>=0.7): Historical patterns strongly favor this trade
-   - NEUTRAL (0.4-0.7): Mixed or limited historical data
-   - WEAK (<=0.4): Historical patterns suggest caution
-   Use ML as an additional signal factor alongside the human-readable signals.
-   Higher ML confidence should increase your conviction; lower confidence
-   warrants smaller position sizes or skipping the trade entirely.
+9. ML PATTERN RECOGNITION — Section 5b states the model's measured accuracy.
+   If it is at or near chance, ignore the scores entirely; they carry no
+   information. Only an above-chance model earns weight, and then as a
+   minor factor behind the signals and news.
 
 {'=' * W}
 MULTI-TRADE RANKING (REQUIRED)
@@ -1625,6 +1667,12 @@ MULTI-TRADE RANKING (REQUIRED)
 Rank ALL eligible candidates by conviction. Trade ALL tickers that have
 genuine HOT signals and merit a position — do not limit to a single winner.
 {"(Blacklisted tickers excluded: " + ", ".join(blacklisted_symbols) + ")" if blacklisted_symbols else ""}
+
+CONVICTION FLOOR: a BUY with conviction below {min_conv} will NOT execute.
+{min_conv} means a genuine, articulable edge. If a candidate is only a
+"maybe" (what you would otherwise score 5 or lower), mark it SKIP and say
+why in "skipped" — do not submit it as a low-conviction BUY. Score honestly:
+inflating a 5 to a {min_conv} defeats the floor and is tracked against outcomes.
 
 For each ticker, determine:
   - Action: BUY, SELL, or SKIP (no position warranted)
@@ -1684,6 +1732,7 @@ For every BUY, include a thesis block so we can track prediction accuracy:
 Rules:
   - Include ALL tickers that merit a trade, not just the top one.
   - If NO ticker warrants a trade, return an empty trades array.
+  - Do not submit a BUY below conviction {min_conv}; SKIP it instead.
   - Tag REVERSION trades in the rationale for ledger tracking.
   - Sector MUST match one of the universe categories.
   - Thesis fields are REQUIRED for every BUY (omit them on SELL/HOLD).
@@ -1724,7 +1773,7 @@ def main():
 
     market_data = gather_market_data(tickers=shortlist)
     portfolio = gather_portfolio(shortlist)
-    tax_ctx = gather_tax_context()
+    tax_ctx = gather_tax_context(shortlist)
     tax_eff = gather_tax_efficiency(portfolio, shortlist=shortlist)
     ledger_text = gather_ledger()
     write_prompt(market_data, portfolio, tax_ctx, ledger_text,
