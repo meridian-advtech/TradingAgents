@@ -174,27 +174,68 @@ def fetch_batch_data_yfinance(tickers: list[str], period: str = "1mo") -> dict[s
     if not tickers:
         return results
 
-    df = yf.download(tickers, period=period, auto_adjust=True,
-                      progress=False, threads=True)
-    if df is None or df.empty:
-        return {t: {"ticker": t, "quote": None, "profile": None, "candle": None}
-                for t in tickers}
+    # FIX (2026-10-12): one yf.download(threads=True) over the whole universe
+    # opens a thread + socket + tz-cache SQLite handle per ticker. Under
+    # launchd the soft open-file limit is 256 (an interactive shell has ~1M),
+    # so the download ran out of file descriptors and failed on a large,
+    # varying block of tickers every cycle — "OperationalError('unable to
+    # open database file')" and spurious "possibly delisted" for SPY/QQQ/AMD.
+    # 168 tickers were lost on 10/09; 550 of 666 on the 10/12 09:31 cycle.
+    # It never reproduced by hand because the terminal's limit is high.
+    # Now: bounded thread count, chunked downloads, and one retry pass for
+    # anything still missing. (kairos_scheduler.sh also raises the limit.)
+    CHUNK, THREADS = 100, 8
 
-    multi = hasattr(df.columns, "levels") and "Close" in df.columns.get_level_values(0)
-
-    def _series(field: str, t: str):
+    def _download(batch: list[str]):
         try:
+            return yf.download(batch, period=period, auto_adjust=True,
+                               progress=False, threads=THREADS)
+        except Exception as exc:  # one bad chunk must not sink the universe
+            print(f"  [tier0] yfinance chunk failed ({len(batch)} tickers): {exc}")
+            return None
+
+    frames = []
+
+    def _fetch_all(batch_list: list[str]):
+        for i in range(0, len(batch_list), CHUNK):
+            part = batch_list[i:i + CHUNK]
+            d = _download(part)
+            if d is not None and not d.empty:
+                frames.append((d, set(part)))
+
+    def _series_from(d, field: str, t: str):
+        try:
+            multi = hasattr(d.columns, "levels") and field in d.columns.get_level_values(0)
             if multi:
-                if t not in df[field].columns:
+                if t not in d[field].columns:
                     return None
-                s = df[field][t].dropna()
+                s = d[field][t].dropna()
             else:
-                if field not in df.columns:
+                if field not in d.columns:
                     return None
-                s = df[field].dropna()
+                s = d[field].dropna()
             return s if len(s) else None
         except Exception:
             return None
+
+    def _series(field: str, t: str):
+        for d, members in reversed(frames):  # latest (retry) frame wins
+            if t in members:
+                s = _series_from(d, field, t)
+                if s is not None:
+                    return s
+        return None
+
+    _fetch_all(list(tickers))
+    missing = [t for t in tickers
+               if (lambda c: c is None or len(c) < 2)(_series("Close", t))]
+    if missing:
+        print(f"  [tier0] retrying {len(missing)} ticker(s) with no data on first pass")
+        _fetch_all(missing)
+        still = [t for t in missing
+                 if (lambda c: c is None or len(c) < 2)(_series("Close", t))]
+        print(f"  [tier0] coverage: {len(tickers) - len(still)}/{len(tickers)} "
+              f"tickers with price data ({len(still)} still missing)")
 
     for t in tickers:
         closes = _series("Close", t)

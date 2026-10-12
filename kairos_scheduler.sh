@@ -32,6 +32,11 @@ TIME=$((10#$HOUR * 100 + 10#$MIN))
 
 set -euo pipefail
 
+# 2026-10-12: launchd gives jobs a soft open-file limit of 256 (a terminal gets
+# ~1M). The bulk yfinance download exhausted it and silently dropped 168-550
+# tickers per cycle. Raise the soft limit for everything this script runs.
+ulimit -n 4096 2>/dev/null || true
+
 KAIROS_DIR="/Users/jelmore/Kairos"
 VENV_ACTIVATE="/Users/jelmore/Kairos-env/bin/activate"
 SCHEDULER_LOG="${KAIROS_DIR}/kairos_scheduler.log"
