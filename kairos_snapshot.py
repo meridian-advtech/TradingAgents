@@ -257,8 +257,10 @@ def fetch_coingecko() -> list[str]:
 # bill — noise the council was being asked to reason over. fetch_kalshi /
 # fetch_congress are kept for a proper re-implementation (specific Fed /
 # recession series; current Congress sorted by update date).
+# Finnhub headlines removed 2026-10-12: they covered only the first 5
+# shortlist tickers (3 titles each). News now reaches the council through
+# the kairos_news digest (SECTION 1b) for every candidate.
 SOURCES = {
-    "Finnhub — Shortlist News Headlines": fetch_finnhub,
     "FRED — Federal Funds Rate": fetch_fred,
     "CoinGecko — Crypto (BTC / ETH)": fetch_coingecko,
 }

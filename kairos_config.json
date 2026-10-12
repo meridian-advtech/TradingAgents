@@ -940,12 +940,12 @@
   },
   "news": {
     "enabled": true,
-    "inject_prompt": false,
+    "inject_prompt": true,
     "lookback_days": 3,
     "per_ticker_articles": 5,
     "cache_ttl_minutes": 45,
     "max_tickers": 90,
     "triage_timeout_s": 150,
-    "_comment": "2026-10-12: kairos_news.py digest (SEC 8-K + Finnhub company news for candidates AND holdings, one Haiku triage call). SHADOW: inject_prompt=false logs to kairos_news_shadow.jsonl without reaching the council. Flip to true after review."
+    "_comment": "2026-10-12: kairos_news.py digest (SEC 8-K + Finnhub company news for candidates AND holdings, one Haiku triage call). LIVE in the council prompt as SECTION 1b since 2026-10-12 ~10:31 ET (J: no reason to wait). Every cycle is also logged to kairos_news_shadow.jsonl."
   }
 }
