@@ -254,6 +254,13 @@ def score_batch_ollama(batch: list[dict]) -> dict[str, str]:
     Returns {ticker: "HOT"|"WARM"|"COLD"}.
     Falls back to threshold-based scoring on Ollama failure.
     """
+    # 2026-10-12: Ollama is off by default (ollama.enabled=false). The phi4
+    # prompt was a threshold rule over price change ("HOT if >3%, WARM 1-3%,
+    # COLD <1%"; volume_signal is itself just |change|>2%), so the
+    # deterministic rule below IS the scoring now — no model needed.
+    if not _ollama_enabled():
+        return _score_batch_fallback(batch)
+
     from kairos_ollama import ask_screen, is_available, get_screen_model
 
     if not is_available(get_screen_model()):
@@ -299,8 +306,17 @@ def score_batch_ollama(batch: list[dict]) -> dict[str, str]:
     return _score_batch_fallback(batch)
 
 
+def _ollama_enabled() -> bool:
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "kairos_config.json")) as f:
+            return bool(json.load(f).get("ollama", {}).get("enabled", True))
+    except Exception:
+        return True
+
+
 def _score_batch_fallback(batch: list[dict]) -> dict[str, str]:
-    """Threshold-based fallback when Ollama is unavailable."""
+    """Threshold rule: HOT >=3% move, WARM >=1%, else COLD (default scorer)."""
     scores = {}
     for item in batch:
         pct = abs(item.get("change_pct", 0.0))

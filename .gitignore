@@ -101,3 +101,8 @@ kairos_news_summary.txt
 
 # === LOCAL IMPORTS (broker statements, one-off scripts) — never commit ===
 imports/
+
+# news digest runtime files (2026-10-12)
+kairos_news_cache.json
+kairos_news_digest.json
+kairos_news_shadow.jsonl
