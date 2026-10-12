@@ -381,6 +381,89 @@ def detect_insider_buying(
     return results
 
 
+def detect_insider_buying_v2(
+    universe: set[str],
+    lookback_days: int = 7,
+    min_value: float = 25_000,
+) -> dict[str, list[dict]]:
+    """Open-market insider PURCHASES (Form 4 code P) via OpenInsider.
+
+    Replaces detect_insider_buying (2026-10-12). The old detector searched
+    Form 4 full text for the word "purchase" and credited any universe
+    ticker whose symbol was a SUBSTRING of the filer's display name
+    (`ticker in name_upper`) — so C, ON, F, J, SO, ES, EL matched nearly
+    every filer, and filer/role/amount came back empty. HOT-INSIDER's
+    lifetime P&L was measured on that noise.
+
+    OpenInsider's table is parsed from Form 4s and carries the ticker, the
+    insider, their title, the transaction code and the dollar value, so a
+    hit here is a real, attributable open-market buy.
+
+    Returns {ticker: [{filer, title, date, value}]} for tickers in universe.
+    """
+    import re as _re
+    # Screener: purchases only (xp=1), filed in the last N days (fd), value
+    # >= $25K (vl, in $K), up to 500 rows — covers the full window instead
+    # of the "latest ~100" landing page.
+    url = (f"http://openinsider.com/screener?fd={int(lookback_days)}&xp=1"
+           f"&vl={int(min_value // 1000)}&cnt=500&sortcol=0")
+    try:
+        resp = requests.get(url, timeout=TIMEOUT, headers={"User-Agent": "Kairos/1.0"})
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"    OpenInsider error: {e}")
+        return {}
+
+    def _strip(x: str) -> str:
+        return _re.sub(r"<[^>]+>", "", x).strip()
+
+    rows = None
+    for t in _re.findall(r"<table[^>]*>(.*?)</table>", resp.text, _re.DOTALL):
+        rr = _re.findall(r"<tr[^>]*>(.*?)</tr>", t, _re.DOTALL)
+        if len(rr) > 10 and ("Ticker" in rr[0] or "Trade" in rr[0]):
+            rows = rr
+            break
+    if not rows:
+        print("    OpenInsider: data table not found")
+        return {}
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    uni = {u.upper() for u in universe}
+    results: dict[str, list[dict]] = {}
+    for row in rows[1:]:
+        cells = _re.findall(r"<td[^>]*>(.*?)</td>", row, _re.DOTALL)
+        if len(cells) < 13:
+            continue
+        if "P - Purchase" not in _strip(cells[7]):
+            continue
+        m = _re.search(r">([A-Z][A-Z.\-]{0,5})<", cells[3])
+        if not m:
+            continue
+        ticker = m.group(1).upper()
+        if ticker not in uni:
+            continue
+        filed = _strip(cells[1])[:10]   # the market learns at FILING, not trade
+        trade_date = _strip(cells[2])[:10]
+        if filed < cutoff:
+            continue
+        try:
+            value = float(_re.sub(r"[+$,\s]", "", _strip(cells[12])) or 0)
+        except ValueError:
+            continue
+        if value < min_value:
+            continue
+        results.setdefault(ticker, []).append({
+            "filer": _strip(cells[5])[:60],
+            "title": _strip(cells[6])[:40],
+            "date": filed,
+            "trade_date": trade_date,
+            "value": value,
+        })
+    for t in results:
+        results[t] = sorted(results[t], key=lambda x: -x["value"])[:5]
+    return results
+
+
 # ═════════════════════════════════════════════════════════════════════
 # 5. CONGRESSIONAL TRADING — House financial disclosure search
 # ═════════════════════════════════════════════════════════════════════
