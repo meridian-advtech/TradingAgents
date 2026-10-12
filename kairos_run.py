@@ -945,9 +945,28 @@ def run_gather(use_ollama: bool = True, shortlist: list[str] | None = None):
 
     market_data = gather_market_data(tickers=shortlist)
     portfolio = gather_portfolio(shortlist)
-    tax_ctx = gather_tax_context()
+    tax_ctx = gather_tax_context(shortlist)
     tax_eff = gather_tax_efficiency(portfolio, shortlist=shortlist)
     ledger_text = gather_ledger()
+
+    # News digest (kairos_news.py): SEC 8-K + company news for every
+    # candidate AND every holding, triaged in one API call. Replaces the
+    # Qwen post-processing path, whose output nothing ever read.
+    news_section = None
+    try:
+        from kairos_news import run_news_digest, format_news_section
+        holdings = [p["symbol"] for p in portfolio.get("positions", [])]
+        digest = run_news_digest(list(shortlist or []), holdings)
+        st, tr = digest.get("stats", {}), digest.get("triage", {})
+        print(f"\n  News digest: {digest['status']} — {st.get('with_items', 0)}/"
+              f"{st.get('tickers', 0)} tickers with items, {st.get('eight_k', 0)} 8-K, "
+              f"triage {tr.get('latency_s', '?')}s"
+              + (f"  ERROR: {tr['error']}" if tr.get('error') else "")
+              + ("" if digest.get("inject_prompt") else "  [shadow — not in prompt]"))
+        if digest.get("inject_prompt") and shortlist:
+            news_section = format_news_section(list(shortlist), digest)
+    except Exception as exc:
+        print(f"  WARNING: news digest failed: {exc}")
 
     if use_ollama:
         _ollama_postprocess_snapshot(market_data, portfolio)
@@ -969,7 +988,7 @@ def run_gather(use_ollama: bool = True, shortlist: list[str] | None = None):
 
     write_prompt(market_data, portfolio, tax_ctx, ledger_text,
                  shortlist=shortlist, tax_efficiency_text=tax_eff,
-                 regime_section=regime_section)
+                 regime_section=regime_section, news_section=news_section)
 
 
 def _run_options_detection(shortlist: list[str]) -> None:
@@ -1018,6 +1037,13 @@ def _run_options_detection(shortlist: list[str]) -> None:
         print(f"  │  No unusual options activity detected ({elapsed}s)")
 
     # ── Second pass: yfinance sweep of EXECUTIVE_WATCHLIST tickers ───────
+    # DISABLED 2026-10-12: _detect_options_with_yfinance's vol_spike divides
+    # total call volume by MEAN per-strike open interest, so the ratio scales
+    # with the number of strikes and fires on every name (10/09: all 9
+    # watchlist names at 16x-706x). Pure noise tags. Re-enable only after
+    # the ratio is fixed (total volume vs total OI, or vs a volume baseline).
+    print(f"  └──────────────────────────────────────────────────────┘")
+    return
     # Catches unusual flow on closely-watched names that didn't make the
     # Tier-1 shortlist. Tagged HOT-OPTIONS-EXEC so downstream prompt
     # assembly can distinguish them from IBKR-quality main hits.
@@ -2063,6 +2089,15 @@ def _apply_tax_filter():
 
 # ── Ollama model check ──────────────────────────────────────────────
 
+def _ollama_enabled() -> bool:
+    """ollama.enabled in kairos_config.json (default False since 2026-10-12)."""
+    try:
+        with open(os.path.join(SCRIPT_DIR, "kairos_config.json")) as f:
+            return bool(json.load(f).get("ollama", {}).get("enabled", False))
+    except Exception:
+        return False
+
+
 def _check_ollama_models():
     """Verify both Ollama models are installed, then warm them up.
 
@@ -2244,13 +2279,17 @@ def run_scheduled_cycle(args) -> None:
             print(f"  WARNING: Shared IBKR connection failed: {exc}")
             shared_ib_connection = None
 
-    use_ollama = not args.no_ollama
+    # 2026-10-12: Ollama is off unless ollama.enabled=true in config. The
+    # screener scores with a deterministic rule and news triage runs on the
+    # API (kairos_news.py). Screening is no longer gated on Ollama — before
+    # this, an Ollama outage silently disabled the entire entry side.
+    use_ollama = (not args.no_ollama) and _ollama_enabled()
     if use_ollama:
         _check_ollama_models()
 
     run_equity = args.mode in ("equity", "both")
     run_crypto = False  # Disabled — crypto managed separately via Robinhood
-    do_screen = not args.no_screen and use_ollama and run_equity
+    do_screen = not args.no_screen and run_equity
 
     # Phase 0: Stale order cleanup — cancel any open IBKR orders older
     # than 8 hours so they don't tie up cash across cycles.
@@ -2705,7 +2744,7 @@ def main():
     except ImportError:
         print("  WARNING: kairos_log_db not found — skipping DB init")
 
-    use_ollama = not args.no_ollama
+    use_ollama = (not args.no_ollama) and _ollama_enabled()
 
     # Verify both Ollama models are available before starting
     if use_ollama:
@@ -2713,7 +2752,7 @@ def main():
     run_equity = args.mode in ("equity", "both")
     run_crypto = False  # Disabled — crypto managed separately via Robinhood
 
-    do_screen = not args.no_screen and use_ollama and run_equity
+    do_screen = not args.no_screen and run_equity
 
     if args.orchestrate:
         run_orchestrate()
