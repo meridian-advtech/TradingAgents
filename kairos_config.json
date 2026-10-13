@@ -936,7 +936,8 @@
     "baseline_note": "Current-system era: post sizing-fix (6/29), exit_timing weight (6/30), target-armed trail (7/2)"
   },
   "execution": {
-    "min_entry_conviction": 6
+    "min_entry_conviction": 7,
+    "_comment": "2026-10-13: 6 -> 7. Closed trades vs SPY over their own holds: conviction 4-6 n=122, -$23.8K vs SPY (conviction 6 alone n=81, -$11.1K); conviction 7-8 n=55, +$12.7K vs SPY, 61-73% beat. Watch for score inflation into 7 — the weekly scorecard should show conviction-7 excess vs SPY holding up after this date."
   },
   "news": {
     "enabled": true,

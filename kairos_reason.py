@@ -501,6 +501,95 @@ def axis_weights_snapshot(weights: list[dict] | None = None) -> dict:
     return {w["axis"]: round(w["weight"], 6) for w in weights}
 
 
+_SPY_CACHE: dict = {}
+
+
+def _index_relative_block(clean_rows, all_rows) -> list[str]:
+    """Excess return vs SPY over each closed trade's own holding period,
+    by entry signal (trusted attribution only) and by the decision model's
+    own conviction score. Returns [] if SPY prices are unavailable."""
+    from datetime import date as _date
+    if "spy" not in _SPY_CACHE:
+        from kairos_scorecard import _spy_closes
+        _SPY_CACHE["spy"] = _spy_closes(_date(2026, 4, 1))
+    spy = _SPY_CACHE["spy"]
+    if not spy:
+        return []
+    days = sorted(spy)
+
+    def _px(d):
+        prev = [x for x in days if x <= d]
+        return spy[prev[-1]] if prev else None
+
+    def _excess(r):
+        try:
+            d0 = _date.fromisoformat(str(r["timestamp_entry"])[:10])
+            d1 = _date.fromisoformat(str(r["timestamp_exit"])[:10])
+        except Exception:
+            return None
+        a, b = _px(d0), _px(d1)
+        if not a or not b:
+            return None
+        return r["pnl_pct"] - (b / a - 1.0) * 100.0
+
+    def _row(label, xs):
+        n = len(xs)
+        beat = sum(1 for x in xs if x > 0) / n * 100
+        med = sorted(xs)[n // 2]
+        return f"  {label:<22}{n:>7}{beat:>9.0f}%{sum(xs)/n:>+11.2f}pp{med:>+10.2f}pp"
+
+    ex_all = [x for x in (_excess(r) for r in all_rows) if x is not None]
+    if len(ex_all) < 20:
+        return []
+    out = [
+        "",
+        "VERSUS THE INDEX — the bar every trade must clear:",
+        "Kairos exists to beat simply holding SPY. A trade that gains +2% while",
+        "SPY gains +4% over the same days LOST 2 points of opportunity. Below is",
+        "each closed trade's return minus SPY's return over its own holding period.",
+        "",
+        f"  {'':<22}{'trades':>7}{'beat SPY':>10}{'avg excess':>13}{'median':>12}",
+        _row("ALL closed trades", ex_all),
+    ]
+    by_conv: dict = {}
+    for r in all_rows:
+        x = _excess(r)
+        if x is not None and r["conv"] is not None:
+            by_conv.setdefault(int(r["conv"]), []).append(x)
+    if by_conv:
+        out.append("")
+        out.append("  By YOUR conviction score at entry:")
+        for c in sorted(by_conv):
+            if len(by_conv[c]) >= 5:
+                out.append(_row(f"conviction {c}", by_conv[c]))
+    by_sig: dict = {}
+    for r in clean_rows:
+        x = _excess(r)
+        if x is None:
+            continue
+        try:
+            sigs = json.loads(r["signals_fired"]) if r["signals_fired"] else []
+        except (json.JSONDecodeError, TypeError):
+            sigs = []
+        for s in sigs:
+            by_sig.setdefault(str(s), []).append(x)
+    if by_sig:
+        out.append("")
+        out.append("  By entry signal:")
+        for s, xs in sorted(by_sig.items(), key=lambda kv: -sum(kv[1]) / len(kv[1])):
+            if len(xs) >= 10:
+                out.append(_row(s, xs))
+    out += [
+        "",
+        "Read this as calibration of your own judgement. Where your conviction",
+        "has beaten the index, it is earning its keep; where it has not, a BUY",
+        "at that level has so far been worse than owning SPY. Before any BUY, ask",
+        "whether THIS setup is likely to beat SPY over the expected hold, not",
+        "merely whether it will go up.",
+    ]
+    return out
+
+
 def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -> str:
     """SECTION 4b — entry-time evidence from the reconciled ML ledger.
 
@@ -538,6 +627,7 @@ def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -
                 "       t.mfe_pct, t.timestamp_exit, t.timestamp_entry, t.exit_reason, "
                 "       t.forgone_gain_30d_pct AS fg30, "
                 "       t.signal_attribution_source AS src, "
+                "       t.conviction AS conv, "
                 "       p.predicted_return_pct AS pred "
                 "FROM trade_outcomes t "
                 "LEFT JOIN thesis_predictions p ON t.trade_id = p.decision_id "
@@ -636,6 +726,18 @@ def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -
     lines.append("Confluence trades count under every signal that fired, so trade")
     lines.append("counts sum to more than the book.")
 
+    # VERSUS THE INDEX. Added 2026-10-13. A trade that makes +2% while SPY
+    # makes +4% over the same days is a loss of opportunity, and the table
+    # above cannot show that. Measured that day over 561 closed trades: Kairos
+    # beat SPY on 48% of trades (median -0.33pp) — a coin flip — while its own
+    # conviction 7-8 calls beat SPY 61-73% (+$12.7K vs SPY) and 4-6 lost to it
+    # (-$23.8K). The decision model is the one choosing trades, so it is shown
+    # its own record against the index, by signal and by its own conviction.
+    try:
+        lines.extend(_index_relative_block(clean_rows, rows))
+    except Exception:
+        pass
+
     # Post-exit path. The Arbiter already uses forgone gain to tune the
     # exit_timing axis, but the reasoner making hold/sell calls has never seen
     # it. Every exit type leaves money on the table (2026-08-27: median +9.5%
@@ -653,7 +755,13 @@ def format_signal_evidence_section(candidate_tickers: list[str] | None = None) -
             by.setdefault(k, []).append(r["fg30"])
         med = sorted(fgv)[len(fgv) // 2]
         lines.append("")
-        lines.append("AFTER WE SELL — where the stock went in the next 30 days:")
+        # Wording corrected 2026-10-13: forgone_gain_30d_pct is the PEAK High
+        # within 30 days of exit, not where the stock ended. Any volatile stock
+        # has a positive 30-day peak, so the old label ("where the stock
+        # went") overstated how much selling cost.
+        lines.append("AFTER WE SELL — the BEST price reached within 30 days of exit")
+        lines.append("(the peak, not where it ended — an upper bound on what holding")
+        lines.append("longer could have captured, not a typical outcome):")
         lines.append(f"  Across {len(fgv)} closed trades: median {med:+.1f}%, "
                      f"mean {sum(fgv)/len(fgv):+.1f}%")
         for k, v in sorted(by.items(), key=lambda kv: -sum(kv[1]) / len(kv[1])):
@@ -1675,9 +1783,9 @@ genuine HOT signals and merit a position — do not limit to a single winner.
 
 CONVICTION FLOOR: a BUY with conviction below {min_conv} will NOT execute.
 {min_conv} means a genuine, articulable edge. If a candidate is only a
-"maybe" (what you would otherwise score 5 or lower), mark it SKIP and say
+"maybe" (what you would otherwise score {min_conv - 1} or lower), mark it SKIP and say
 why in "skipped" — do not submit it as a low-conviction BUY. Score honestly:
-inflating a 5 to a {min_conv} defeats the floor and is tracked against outcomes.
+inflating a {min_conv - 1} to a {min_conv} defeats the floor and is tracked against outcomes.
 
 For each ticker, determine:
   - Action: BUY, SELL, or SKIP (no position warranted)
